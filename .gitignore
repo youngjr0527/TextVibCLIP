@@ -1,0 +1,79 @@
+# 데이터 폴더들 (용량 큼)
+uos_data/
+cwru_data/
+data_scenario1/
+data_scenario2/
+
+# 데이터 파일들
+*.mat
+*.txt
+
+# 학습 결과물들
+checkpoints/
+results/
+logs/
+plots/
+
+# Python 관련
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 가상환경
+venv/
+env/
+ENV/
+
+# IDE 관련
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS 관련
+.DS_Store
+Thumbs.db
+
+# 임시 파일들
+*.tmp
+*.bak
+*.log
+
+# 구버전 파일들
+old_files/
+
+# 외부 라이브러리
+TST/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# 실험 관련 임시 파일들
+*.pth
+*.pt
+*.pkl
+*.pickle
+
+# 압축 파일들
+*.zip
+*.tar.gz
+*.rar
