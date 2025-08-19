@@ -83,13 +83,32 @@ TRAINING_CONFIG = {
 
 # 데이터 설정
 DATA_CONFIG = {
+    # 기본 설정 (UOS)
     'data_dir': 'data_scenario1',
-    'domain_order': [600, 800, 1000, 1200, 1400, 1600],  # RPM 순서
+    'dataset_type': 'uos',
+    'domain_order': [600, 800, 1000, 1200, 1400, 1600],  # UOS RPM 순서
     'validation_split': 0.2,
     'test_split': 0.2,
     
     # 데이터 전처리
     'signal_normalization': 'standardize',  # 'standardize', 'minmax', 'none'
+    'window_size': 4096,
+    'overlap_ratio': 0.5,
+    
+    # 텍스트 생성
+    'max_text_length': 128,
+}
+
+# CWRU 데이터 설정
+CWRU_DATA_CONFIG = {
+    'data_dir': 'data_scenario2',
+    'dataset_type': 'cwru',
+    'domain_order': [0, 1, 2, 3],  # CWRU Load 순서 (0hp, 1hp, 2hp, 3hp)
+    'validation_split': 0.2,
+    'test_split': 0.2,
+    
+    # 데이터 전처리
+    'signal_normalization': 'standardize',
     'window_size': 4096,
     'overlap_ratio': 0.5,
     

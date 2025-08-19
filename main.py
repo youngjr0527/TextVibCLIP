@@ -1,6 +1,10 @@
 """
 TextVibCLIP 메인 실험 실행 스크립트
 Joint Training + Continual Learning 전체 파이프라인
+
+지원 시나리오:
+- 시나리오 1 (UOS): Varying Speed (600→1600 RPM) 
+- 시나리오 2 (CWRU): Varying Load (0→3 HP)
 """
 
 import argparse

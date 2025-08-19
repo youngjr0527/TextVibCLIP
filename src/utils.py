@@ -10,31 +10,72 @@ import scipy.io as sio
 from typing import Dict, Tuple, Optional
 import torch
 
-def parse_filename(filename: str) -> Dict[str, str]:
+def parse_filename(filename: str, dataset_type: str = 'uos') -> Dict[str, str]:
     """
-    UOS 데이터셋 파일명에서 메타데이터 추출
+    데이터셋 파일명에서 메타데이터 추출
     
-    파일명 형식: {회전체상태}_{베어링상태}_{베어링타입}_{회전속도}.mat
+    UOS 파일명 형식: {회전체상태}_{베어링상태}_{베어링타입}_{회전속도}.mat
     예시: H_B_6204_600.mat
+    
+    CWRU 파일명 형식: {베어링상태}_{부하}.mat
+    예시: B_0hp_1.mat, Normal_2hp.mat
     
     Args:
         filename (str): .mat 파일명
+        dataset_type (str): 'uos' 또는 'cwru'
         
     Returns:
         Dict[str, str]: 추출된 메타데이터
     """
     basename = os.path.basename(filename)
     name_without_ext = os.path.splitext(basename)[0]
+    
+    if dataset_type.lower() == 'uos':
+        return _parse_uos_filename(name_without_ext)
+    elif dataset_type.lower() == 'cwru':
+        return _parse_cwru_filename(name_without_ext)
+    else:
+        raise ValueError(f"지원하지 않는 데이터셋 타입: {dataset_type}")
+
+
+def _parse_uos_filename(name_without_ext: str) -> Dict[str, str]:
+    """UOS 파일명 파싱"""
     parts = name_without_ext.split('_')
     
     if len(parts) != 4:
-        raise ValueError(f"예상된 파일명 형식이 아님: {basename}")
+        raise ValueError(f"예상된 UOS 파일명 형식이 아님: {name_without_ext}")
     
     return {
+        'dataset_type': 'uos',
         'rotating_component': parts[0],  # H, L, U, M
         'bearing_condition': parts[1],   # H, IR, OR, B  
         'bearing_type': parts[2],        # 6204, 30204, N204, NJ204
         'rotating_speed': int(parts[3])  # 600, 800, 1000, 1200, 1400, 1600
+    }
+
+
+def _parse_cwru_filename(name_without_ext: str) -> Dict[str, str]:
+    """CWRU 파일명 파싱"""
+    parts = name_without_ext.split('_')
+    
+    if len(parts) < 2:
+        raise ValueError(f"예상된 CWRU 파일명 형식이 아님: {name_without_ext}")
+    
+    bearing_condition = parts[0]  # Normal, B, IR, OR
+    load_part = parts[1]  # 0hp, 1hp, 2hp, 3hp
+    
+    # Load에서 숫자 추출
+    if 'hp' in load_part:
+        load = int(load_part.replace('hp', ''))
+    else:
+        load = 0
+    
+    return {
+        'dataset_type': 'cwru',
+        'bearing_condition': bearing_condition,  # Normal, B, IR, OR
+        'load': load,  # 0, 1, 2, 3 (horsepower)
+        'rotating_component': 'H',  # CWRU는 회전체 상태가 항상 정상
+        'bearing_type': 'deep_groove_ball'  # CWRU는 Deep Groove Ball Bearing 사용
     }
 
 
@@ -48,6 +89,18 @@ def generate_text_description(metadata: Dict[str, str]) -> str:
     Returns:
         str: 생성된 텍스트 설명
     """
+    dataset_type = metadata.get('dataset_type', 'uos')
+    
+    if dataset_type == 'uos':
+        return _generate_uos_text_description(metadata)
+    elif dataset_type == 'cwru':
+        return _generate_cwru_text_description(metadata)
+    else:
+        raise ValueError(f"지원하지 않는 데이터셋 타입: {dataset_type}")
+
+
+def _generate_uos_text_description(metadata: Dict[str, str]) -> str:
+    """UOS 데이터셋용 텍스트 설명 생성"""
     # 회전체 상태 매핑
     rotating_component_map = {
         'H': 'healthy rotating component',
@@ -90,6 +143,30 @@ def generate_text_description(metadata: Dict[str, str]) -> str:
     # 자연어 문장 생성
     text = (f"A {bearing_type_desc} operating at {metadata['rotating_speed']} rpm "
             f"with {rotating_desc} and {bearing_desc}.")
+    
+    return text
+
+
+def _generate_cwru_text_description(metadata: Dict[str, str]) -> str:
+    """CWRU 데이터셋용 텍스트 설명 생성"""
+    # 베어링 상태 매핑
+    bearing_condition_map = {
+        'Normal': 'healthy bearing',
+        'B': 'ball fault',
+        'IR': 'inner race fault', 
+        'OR': 'outer race fault'
+    }
+    
+    bearing_desc = bearing_condition_map.get(
+        metadata['bearing_condition'],
+        f"unknown bearing condition ({metadata['bearing_condition']})" 
+    )
+    
+    load = metadata.get('load', 0)
+    
+    # 자연어 문장 생성
+    text = (f"A deep groove ball bearing operating under {load} horsepower load "
+            f"with {bearing_desc}.")
     
     return text
 

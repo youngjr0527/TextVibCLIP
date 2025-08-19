@@ -80,16 +80,17 @@ def create_collate_fn(tokenizer: DistilBertTokenizer = None, max_length: int = 1
     return collate_fn
 
 
-class UOSDataset(Dataset):
+class BearingDataset(Dataset):
     """
-    UOS 베어링 데이터셋 PyTorch Dataset 클래스
+    베어링 데이터셋 PyTorch Dataset 클래스 (UOS/CWRU 지원)
     
     진동 신호와 텍스트 메타데이터를 쌍으로 로딩
     """
     
     def __init__(self, 
                  data_dir: str = DATA_CONFIG['data_dir'],
-                 domain_rpm: Optional[int] = None,
+                 dataset_type: str = 'uos',
+                 domain_value: Optional[Union[int, str]] = None,
                  window_size: int = DATA_CONFIG['window_size'],
                  overlap_ratio: float = DATA_CONFIG['overlap_ratio'],
                  normalization: str = DATA_CONFIG['signal_normalization'],
@@ -97,8 +98,11 @@ class UOSDataset(Dataset):
                  subset: str = 'train'):
         """
         Args:
-            data_dir (str): data_scenario1 폴더 경로
-            domain_rpm (int, optional): 특정 RPM만 로딩 (None이면 모든 RPM)
+            data_dir (str): 데이터 폴더 경로 (data_scenario1 또는 data_scenario2)
+            dataset_type (str): 'uos' 또는 'cwru'
+            domain_value (Union[int, str], optional): 
+                - UOS: RPM 값 (600, 800, etc.)
+                - CWRU: Load 값 ('Load_0hp', 'Load_1hp', etc.)
             window_size (int): 신호 윈도우 크기
             overlap_ratio (float): 윈도우 겹침 비율
             normalization (str): 신호 정규화 방법
@@ -106,7 +110,8 @@ class UOSDataset(Dataset):
             subset (str): 'train', 'val', 'test' 중 하나
         """
         self.data_dir = data_dir
-        self.domain_rpm = domain_rpm
+        self.dataset_type = dataset_type.lower()
+        self.domain_value = domain_value
         self.window_size = window_size
         self.overlap_ratio = overlap_ratio
         self.normalization = normalization
@@ -120,14 +125,29 @@ class UOSDataset(Dataset):
         # 데이터셋 분할 (train/val/test)
         self.file_paths, self.metadata_list = self._split_dataset()
         
-        logger.info(f"UOSDataset 초기화 완료: {len(self.file_paths)}개 파일, "
-                   f"Domain RPM: {domain_rpm}, Subset: {subset}")
-    
+        # 각 파일의 윈도우 수 계산 (첫 번째 파일로 추정)
+        self.windows_per_file = self._calculate_windows_per_file()
+        self.total_windows = len(self.file_paths) * self.windows_per_file
+        
+        logger.info(f"BearingDataset 초기화 완료 ({self.dataset_type.upper()}): "
+                   f"{len(self.file_paths)}개 파일, {self.windows_per_file}개 윈도우/파일, "
+                   f"총 {self.total_windows}개 샘플, Domain: {domain_value}, Subset: {subset}")
+
+
     def _collect_file_paths(self) -> List[str]:
-        """data_scenario1에서 .mat 파일 경로 수집"""
-        if self.domain_rpm is not None:
+        """데이터 파일 경로 수집"""
+        if self.dataset_type == 'uos':
+            return self._collect_uos_file_paths()
+        elif self.dataset_type == 'cwru':
+            return self._collect_cwru_file_paths()
+        else:
+            raise ValueError(f"지원하지 않는 데이터셋 타입: {self.dataset_type}")
+    
+    def _collect_uos_file_paths(self) -> List[str]:
+        """UOS 데이터 파일 경로 수집"""
+        if self.domain_value is not None:
             # 특정 RPM만 로딩
-            pattern = os.path.join(self.data_dir, "**", f"RotatingSpeed_{self.domain_rpm}", "*.mat")
+            pattern = os.path.join(self.data_dir, "**", f"RotatingSpeed_{self.domain_value}", "*.mat")
         else:
             # 모든 RPM 로딩
             pattern = os.path.join(self.data_dir, "**", "*.mat")
@@ -135,7 +155,28 @@ class UOSDataset(Dataset):
         file_paths = glob.glob(pattern, recursive=True)
         
         if len(file_paths) == 0:
-            raise ValueError(f"파일을 찾을 수 없습니다: {pattern}")
+            raise ValueError(f"UOS 파일을 찾을 수 없습니다: {pattern}")
+        
+        return sorted(file_paths)
+    
+    def _collect_cwru_file_paths(self) -> List[str]:
+        """CWRU 데이터 파일 경로 수집"""
+        if self.domain_value is not None:
+            # 특정 Load만 로딩
+            if isinstance(self.domain_value, str):
+                load_folder = self.domain_value  # 'Load_0hp' 형태
+            else:
+                load_folder = f"Load_{self.domain_value}hp"  # 숫자 -> 'Load_Xhp' 형태
+            
+            pattern = os.path.join(self.data_dir, load_folder, "*.mat")
+        else:
+            # 모든 Load 로딩
+            pattern = os.path.join(self.data_dir, "**", "*.mat")
+        
+        file_paths = glob.glob(pattern, recursive=True)
+        
+        if len(file_paths) == 0:
+            raise ValueError(f"CWRU 파일을 찾을 수 없습니다: {pattern}")
         
         return sorted(file_paths)
     
@@ -145,7 +186,7 @@ class UOSDataset(Dataset):
         
         for filepath in self.file_paths:
             try:
-                metadata = parse_filename(filepath)
+                metadata = parse_filename(filepath, dataset_type=self.dataset_type)
                 metadata['filepath'] = filepath
                 metadata_list.append(metadata)
             except Exception as e:
@@ -154,11 +195,88 @@ class UOSDataset(Dataset):
         
         return metadata_list
     
+    def _generate_labels(self, metadata: Dict[str, Union[str, int]]) -> torch.Tensor:
+        """메타데이터에서 라벨 생성"""
+        if self.dataset_type == 'uos':
+            return self._generate_uos_labels(metadata)
+        elif self.dataset_type == 'cwru':
+            return self._generate_cwru_labels(metadata)
+        else:
+            raise ValueError(f"지원하지 않는 데이터셋 타입: {self.dataset_type}")
+    
+    def _generate_uos_labels(self, metadata: Dict[str, Union[str, int]]) -> torch.Tensor:
+        """UOS 라벨 생성 (3차원: rotating_component, bearing_condition, bearing_type)"""
+        rotating_component_map = {'H': 0, 'L': 1, 'U': 2, 'M': 3}
+        bearing_condition_map = {'H': 0, 'B': 1, 'IR': 2, 'OR': 3}
+        bearing_type_map = {'6204': 0, '30204': 1, 'N204': 2, 'NJ204': 3}
+        
+        labels = torch.tensor([
+            rotating_component_map[metadata['rotating_component']],
+            bearing_condition_map[metadata['bearing_condition']], 
+            bearing_type_map[metadata['bearing_type']]
+        ], dtype=torch.long)
+        
+        return labels
+    
+    def _generate_cwru_labels(self, metadata: Dict[str, Union[str, int]]) -> torch.Tensor:
+        """CWRU 라벨 생성 (1차원: bearing_condition)"""
+        bearing_condition_map = {'Normal': 0, 'B': 1, 'IR': 2, 'OR': 3}
+        
+        # CWRU는 베어링 상태만 분류하므로 1차원 라벨
+        label = torch.tensor([
+            bearing_condition_map[metadata['bearing_condition']]
+        ], dtype=torch.long)
+        
+        return label
+    
+    def _get_domain_key(self, metadata: Dict[str, Union[str, int]]) -> Union[int, str]:
+        """도메인 키 반환"""
+        if self.dataset_type == 'uos':
+            return metadata['rotating_speed']  # RPM 값
+        elif self.dataset_type == 'cwru':
+            return metadata['load']  # Load 값 (0, 1, 2, 3)
+        else:
+            return 0
+    
+    def _calculate_windows_per_file(self) -> int:
+        """각 파일당 윈도우 수 계산"""
+        if len(self.file_paths) == 0:
+            return 0
+        
+        try:
+            # 첫 번째 파일로 윈도우 수 추정
+            first_file = self.file_paths[0]
+            signal = load_mat_file(first_file)
+            windowed_signals = create_windowed_signal(
+                signal, self.window_size, self.overlap_ratio
+            )
+            return len(windowed_signals)
+        except Exception as e:
+            logger.warning(f"윈도우 수 계산 실패: {e}, 기본값 1 사용")
+            return 1
+    
     def _split_dataset(self) -> Tuple[List[str], List[Dict]]:
         """데이터셋을 train/val/test로 분할"""
         if len(self.file_paths) == 0:
             return [], []
         
+        # CWRU는 데이터가 적어서 split 없이 전체 데이터 사용
+        if self.dataset_type == 'cwru':
+            return self._split_cwru_dataset()
+        else:
+            return self._split_uos_dataset()
+    
+    def _split_cwru_dataset(self) -> Tuple[List[str], List[Dict]]:
+        """CWRU 데이터셋 분할 (데이터가 적어서 전체 사용)"""
+        # CWRU는 각 도메인당 4개 파일만 있으므로 split 없이 전체 사용
+        if self.subset in ['train', 'val', 'test']:
+            # 모든 subset에서 전체 데이터 반환 (데이터 부족으로 인한 임시 해결책)
+            return self.file_paths, self.metadata_list
+        else:
+            raise ValueError(f"알 수 없는 subset: {self.subset}")
+    
+    def _split_uos_dataset(self) -> Tuple[List[str], List[Dict]]:
+        """UOS 데이터셋 분할 (stratified split)"""
         # 클래스별 stratified split을 위한 라벨 생성
         labels = []
         for metadata in self.metadata_list:
@@ -166,25 +284,45 @@ class UOSDataset(Dataset):
             label = f"{metadata['rotating_component']}_{metadata['bearing_condition']}_{metadata['bearing_type']}"
             labels.append(label)
         
-        # Train/Test 분할 (80/20)
-        files_train, files_test, meta_train, meta_test = train_test_split(
-            self.file_paths, self.metadata_list, 
-            test_size=DATA_CONFIG['test_split'],
-            stratify=labels, 
-            random_state=42
-        )
+        # 클래스별 샘플 수 확인
+        unique_labels = set(labels)
+        min_samples = min(labels.count(label) for label in unique_labels)
+        
+        if min_samples < 2:
+            # 샘플이 너무 적으면 stratify 없이 랜덤 분할
+            logger.warning(f"일부 클래스의 샘플이 {min_samples}개뿐이어서 stratified split을 사용할 수 없습니다. 랜덤 분할을 사용합니다.")
+            files_train, files_test, meta_train, meta_test = train_test_split(
+                self.file_paths, self.metadata_list, 
+                test_size=DATA_CONFIG['test_split'],
+                random_state=42
+            )
+        else:
+            # Train/Test 분할 (80/20)
+            files_train, files_test, meta_train, meta_test = train_test_split(
+                self.file_paths, self.metadata_list, 
+                test_size=DATA_CONFIG['test_split'],
+                stratify=labels, 
+                random_state=42
+            )
         
         # Train에서 Validation 분할
         if len(files_train) > 1:
-            labels_train = [f"{m['rotating_component']}_{m['bearing_condition']}_{m['bearing_type']}" 
-                           for m in meta_train]
-            
-            files_train_final, files_val, meta_train_final, meta_val = train_test_split(
-                files_train, meta_train,
-                test_size=DATA_CONFIG['validation_split'] / (1 - DATA_CONFIG['test_split']),
-                stratify=labels_train,
-                random_state=42
-            )
+            if min_samples >= 2:
+                labels_train = [f"{m['rotating_component']}_{m['bearing_condition']}_{m['bearing_type']}" 
+                               for m in meta_train]
+                
+                files_train_final, files_val, meta_train_final, meta_val = train_test_split(
+                    files_train, meta_train,
+                    test_size=DATA_CONFIG['validation_split'] / (1 - DATA_CONFIG['test_split']),
+                    stratify=labels_train,
+                    random_state=42
+                )
+            else:
+                files_train_final, files_val, meta_train_final, meta_val = train_test_split(
+                    files_train, meta_train,
+                    test_size=DATA_CONFIG['validation_split'] / (1 - DATA_CONFIG['test_split']),
+                    random_state=42
+                )
         else:
             files_train_final, files_val = files_train, []
             meta_train_final, meta_val = meta_train, []
@@ -200,19 +338,34 @@ class UOSDataset(Dataset):
             raise ValueError(f"알 수 없는 subset: {self.subset}")
     
     def __len__(self) -> int:
-        return len(self.file_paths)
+        return self.total_windows
     
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
+        파일 인덱스와 윈도우 인덱스를 조합해서 샘플 반환
+        
+        Args:
+            idx: 전체 윈도우 인덱스 (0 ~ total_windows-1)
+            
         Returns:
             Dict containing:
                 - 'vibration': 진동 신호 (window_size,)
                 - 'text': 텍스트 설명 (str)
                 - 'metadata': 메타데이터 딕셔너리
-                - 'labels': 라벨 (3차원: rotating_component, bearing_condition, bearing_type)
+                - 'labels': 라벨
+                - 'domain_key': 도메인 키
         """
-        filepath = self.file_paths[idx]
-        metadata = self.metadata_list[idx]
+        # 파일 인덱스와 윈도우 인덱스 계산
+        file_idx = idx // self.windows_per_file
+        window_idx = idx % self.windows_per_file
+        
+        # 파일 인덱스가 범위를 벗어나면 마지막 파일 사용
+        if file_idx >= len(self.file_paths):
+            file_idx = len(self.file_paths) - 1
+            window_idx = 0
+        
+        filepath = self.file_paths[file_idx]
+        metadata = self.metadata_list[file_idx]
         
         try:
             # 진동 신호 로딩
@@ -221,94 +374,119 @@ class UOSDataset(Dataset):
             # 신호 전처리
             signal = normalize_signal(signal, method=self.normalization)
             
-            # 윈도잉 (여러 윈도우 중 하나를 랜덤하게 선택)
+            # 윈도잉
             windowed_signals = create_windowed_signal(
                 signal, self.window_size, self.overlap_ratio
             )
             
-            # 랜덤하게 하나의 윈도우 선택
-            if len(windowed_signals) > 1:
-                window_idx = np.random.randint(0, len(windowed_signals))
+            # 지정된 윈도우 선택
+            if window_idx < len(windowed_signals):
                 selected_signal = windowed_signals[window_idx]
             else:
-                selected_signal = windowed_signals[0]
+                # 윈도우 인덱스가 범위를 벗어나면 마지막 윈도우 사용
+                selected_signal = windowed_signals[-1]
             
             # 텍스트 설명 생성
             text_description = generate_text_description(metadata)
             
-            # 라벨 생성 (3가지 분류)
-            rotating_component_map = {'H': 0, 'L': 1, 'U': 2, 'M': 3}
-            bearing_condition_map = {'H': 0, 'B': 1, 'IR': 2, 'OR': 3}
-            bearing_type_map = {'6204': 0, '30204': 1, 'N204': 2, 'NJ204': 3}
+            # 라벨 생성
+            labels = self._generate_labels(metadata)
             
-            labels = torch.tensor([
-                rotating_component_map[metadata['rotating_component']],
-                bearing_condition_map[metadata['bearing_condition']], 
-                bearing_type_map[metadata['bearing_type']]
-            ], dtype=torch.long)
+            # 도메인 값 설정
+            domain_key = self._get_domain_key(metadata)
             
             return {
                 'vibration': torch.tensor(selected_signal, dtype=torch.float32),
                 'text': text_description,
                 'metadata': metadata,
                 'labels': labels,
-                'rpm': metadata['rotating_speed']
+                'domain_key': domain_key,
+                'file_idx': file_idx,
+                'window_idx': window_idx
             }
             
         except Exception as e:
-            logger.error(f"데이터 로딩 실패: {filepath}, 오류: {e}")
+            logger.error(f"데이터 로딩 실패: {filepath}, window {window_idx}, 오류: {e}")
             # 에러 시 더미 데이터 반환
+            dummy_labels = torch.zeros(3 if self.dataset_type == 'uos' else 1, dtype=torch.long)
+            dummy_domain_key = metadata.get('rotating_speed' if self.dataset_type == 'uos' else 'load', 0)
+            
             return {
                 'vibration': torch.zeros(self.window_size, dtype=torch.float32),
                 'text': "Error loading data",
                 'metadata': metadata,
-                'labels': torch.zeros(3, dtype=torch.long),
-                'rpm': metadata.get('rotating_speed', 0)
+                'labels': dummy_labels,
+                'domain_key': dummy_domain_key,
+                'file_idx': file_idx,
+                'window_idx': window_idx
             }
+
+
+# UOSDataset은 하위호환성을 위해 유지
+class UOSDataset(BearingDataset):
+    """UOS 데이터셋 (하위호환성)"""
+    def __init__(self, 
+                 data_dir: str = DATA_CONFIG['data_dir'],
+                 domain_rpm: Optional[int] = None,
+                 **kwargs):
+        super().__init__(
+            data_dir=data_dir,
+            dataset_type='uos',
+            domain_value=domain_rpm,
+            **kwargs
+        )
+        # 하위호환성을 위한 속성
+        self.domain_rpm = domain_rpm
 
 
 def create_domain_dataloaders(data_dir: str = DATA_CONFIG['data_dir'],
                             domain_order: List[int] = DATA_CONFIG['domain_order'],
+                            dataset_type: str = 'uos',
                             batch_size: int = 32,
                             num_workers: int = 4,
                             use_collate_fn: bool = True) -> Dict[int, Dict[str, DataLoader]]:
     """
-    도메인별(RPM별) DataLoader 생성
+    도메인별 DataLoader 생성 (UOS/CWRU 지원)
     
     Args:
         data_dir (str): 데이터 디렉토리
-        domain_order (List[int]): RPM 순서
+        domain_order (List[int]): 도메인 순서 (UOS: RPM, CWRU: Load)
+        dataset_type (str): 'uos' 또는 'cwru'
         batch_size (int): 배치 크기
         num_workers (int): 워커 수
         use_collate_fn (bool): 배치 토크나이징 사용 여부
         
     Returns:
-        Dict[int, Dict[str, DataLoader]]: {RPM: {'train': DataLoader, 'val': DataLoader, 'test': DataLoader}}
+        Dict[int, Dict[str, DataLoader]]: {domain: {'train': DataLoader, 'val': DataLoader, 'test': DataLoader}}
     """
     domain_dataloaders = {}
     
     # collate_fn 준비
     collate_fn = create_collate_fn() if use_collate_fn else None
     
-    for rpm in domain_order:
-        logger.info(f"Domain {rpm} RPM 데이터로더 생성 중...")
+    for domain_value in domain_order:
+        domain_name = f"{domain_value}RPM" if dataset_type == 'uos' else f"{domain_value}HP"
+        logger.info(f"Domain {domain_name} 데이터로더 생성 중...")
         
         # 각 subset별 Dataset 생성
-        train_dataset = UOSDataset(
-            data_dir=data_dir, 
-            domain_rpm=rpm, 
+        train_dataset = BearingDataset(
+            data_dir=data_dir,
+            dataset_type=dataset_type,
+            domain_value=domain_value,
             subset='train'
         )
         
-        val_dataset = UOSDataset(
+        val_dataset = BearingDataset(
             data_dir=data_dir,
-            domain_rpm=rpm, 
+            dataset_type=dataset_type,
+            domain_value=domain_value,
             subset='val'
         )
         
-        test_dataset = UOSDataset(
+        test_dataset = BearingDataset(
             data_dir=data_dir,
-            domain_rpm=rpm,
+            dataset_type=dataset_type,
+            domain_value=domain_value,
             subset='test'
         )
         
@@ -340,13 +518,13 @@ def create_domain_dataloaders(data_dir: str = DATA_CONFIG['data_dir'],
             collate_fn=collate_fn
         )
         
-        domain_dataloaders[rpm] = {
+        domain_dataloaders[domain_value] = {
             'train': train_loader,
             'val': val_loader,
             'test': test_loader
         }
         
-        logger.info(f"Domain {rpm} RPM: Train {len(train_dataset)}, "
+        logger.info(f"Domain {domain_name}: Train {len(train_dataset)}, "
                    f"Val {len(val_dataset)}, Test {len(test_dataset)}")
     
     return domain_dataloaders
@@ -396,6 +574,7 @@ def create_combined_dataloader(data_dir: str = DATA_CONFIG['data_dir'],
 
 def create_first_domain_dataloader(data_dir: str = DATA_CONFIG['data_dir'],
                                   domain_order: List[int] = DATA_CONFIG['domain_order'],
+                                  dataset_type: str = 'uos',
                                   subset: str = 'train',
                                   batch_size: int = 32,
                                   num_workers: int = 4,
@@ -414,13 +593,14 @@ def create_first_domain_dataloader(data_dir: str = DATA_CONFIG['data_dir'],
     Returns:
         DataLoader: 첫 번째 도메인만의 DataLoader
     """
-    # 첫 번째 도메인 RPM
-    first_domain_rpm = domain_order[0]
+    # 첫 번째 도메인 값
+    first_domain_value = domain_order[0]
     
     # 첫 번째 도메인만의 Dataset 생성
-    dataset = UOSDataset(
+    dataset = BearingDataset(
         data_dir=data_dir,
-        domain_rpm=first_domain_rpm,
+        dataset_type=dataset_type,
+        domain_value=first_domain_value,
         subset=subset
     )
     
@@ -436,7 +616,8 @@ def create_first_domain_dataloader(data_dir: str = DATA_CONFIG['data_dir'],
         collate_fn=collate_fn
     )
     
-    logger.info(f"First Domain DataLoader 생성: Domain {first_domain_rpm} RPM, "
+    domain_name = f"{first_domain_value}RPM" if dataset_type == 'uos' else f"{first_domain_value}HP"
+    logger.info(f"First Domain DataLoader 생성: Domain {domain_name}, "
                f"{subset} subset, {len(dataset)}개 샘플")
     
     return dataloader

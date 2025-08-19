@@ -12,6 +12,10 @@
 - **Continual learning** with asymmetric temperature (text minimal update, vibration focused adaptation)
 - **Vibration encoder**: Time Series Transformer (TST) 사용 – vibration signals의 temporal patterns capture
 
+### 🎯 실험 시나리오
+- **시나리오 1 (UOS)**: Varying Speed - RPM 변화에 따른 continual learning (600→800→1000→1200→1400→1600 RPM)
+- **시나리오 2 (CWRU)**: Varying Load - 부하 변화에 따른 continual learning (0→1→2→3 HP)
+
 ```
 진동 신호: [복잡한 파형 데이터] 
     ↓ VibrationEncoder (TST)
@@ -89,16 +93,29 @@ Input:
 ### 핵심 파일들
 ```
 TextVibCLIP/
-├── 📄 TextVibCLIP_model.py              # Core model: Joint training & continual learning 
-├── 📄 연구제안서.txt                      # Research proposal
-├── 📁 uos_data/                         # original UOS bearing dataset
-├── 📁 cwru_data/                         # original CWRU bearing dataset
-├── 📁 data_scenario1/                         # scenario 1 data (with UOS dataset)
-├── 📁 data_scenario2/                         # scenario 2 data (with CWRU dataset)
-└── 📁 checkpoints/                      # Checkpoints
+├── 📄 main.py                           # 메인 실험 실행 스크립트
+├── 📁 src/                              # 소스 코드
+│   ├── textvib_model.py                 # TextVibCLIP 메인 모델
+│   ├── continual_trainer.py            # Continual Learning 트레이너
+│   ├── data_loader.py                   # 데이터 로더 (UOS/CWRU 지원)
+│   ├── text_encoder.py                  # DistilBERT + LoRA 텍스트 인코더
+│   ├── vibration_encoder.py             # TST 기반 진동 인코더
+│   └── utils.py                         # 유틸리티 함수들
+├── 📁 configs/                          # 설정 파일들
+│   └── model_config.py                  # 모델 및 데이터 설정
+├── 📁 uos_data/                         # UOS 원본 데이터셋
+├── 📁 cwru_data/                        # CWRU 원본 데이터셋  
+├── 📁 data_scenario1/                   # 시나리오 1 데이터 (UOS, Varying Speed)
+├── 📁 data_scenario2/                   # 시나리오 2 데이터 (CWRU, Varying Load)
+├── 📄 prepare_uos_scenario1.py          # UOS 데이터 전처리 스크립트
+├── 📄 prepare_cwru_scenario2.py         # CWRU 데이터 전처리 스크립트
+└── 📁 checkpoints/                      # 체크포인트 저장소
 ```
-#### TextVibCLIP_model.py` ⭐
-**목적**: Text와 vibration encoders를 InfoNCE로 joint 학습하며, multimodal contrastive & continual adaptation 구현.
+
+#### 주요 컴포넌트 ⭐
+- **TextVibCLIP Model**: Text와 vibration encoders를 InfoNCE로 joint 학습, multimodal contrastive & continual adaptation 구현
+- **Continual Trainer**: Domain별 순차 학습 및 성능 평가 관리  
+- **BearingDataset**: UOS/CWRU 통합 지원, 윈도잉 기반 샘플 생성
 
 ---
 
@@ -121,32 +138,52 @@ InfoNCE = 1/(2N) * Σ[i=1 to N] [
 
 ### 데이터 구조
 
-#### 파일명 규칙
+#### 시나리오 1: UOS 데이터셋 (Varying Speed)
+**파일명 규칙:**
 ```
-예시: H_B_16_30204_600.mat
+예시: H_B_30204_600.mat
 ├── H: 회전체 상태 (H=Healthy, L=Looseness, U=Unbalance, M=Misalignment)
 ├── B: 베어링 상태 (H=Healthy, B=Ball fault, IR=Inner race, OR=Outer race)  
-├── 16: 샘플링 주파수 (16=16kHz)
 ├── 30204: 베어링 타입 (6204=Deep Groove Ball, 30204=Tapered Roller, N204/NJ204=Cylindrical Roller)
 └── 600: 회전 속도 (600 RPM)
 ```
 
-#### 텍스트 생성 예시
+**텍스트 생성 예시:**
 ```python
-# 입력: H_B_16_30204_600.mat
+# 입력: H_B_30204_600.mat
 # 출력: "A tapered roller bearing operating at 600 rpm with healthy rotating component and ball fault."
 ```
 
-### UOS 데이터셋 전처리
-data_scenario1/ 폴더에 있는 데이터셋을 사용하여 텍스트 생성.아래 명령어 실행
-
+**데이터 전처리:**
 ```bash
 python prepare_uos_scenario1.py
 ```
+1. UOS 데이터셋에서 16kHz 데이터만 필터링
+2. 단일 결함만 선별 (복합결함 제외)  
+3. U3→U, M3→M으로 relabel하여 라벨 균형 확보
 
-1. UOS 데이터셋에서 16kHz 데이터만 필터링
-2. 단일 결함만 선별 (복합결함 제외)
-3. U3→U, M3→M으로 relabel
+#### 시나리오 2: CWRU 데이터셋 (Varying Load)
+**파일명 규칙:**
+```
+예시: B_0hp_1.mat
+├── B: 베어링 상태 (Normal=정상, B=Ball fault, IR=Inner race, OR=Outer race)
+├── 0hp: 부하 (0, 1, 2, 3 horsepower)
+└── 1: 파일 순번
+```
+
+**텍스트 생성 예시:**
+```python
+# 입력: B_0hp_1.mat
+# 출력: "A deep groove ball bearing operating under 0 horsepower load with ball fault."
+```
+
+**데이터 전처리:**
+```bash
+python prepare_cwru_scenario2.py
+```
+1. Drive End 12kHz 데이터만 사용 (Fan End 제외)
+2. Fault size 무시하고 라벨 균형 맞춤
+3. Load별 도메인 구성: 0hp → 1hp → 2hp → 3hp
 
 ---
 ### LoRA 전략
