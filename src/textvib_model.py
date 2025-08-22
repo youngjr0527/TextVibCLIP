@@ -28,7 +28,7 @@ class InfoNCELoss(nn.Module):
     """
     Bidirectional InfoNCE Loss with asymmetric temperature
     
-    - Joint training: τ_text = τ_vib (균등 학습)
+    - First domain training: τ_text = τ_vib (균등 학습)
     - Continual learning: τ_text > τ_vib (텍스트 안정화, 진동 적응 강화)
     """
     
@@ -108,15 +108,15 @@ class TextVibCLIP(nn.Module):
     TextVibCLIP 메인 모델
     
     Text Encoder + Vibration Encoder + InfoNCE Loss
-    Joint training 및 Continual learning 지원
+    First domain training 및 Continual learning 지원
     """
     
     def __init__(self,
-                 domain_stage: str = 'joint',
+                 domain_stage: str = 'first_domain',
                  embedding_dim: int = MODEL_CONFIG['embedding_dim']):
         """
         Args:
-            domain_stage (str): 'joint' (Domain 1) 또는 'continual' (Domain 2+)
+            domain_stage (str): 'first_domain' (Domain 1) 또는 'continual' (Domain 2+)
             embedding_dim (int): 임베딩 차원
         """
         super(TextVibCLIP, self).__init__()
@@ -131,9 +131,9 @@ class TextVibCLIP(nn.Module):
         self.vibration_encoder = create_vibration_encoder()
         
         # InfoNCE Loss 설정
-        if domain_stage == 'joint':
-            temp_text = MODEL_CONFIG['infonce']['joint_temperature_text']
-            temp_vib = MODEL_CONFIG['infonce']['joint_temperature_vib']
+        if domain_stage == 'first_domain':
+            temp_text = MODEL_CONFIG['infonce']['first_domain_temperature_text']
+            temp_vib = MODEL_CONFIG['infonce']['first_domain_temperature_vib']
         else:  # continual
             temp_text = MODEL_CONFIG['infonce']['continual_temperature_text']
             temp_vib = MODEL_CONFIG['infonce']['continual_temperature_vib']
@@ -253,8 +253,8 @@ class TextVibCLIP(nn.Module):
         
         logger.info("Continual learning 모드로 전환 완료 (TextEncoder 완전 freeze)")
     
-    def switch_to_joint_mode(self):
-        """Joint training 모드로 전환"""
+    def switch_to_first_domain_mode(self):
+        """First domain training 모드로 전환"""
         self.is_continual_mode = False
         
         # Text encoder LoRA 학습 활성화
@@ -266,11 +266,16 @@ class TextVibCLIP(nn.Module):
                 param.requires_grad = True
         
         # InfoNCE temperature 업데이트
-        temp_text = MODEL_CONFIG['infonce']['joint_temperature_text']
-        temp_vib = MODEL_CONFIG['infonce']['joint_temperature_vib']
+        temp_text = MODEL_CONFIG['infonce']['first_domain_temperature_text']
+        temp_vib = MODEL_CONFIG['infonce']['first_domain_temperature_vib']
         self.infonce_loss.update_temperatures(temp_text, temp_vib)
         
-        logger.info("Joint training 모드로 전환 완료 (TextEncoder 활성화)")
+        logger.info("First domain training 모드로 전환 완료 (TextEncoder 활성화)")
+    
+    # 하위 호환성을 위한 별칭
+    def switch_to_joint_mode(self):
+        """하위 호환성을 위한 별칭"""
+        return self.switch_to_first_domain_mode()
     
     def get_trainable_parameters(self) -> Dict[str, int]:
         """각 컴포넌트별 학습 가능한 파라미터 수 반환"""
@@ -311,19 +316,19 @@ class TextVibCLIP(nn.Module):
         if checkpoint.get('is_continual_mode', False):
             self.switch_to_continual_mode()
         else:
-            self.switch_to_joint_mode()
+            self.switch_to_first_domain_mode()
         
         logger.info(f"체크포인트 로딩 완료: {path}")
         
         return checkpoint
 
 
-def create_textvib_model(domain_stage: str = 'joint') -> TextVibCLIP:
+def create_textvib_model(domain_stage: str = 'first_domain') -> TextVibCLIP:
     """
     도메인 단계에 따른 TextVibCLIP 모델 생성
     
     Args:
-        domain_stage (str): 'joint' (Domain 1) 또는 'continual' (Domain 2+)
+        domain_stage (str): 'first_domain' (Domain 1) 또는 'continual' (Domain 2+)
         
     Returns:
         TextVibCLIP: 설정된 모델
@@ -369,9 +374,9 @@ if __name__ == "__main__":
     
     print("=== TextVibCLIP 테스트 ===")
     
-    # Joint training 모델 테스트
-    print("\n1. Joint Training 모델")
-    model_joint = create_textvib_model('joint')
+    # First domain training 모델 테스트
+    print("\n1. First Domain Training 모델")
+    model_first = create_textvib_model('first_domain')
     
     # 테스트 데이터 생성
     batch_size = 4
@@ -389,11 +394,11 @@ if __name__ == "__main__":
     
     # GPU 사용 가능하면 이동
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model_joint.to(device)
+    model_first.to(device)
     test_batch['vibration'] = test_batch['vibration'].to(device)
     
     # Forward pass 테스트
-    results = model_joint(test_batch, return_embeddings=True)
+    results = model_first(test_batch, return_embeddings=True)
     
     print(f"Loss: {results['loss'].item():.4f}")
     print(f"Text embeddings shape: {results['text_embeddings'].shape}")
@@ -401,9 +406,9 @@ if __name__ == "__main__":
     
     # Continual learning 모드 전환 테스트
     print("\n2. Continual Learning 모드 전환")
-    model_joint.switch_to_continual_mode()
+    model_first.switch_to_continual_mode()
     
-    results_continual = model_joint(test_batch, return_embeddings=True)
+    results_continual = model_first(test_batch, return_embeddings=True)
     print(f"Continual mode loss: {results_continual['loss'].item():.4f}")
     
     # 유사도 계산 테스트

@@ -171,13 +171,14 @@ def _generate_cwru_text_description(metadata: Dict[str, str]) -> str:
     return text
 
 
-def load_mat_file(filepath: str, signal_key: str = None) -> np.ndarray:
+def load_mat_file(filepath: str, signal_key: str = None, dataset_type: str = None) -> np.ndarray:
     """
     .mat 파일에서 진동 신호 로딩
     
     Args:
         filepath (str): .mat 파일 경로
         signal_key (str, optional): 신호 키 이름 (자동 탐지 시 None)
+        dataset_type (str, optional): 데이터셋 타입 ('uos', 'cwru')
         
     Returns:
         np.ndarray: 진동 신호 (1D array)
@@ -189,17 +190,43 @@ def load_mat_file(filepath: str, signal_key: str = None) -> np.ndarray:
         data_keys = [k for k in mat_data.keys() if not k.startswith('__')]
         
         if signal_key is not None:
+            # 명시적으로 지정된 키 사용
             if signal_key not in mat_data:
                 raise KeyError(f"키 '{signal_key}'를 찾을 수 없습니다: {filepath}")
             signal = mat_data[signal_key]
         else:
-            if len(data_keys) == 0:
-                raise ValueError(f"데이터 키를 찾을 수 없습니다: {filepath}")
-            elif len(data_keys) == 1:
-                signal = mat_data[data_keys[0]]
+            # 데이터셋 타입에 따른 자동 선택
+            if dataset_type == 'cwru':
+                # CWRU: Drive End 채널만 사용
+                de_key = None
+                for key in data_keys:
+                    if '_DE_time' in key:  # Drive End 채널 찾기
+                        de_key = key
+                        break
+                
+                if de_key is None:
+                    raise ValueError(f"CWRU Drive End 채널을 찾을 수 없습니다: {filepath}, 키들: {data_keys}")
+                
+                signal = mat_data[de_key]
+                
+            elif dataset_type == 'uos':
+                # UOS: 'Data' 키 우선 선택
+                if 'Data' in data_keys:
+                    signal = mat_data['Data']
+                elif len(data_keys) == 1:
+                    signal = mat_data[data_keys[0]]
+                else:
+                    # 가장 큰 배열을 신호로 가정
+                    signal = max([mat_data[k] for k in data_keys], key=lambda x: x.size)
             else:
-                # 가장 큰 배열을 신호로 가정
-                signal = max([mat_data[k] for k in data_keys], key=lambda x: x.size)
+                # 기본 동작 (하위 호환성)
+                if len(data_keys) == 0:
+                    raise ValueError(f"데이터 키를 찾을 수 없습니다: {filepath}")
+                elif len(data_keys) == 1:
+                    signal = mat_data[data_keys[0]]
+                else:
+                    # 가장 큰 배열을 신호로 가정
+                    signal = max([mat_data[k] for k in data_keys], key=lambda x: x.size)
         
         # 1D 배열로 변환
         signal = np.squeeze(signal)

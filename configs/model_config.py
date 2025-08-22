@@ -8,7 +8,7 @@ MODEL_CONFIG = {
     # 임베딩 차원
     'embedding_dim': 512,
     'text_dim': 768,  # DistilBERT hidden size
-    'vibration_input_dim': 1,  # UOS: 단일 채널 진동 신호
+    'vibration_input_dim': 1,  # UOS/CWRU: 단일 채널 진동 신호 (CWRU는 Drive End만)
     
     # Text Encoder (DistilBERT + LoRA)
     'text_encoder': {
@@ -42,9 +42,9 @@ MODEL_CONFIG = {
     
     # InfoNCE Loss
     'infonce': {
-        # Joint Training (Domain 1)
-        'joint_temperature_text': 0.07,
-        'joint_temperature_vib': 0.07,
+        # First Domain Training (Domain 1)
+        'first_domain_temperature_text': 0.07,
+        'first_domain_temperature_vib': 0.07,
         
         # Continual Learning (Domain 2+) - 최적화된 비대칭 설정  
         'continual_temperature_text': 0.12,  # 높음: text 변화 억제 (안정성 확보)

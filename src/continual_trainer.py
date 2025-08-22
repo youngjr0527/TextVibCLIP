@@ -56,7 +56,7 @@ class ContinualTrainer:
         
         # 모델 초기화
         if model is None:
-            self.model = create_textvib_model('joint')
+            self.model = create_textvib_model('first_domain')
         else:
             self.model = model
         
@@ -108,7 +108,7 @@ class ContinualTrainer:
             num_epochs = self.num_epochs
         
         # 모델을 첫 번째 도메인 학습 모드로 설정
-        self.model.switch_to_joint_mode()  # Joint mode 유지 (LoRA 활성화)
+        self.model.switch_to_first_domain_mode()  # First domain mode (LoRA 활성화)
         
         # Optimizer 설정 (Text LoRA + Vibration full)
         optimizer = self._create_optimizer()
@@ -567,7 +567,7 @@ class ContinualTrainer:
         }
     
     def _create_optimizer(self) -> torch.optim.Optimizer:
-        """Joint training용 optimizer 생성"""
+        """First domain training용 optimizer 생성"""
         return optim.AdamW(
             self.model.parameters(),
             lr=self.learning_rate,

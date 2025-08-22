@@ -94,10 +94,8 @@ class TextEncoder(nn.Module):
     
     def enable_lora_training(self):
         """LoRA 학습 활성화 (Domain 1에서 사용)"""
-        if hasattr(self.distilbert, 'enable_adapters'):
-            self.distilbert.enable_adapters()
-        
-        # LoRA 파라미터만 학습 가능하게 설정
+        # PEFT 모델에서 어댑터는 이미 활성화되어 있으므로 enable_adapters() 호출 불필요
+        # 대신 LoRA 파라미터만 학습 가능하게 설정
         for name, param in self.distilbert.named_parameters():
             if 'lora_' in name:
                 param.requires_grad = True
@@ -234,7 +232,7 @@ class TextEncoderConfig:
     
     @staticmethod # 굳이 객체를 만들지 않고도 호출 가능하도록 @staticmethod로 선언
     def get_domain1_config() -> Dict:
-        """Domain 1 (Joint Training) 설정"""
+        """Domain 1 (First Domain Training) 설정"""
         return {
             'enable_lora': True,
             'freeze_base': True,
@@ -253,17 +251,17 @@ class TextEncoderConfig:
         }
 
 
-def create_text_encoder(domain_stage: str = 'joint') -> TextEncoder:
+def create_text_encoder(domain_stage: str = 'first_domain') -> TextEncoder:
     """
     도메인 단계에 따른 TextEncoder 생성
     
     Args:
-        domain_stage (str): 'joint' (Domain 1) 또는 'continual' (Domain 2+)
+        domain_stage (str): 'first_domain' (Domain 1) 또는 'continual' (Domain 2+)
         
     Returns:
         TextEncoder: 설정된 텍스트 인코더
     """
-    if domain_stage == 'joint':
+    if domain_stage == 'first_domain':
         config = TextEncoderConfig.get_domain1_config()
     elif domain_stage == 'continual':
         config = TextEncoderConfig.get_continual_config()
@@ -288,9 +286,9 @@ if __name__ == "__main__":
     
     print("=== TextEncoder 테스트 ===")
     
-    # Domain 1 (Joint Training) 인코더 테스트
-    print("\n1. Domain 1 (Joint Training) 인코더")
-    encoder_domain1 = create_text_encoder('joint')
+    # Domain 1 (First Domain Training) 인코더 테스트
+    print("\n1. Domain 1 (First Domain Training) 인코더")
+    encoder_domain1 = create_text_encoder('first_domain')
     
     # 테스트 텍스트
     test_texts = [

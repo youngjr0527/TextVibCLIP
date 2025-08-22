@@ -7,6 +7,11 @@ data_scenario2/
 # 데이터 파일들
 *.mat
 *.txt
+*.csv
+*.json
+*.png
+*.jpg
+*.jpeg
 
 # 학습 결과물들
 checkpoints/

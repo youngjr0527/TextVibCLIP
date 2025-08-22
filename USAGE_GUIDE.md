@@ -41,14 +41,17 @@ python run_all_scenarios.py --skip_uos --output_dir cwru_only
 
 #### 개별 시나리오 실행
 ```bash
-# UOS 시나리오만
-python main.py --experiment_name uos_varying_speed
+# UOS 시나리오 (기본)
+python main.py --experiment_name uos_varying_speed --save_visualizations
 
-# CWRU 시나리오만
+# CWRU 시나리오
 python main.py \
     --experiment_name cwru_varying_load \
-    --data_dir data_scenario2 \
-    --dataset_type cwru
+    --dataset_type cwru \
+    --save_visualizations
+
+# 시각화 없이 실행 (빠른 테스트)
+python main.py --experiment_name quick_test --dataset_type uos
 ```
 
 #### 주요 옵션
@@ -57,7 +60,9 @@ python main.py \
 - `--batch_size 8`: 배치 크기
 - `--learning_rate 1e-4`: 학습률
 - `--replay_buffer_size 500`: Replay buffer 크기
-- `--save_plots`: 결과 플롯 저장
+- `--save_plots`: 기본 학습 곡선 저장
+- `--save_visualizations`: **고급 시각화 저장 (t-SNE, confusion matrix 등)**
+- `--dataset_type uos/cwru`: 데이터셋 타입 선택
 
 ### 3. 실험 모드
 
@@ -99,22 +104,30 @@ python main.py \
 - **Loss Function**: Bidirectional InfoNCE with asymmetric temperature
 
 ### Continual Learning 전략
-1. **First Domain**: Joint training (Text LoRA + Vibration full training)
+1. **First Domain**: First domain training (Text LoRA + Vibration full training)
 2. **Remaining Domains**: Text freeze + Vibration adaptation + Replay buffer
 
 ### 온도 파라미터
-- **Joint Training**: τ_text = τ_vib = 0.07 (균등 학습)
+- **First Domain Training**: τ_text = τ_vib = 0.07 (균등 학습)
 - **Continual Learning**: τ_text = 0.12, τ_vib = 0.04 (비대칭 적응)
 
 ## 📈 결과 분석
 
-### 통합 실험 결과 (CSV 형태)
+### 통합 실험 결과 (CSV + 시각화)
 ```
 results_comparison/
-├── detailed_results_YYYYMMDD_HHMMSS.csv    # 도메인별 상세 성능
-├── summary_results_YYYYMMDD_HHMMSS.csv     # 시나리오별 요약 성능
-├── comparison_results_YYYYMMDD_HHMMSS.csv  # 시나리오 간 비교표
-└── all_scenarios_YYYYMMDD_HHMMSS.log       # 전체 실행 로그
+├── detailed_results_YYYYMMDD_HHMMSS.csv              # 도메인별 상세 성능
+├── summary_results_YYYYMMDD_HHMMSS.csv               # 시나리오별 요약 성능
+├── comparison_results_YYYYMMDD_HHMMSS.csv            # 시나리오 간 비교표
+├── all_scenarios_YYYYMMDD_HHMMSS.log                 # 전체 실행 로그
+└── 📊 논문용 시각화 결과들:
+    ├── TextVibCLIP_1_UOS_Scenario1_tsne.png          # UOS t-SNE (라벨별 구분)
+    ├── TextVibCLIP_1_CWRU_Scenario2_tsne.png         # CWRU t-SNE (라벨별 구분)
+    ├── TextVibCLIP_2_continual_summary.png           # Continual Learning 종합 비교
+    ├── TextVibCLIP_3_UOS_Scenario1_domain_shift.png  # UOS Domain Shift 분석
+    ├── TextVibCLIP_3_CWRU_Scenario2_domain_shift.png # CWRU Domain Shift 분석
+    ├── TextVibCLIP_4_UOS_Scenario1_confusion.png     # UOS Confusion Matrix
+    └── TextVibCLIP_4_CWRU_Scenario2_confusion.png    # CWRU Confusion Matrix
 ```
 
 ### CSV 파일 구조
@@ -149,6 +162,36 @@ results/experiment_name_timestamp/
 - **Average Forgetting**: 이전 도메인 성능 저하 정도
 - **Top-1/Top-5 Retrieval**: 검색 성능
 - **Domain별 성능**: 각 도메인별 상세 성능
+
+### 📊 논문용 시각화 Figure 설명
+
+#### **Figure 1: Advanced t-SNE Embedding Space**
+- **목적**: Multimodal alignment 품질 시각적 증명
+- **내용**: 
+  - 좌측: 모달리티별 구분 (Text=원형, Vibration=삼각형)
+  - 우측: 고장 유형별 구분 (Normal/B/IR/OR)
+- **논문 활용**: "텍스트와 진동이 동일한 임베딩 공간에 잘 정렬됨"
+
+#### **Figure 2: Continual Learning Performance Summary**
+- **목적**: 두 시나리오 종합 비교 분석
+- **내용**:
+  - (a) 도메인별 정확도 진화
+  - (b) Catastrophic forgetting 비교
+  - (c) Retrieval 성능 비교  
+  - (d) 데이터 규모 vs 성능 관계
+- **논문 활용**: "제안 방법의 continual learning 효과성 증명"
+
+#### **Figure 3: Domain Shift Analysis**
+- **목적**: Domain shift 정도 정량화
+- **내용**:
+  - 도메인별 임베딩 중심간 거리 히트맵
+  - 순차적 domain transition 크기 분석
+- **논문 활용**: "RPM/Load 변화가 임베딩 공간에 미치는 영향 분석"
+
+#### **Figure 4: Confusion Matrices**
+- **목적**: 분류 성능 상세 분석
+- **내용**: 각 도메인별 혼동 행렬
+- **논문 활용**: "어떤 고장 유형이 분류하기 어려운지 분석"
 
 ## 🛠️ 트러블슈팅
 

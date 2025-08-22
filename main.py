@@ -1,6 +1,6 @@
 """
 TextVibCLIP 메인 실험 실행 스크립트
-Joint Training + Continual Learning 전체 파이프라인
+First Domain Training + Continual Learning 전체 파이프라인
 
 지원 시나리오:
 - 시나리오 1 (UOS): Varying Speed (600→1600 RPM) 
@@ -13,12 +13,22 @@ import os
 import time
 import torch
 from datetime import datetime
+import warnings
+
+# Torchvision beta warning 비활성화
+try:
+    import torchvision
+    torchvision.disable_beta_transforms_warning()
+except:
+    pass
+from pathlib import Path
 
 # 모듈 import
 from src.continual_trainer import ContinualTrainer
 from src.data_loader import create_domain_dataloaders, create_combined_dataloader, create_first_domain_dataloader
 from src.textvib_model import create_textvib_model
 from src.utils import set_seed
+from src.visualization import create_visualizer
 from configs.model_config import TRAINING_CONFIG, DATA_CONFIG
 
 # 로깅 설정
@@ -88,6 +98,10 @@ def parse_arguments():
                        help='평가 간격 (에포크)')
     parser.add_argument('--save_plots', action='store_true',
                        help='결과 플롯 저장 여부')
+    parser.add_argument('--save_visualizations', action='store_true',
+                       help='고급 시각화 저장 여부 (t-SNE, confusion matrix 등)')
+    parser.add_argument('--dataset_type', type=str, default='uos',
+                       choices=['uos', 'cwru'], help='데이터셋 타입')
     
     # 재현성 설정
     parser.add_argument('--seed', type=int, default=42,
@@ -275,6 +289,72 @@ def print_experiment_summary(first_domain_results: dict,
     logger.info("="*50)
 
 
+def collect_domain_embeddings_for_visualization(trainer: ContinualTrainer,
+                                               args: argparse.Namespace,
+                                               device: torch.device,
+                                               logger: logging.Logger) -> Dict[int, Dict]:
+    """시각화용 도메인별 임베딩 수집"""
+    logger.info("📊 시각화용 임베딩 수집 중...")
+    
+    try:
+        # 데이터셋 타입에 따른 설정
+        if args.dataset_type == 'cwru':
+            from configs.model_config import CWRU_DATA_CONFIG
+            data_config = CWRU_DATA_CONFIG
+        else:
+            data_config = DATA_CONFIG
+        
+        # 도메인별 데이터로더 생성
+        domain_loaders = create_domain_dataloaders(
+            data_dir=data_config['data_dir'],
+            domain_order=data_config['domain_order'],
+            dataset_type=args.dataset_type,
+            batch_size=16  # 시각화용으로 작은 배치
+        )
+        
+        domain_embeddings = {}
+        trainer.model.eval()
+        
+        for domain, loaders in domain_loaders.items():
+            test_loader = loaders['test']
+            
+            text_embeddings = []
+            vib_embeddings = []
+            metadata_list = []
+            
+            with torch.no_grad():
+                sample_count = 0
+                max_samples = 100  # 시각화용으로 제한
+                
+                for batch in test_loader:
+                    if sample_count >= max_samples:
+                        break
+                    
+                    batch = trainer._move_batch_to_device(batch)
+                    results = trainer.model(batch, return_embeddings=True)
+                    
+                    text_embeddings.append(results['text_embeddings'])
+                    vib_embeddings.append(results['vib_embeddings'])
+                    metadata_list.extend(batch['metadata'])
+                    
+                    sample_count += batch['vibration'].size(0)
+            
+            if text_embeddings:
+                domain_embeddings[domain] = {
+                    'text_embeddings': torch.cat(text_embeddings, dim=0),
+                    'vib_embeddings': torch.cat(vib_embeddings, dim=0),
+                    'metadata': metadata_list
+                }
+                
+                logger.info(f"   Domain {domain}: {len(metadata_list)}개 샘플 수집")
+        
+        return domain_embeddings
+        
+    except Exception as e:
+        logger.error(f"임베딩 수집 실패: {e}")
+        return {}
+
+
 def main():
     """메인 실험 실행 함수"""
     # 인수 파싱
@@ -301,7 +381,7 @@ def main():
     
     if args.mode == 'remaining_domains_only' and args.load_first_domain_checkpoint:
         # First domain checkpoint에서 모델 로딩
-        model = create_textvib_model('joint')
+        model = create_textvib_model('first_domain')
         checkpoint = torch.load(args.load_first_domain_checkpoint, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         trainer = ContinualTrainer(
@@ -348,6 +428,52 @@ def main():
         # 결과 요약 출력
         if first_domain_results and remaining_domains_results:
             print_experiment_summary(first_domain_results, remaining_domains_results, logger)
+        
+        # 고급 시각화 생성 (옵션)
+        if args.save_visualizations and remaining_domains_results:
+            logger.info("🎨 고급 시각화 생성 중...")
+            try:
+                visualizer = create_visualizer(os.path.join(exp_dir, 'visualizations'))
+                
+                # 도메인별 임베딩 수집
+                domain_embeddings = collect_domain_embeddings_for_visualization(
+                    trainer, args, device, logger
+                )
+                
+                if domain_embeddings:
+                    # 시나리오 정보 구성
+                    scenario_name = f"{args.dataset_type.upper()}_Scenario"
+                    shift_type = "Varying Speed" if args.dataset_type == 'uos' else "Varying Load"
+                    
+                    scenario_results = {
+                        shift_type: {
+                            'domain_names': [f"D{d}" for d in DATA_CONFIG['domain_order']],
+                            'shift_type': shift_type,
+                            'final_accuracies': remaining_domains_results['final_metrics']['final_accuracies'],
+                            'final_top1_retrievals': remaining_domains_results['final_metrics'].get('final_top1_retrievals', []),
+                            'final_top5_retrievals': remaining_domains_results['final_metrics'].get('final_top5_retrievals', []),
+                            'average_accuracy': remaining_domains_results['final_metrics']['average_accuracy'],
+                            'average_forgetting': remaining_domains_results['final_metrics']['average_forgetting']
+                        }
+                    }
+                    
+                    domain_results = {shift_type: domain_embeddings}
+                    
+                    # 논문용 Figure 생성
+                    figure_paths = visualizer.create_paper_figures(
+                        scenario_results,
+                        domain_results,
+                        output_prefix=f"{scenario_name}_SingleRun"
+                    )
+                    
+                    logger.info(f"✅ 시각화 Figure {len(figure_paths)}개 생성 완료!")
+                    for path in figure_paths:
+                        logger.info(f"   📊 {Path(path).name}")
+                else:
+                    logger.warning("⚠️ 시각화용 임베딩 수집 실패")
+                    
+            except Exception as e:
+                logger.error(f"❌ 시각화 생성 실패: {str(e)}")
         
         logger.info("🎉 실험 성공적으로 완료!")
         

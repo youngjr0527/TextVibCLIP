@@ -22,6 +22,17 @@ import json
 from datetime import datetime
 from typing import Dict, List, Any
 import numpy as np
+import warnings
+
+# Torchvision beta warning 비활성화
+try:
+    import torchvision
+    torchvision.disable_beta_transforms_warning()
+except:
+    pass
+
+# 기타 warning 억제
+warnings.filterwarnings("ignore", category=UserWarning, module="torchvision")
 
 # pandas import (CSV 저장용)
 try:
@@ -42,6 +53,7 @@ from src.continual_trainer import ContinualTrainer
 from src.data_loader import BearingDataset, create_domain_dataloaders
 from src.textvib_model import create_textvib_model
 from src.utils import set_seed
+from src.visualization import create_visualizer
 from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, CWRU_DATA_CONFIG
 
 # 로깅 설정
@@ -281,6 +293,50 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         logger.info(f"   평균 망각도: {final_metrics['average_forgetting']:.4f}")
         logger.info(f"   소요 시간: {total_time/60:.1f}분")
         
+        # 도메인별 임베딩 수집 (시각화용)
+        logger.info("📊 시각화용 임베딩 수집 중...")
+        domain_embeddings = {}
+        
+        for domain in config['domain_order']:
+            test_dataset = BearingDataset(
+                data_dir=config['data_dir'],
+                dataset_type=config['dataset_type'],
+                domain_value=domain,
+                subset='test'
+            )
+            
+            if len(test_dataset) > 0:
+                # 샘플링 (시각화용으로 적당한 수만)
+                max_viz_samples = min(100, len(test_dataset))
+                indices = torch.randperm(len(test_dataset))[:max_viz_samples]
+                
+                text_embeddings = []
+                vib_embeddings = []
+                metadata_list = []
+                
+                trainer.model.eval()
+                with torch.no_grad():
+                    for idx in indices:
+                        sample = test_dataset[idx]
+                        batch = {
+                            'vibration': sample['vibration'].unsqueeze(0).to(device),
+                            'text': [sample['text']]
+                        }
+                        
+                        model_results = trainer.model(batch, return_embeddings=True)
+                        text_embeddings.append(model_results['text_embeddings'])
+                        vib_embeddings.append(model_results['vib_embeddings'])
+                        metadata_list.append(sample['metadata'])
+                
+                if text_embeddings:
+                    domain_embeddings[domain] = {
+                        'text_embeddings': torch.cat(text_embeddings, dim=0),
+                        'vib_embeddings': torch.cat(vib_embeddings, dim=0),
+                        'metadata': metadata_list
+                    }
+        
+        results['domain_embeddings'] = domain_embeddings
+        
         return results
         
     except Exception as e:
@@ -411,6 +467,39 @@ def main():
         logger.info(f"✅ 비교 결과: {comparison_path}")
     except Exception as e:
         logger.error(f"❌ 결과 저장 실패: {str(e)}")
+    
+    # 고급 시각화 생성
+    logger.info("\n🎨 논문용 시각화 생성 중...")
+    try:
+        visualizer = create_visualizer(args.output_dir)
+        
+        # 시나리오별 결과 정리
+        scenario_summary = {}
+        domain_embeddings = {}
+        
+        for scenario_result in results.scenario_results.values():
+            if 'domain_embeddings' in scenario_result:
+                scenario_name = scenario_result.get('shift_type', 'Unknown')
+                scenario_summary[scenario_name] = scenario_result
+                domain_embeddings[scenario_name] = scenario_result['domain_embeddings']
+        
+        # 논문용 Figure 생성
+        if scenario_summary and domain_embeddings:
+            figure_paths = visualizer.create_paper_figures(
+                scenario_summary, 
+                domain_embeddings,
+                output_prefix="TextVibCLIP"
+            )
+            
+            logger.info(f"✅ 논문용 Figure {len(figure_paths)}개 생성 완료!")
+            for path in figure_paths:
+                logger.info(f"   📊 {Path(path).name}")
+        else:
+            logger.warning("⚠️ 시각화용 데이터가 부족합니다.")
+            
+    except Exception as e:
+        logger.error(f"❌ 시각화 생성 실패: {str(e)}")
+        logger.exception("상세 오류:")
     
     # 최종 요약
     total_time = time.time() - total_start_time

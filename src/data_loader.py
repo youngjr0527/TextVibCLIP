@@ -11,7 +11,16 @@ from torch.utils.data import Dataset, DataLoader
 from typing import Dict, List, Tuple, Optional, Union
 from sklearn.model_selection import train_test_split
 import logging
+import warnings
 from transformers import DistilBertTokenizer
+
+# Warning 억제
+warnings.filterwarnings("ignore", category=UserWarning)
+try:
+    import torchvision
+    torchvision.disable_beta_transforms_warning()
+except:
+    pass
 
 from .utils import (
     parse_filename, 
@@ -56,7 +65,7 @@ def create_collate_fn(tokenizer: DistilBertTokenizer = None, max_length: int = 1
         texts = [item['text'] for item in batch]
         metadata_list = [item['metadata'] for item in batch]
         labels = torch.stack([item['labels'] for item in batch])
-        rpms = torch.tensor([item['rpm'] for item in batch])
+        rpms = torch.tensor([item['domain_key'] for item in batch])
         
         # 배치 토크나이징 (더 효율적)
         tokenized = tokenizer(
@@ -246,7 +255,7 @@ class BearingDataset(Dataset):
         try:
             # 첫 번째 파일로 윈도우 수 추정
             first_file = self.file_paths[0]
-            signal = load_mat_file(first_file)
+            signal = load_mat_file(first_file, dataset_type=self.dataset_type)
             windowed_signals = create_windowed_signal(
                 signal, self.window_size, self.overlap_ratio
             )
@@ -369,7 +378,7 @@ class BearingDataset(Dataset):
         
         try:
             # 진동 신호 로딩
-            signal = load_mat_file(filepath)
+            signal = load_mat_file(filepath, dataset_type=self.dataset_type)
             
             # 신호 전처리
             signal = normalize_signal(signal, method=self.normalization)
@@ -536,7 +545,7 @@ def create_combined_dataloader(data_dir: str = DATA_CONFIG['data_dir'],
                              num_workers: int = 4,
                              use_collate_fn: bool = True) -> DataLoader:
     """
-    모든 도메인을 합친 DataLoader 생성 (Joint Training용)
+    모든 도메인을 합친 DataLoader 생성 (First Domain Training용)
     
     Args:
         data_dir (str): 데이터 디렉토리
@@ -580,7 +589,7 @@ def create_first_domain_dataloader(data_dir: str = DATA_CONFIG['data_dir'],
                                   num_workers: int = 4,
                                   use_collate_fn: bool = True) -> DataLoader:
     """
-    첫 번째 도메인만의 DataLoader 생성 (올바른 Joint Training용)
+    첫 번째 도메인만의 DataLoader 생성 (First Domain Training용)
     
     Args:
         data_dir (str): 데이터 디렉토리

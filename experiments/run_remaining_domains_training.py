@@ -50,7 +50,7 @@ def main():
     
     # First domain training 모델 로딩
     logger.info("First domain training 모델 로딩 중...")
-    model = create_textvib_model('joint')
+    model = create_textvib_model('first_domain')
     
     if os.path.exists(args.first_domain_checkpoint):
         checkpoint = torch.load(args.first_domain_checkpoint, map_location=device)

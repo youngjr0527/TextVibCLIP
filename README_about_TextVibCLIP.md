@@ -4,10 +4,10 @@
 
 ## 🎯 프로젝트 개요
 
-**TextVibCLIP**은 베어링 고장 진단을 위한 혁신적인 멀티모달 continual learning framework이다. 진동 신호와 텍스트 metadata를 결합하여 CLIP-inspired contrastive learning을 적용, domain shift 문제를 해결한다. Joint training으로 text encoder와 vibration encoder를 InfoNCE loss로 학습하며, asymmetric adaptation 전략을 통해 continual domain learning을 구현한다.
+**TextVibCLIP**은 베어링 고장 진단을 위한 혁신적인 멀티모달 continual learning framework이다. 진동 신호와 텍스트 metadata를 결합하여 CLIP-inspired contrastive learning을 적용, domain shift 문제를 해결한다. First domain training으로 text encoder와 vibration encoder를 InfoNCE loss로 학습하며, asymmetric adaptation 전략을 통해 continual domain learning을 구현한다.
 
 ### 🔑 핵심 아이디어
-- **진동 신호** + **텍스트 metadata** → **joint multimodal training** via bidirectional InfoNCE
+- **진동 신호** + **텍스트 metadata** → **multimodal contrastive training** via bidirectional InfoNCE
 - **Contrastive learning**으로 unified embedding space 형성
 - **Continual learning** with asymmetric temperature (text minimal update, vibration focused adaptation)
 - **Vibration encoder**: Time Series Transformer (TST) 사용 – vibration signals의 temporal patterns capture
@@ -43,7 +43,7 @@
    - 텍스트 metadata 활용 부족, unimodal approaches의 generalization 부족
 
 ### 해결 방안
-- **Multimodal contrastive learning**: Vibration + text joint training
+- **Multimodal contrastive learning**: Vibration + text contrastive training
 - **Asymmetric continual adaptation**: Temperature scheduling으로 modality별 gradient control
 - **Replay mechanism**: Catastrophic forgetting mitigation
 
@@ -76,7 +76,7 @@ Input:
                     ▼
          ┌─────────────────┐
          │   TextVibCLIP   │
-         │ (InfoNCE joint) │
+         │ (InfoNCE loss) │
          └─────────────────┘
                     │
                     ▼
@@ -113,7 +113,7 @@ TextVibCLIP/
 ```
 
 #### 주요 컴포넌트 ⭐
-- **TextVibCLIP Model**: Text와 vibration encoders를 InfoNCE로 joint 학습, multimodal contrastive & continual adaptation 구현
+- **TextVibCLIP Model**: Text와 vibration encoders를 InfoNCE로 contrastive 학습, multimodal contrastive & continual adaptation 구현
 - **Continual Trainer**: Domain별 순차 학습 및 성능 평가 관리  
 - **BearingDataset**: UOS/CWRU 통합 지원, 윈도잉 기반 샘플 생성
 

@@ -24,7 +24,7 @@ TextVibCLIP/
 │   ├── 📄 model_config.py           # 모델 하이퍼파라미터
 │   └── 📄 experiment_config.py      # 실험 설정
 ├── 📁 experiments/                  # 실험 실행 스크립트들
-│   ├── 📄 run_joint_training.py     # Domain 1 Joint Training
+│   ├── 📄 run_first_domain_training.py     # Domain 1 First Domain Training
 │   ├── 📄 run_continual_learning.py # Domain 2+ Continual Learning
 │   └── 📄 evaluate_model.py         # 모델 평가
 ├── 📁 notebooks/                    # 분석용 노트북
@@ -54,7 +54,7 @@ TextVibCLIP/
 ### 4. `src/textvib_model.py`
 - Bidirectional InfoNCE loss
 - Asymmetric temperature (τ_text, τ_vib)
-- Joint/Continual 모드 지원
+- First Domain/Continual 모드 지원
 
 ### 5. `src/continual_trainer.py`
 - Domain별 순차 학습 파이프라인
@@ -80,7 +80,7 @@ TextVibCLIP/
 ## 📊 실험 시나리오
 
 ### Domain 순서:
-1. **Domain 1 (600 RPM)**: Joint Training
+1. **Domain 1 (600 RPM)**: First Domain Training
 2. **Domain 2 (800 RPM)**: Continual Learning 시작
 3. **Domain 3-6 (1000-1600 RPM)**: 순차 학습
 
