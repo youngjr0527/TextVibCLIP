@@ -215,13 +215,14 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         trainer = ContinualTrainer(
             device=device,
             save_dir=f"checkpoints/{config['name']}",
-            use_amp=True,
-            max_grad_norm=1.0
+            use_amp=False,  # AMP 비활성화로 수치 안정성 확보
+            max_grad_norm=0.1,  # Gradient clipping 강화
+            domain_order=config['domain_order']
         )
         
         # 하이퍼파라미터 설정
         trainer.batch_size = config['batch_size']
-        trainer.learning_rate = 1e-4
+        trainer.learning_rate = 1e-5  # config와 일치
         trainer.replay_buffer.buffer_size_per_domain = config['replay_buffer_size']
         
         # 데이터셋 정보 수집
@@ -248,10 +249,17 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
             batch_size=config['batch_size']
         )
         
-        first_results = trainer.train_first_domain(
-            first_domain_dataloader=first_loader,
-            num_epochs=config['first_domain_epochs']
-        )
+        try:
+            first_results = trainer.train_first_domain(
+                first_domain_dataloader=first_loader,
+                num_epochs=config['first_domain_epochs']
+            )
+        except RuntimeError as e:
+            if "First domain accuracy too low" in str(e):
+                logger.error(f"🛑 {config['name']} 조기 종료: {e}")
+                return None  # 실험 실패로 None 반환
+            else:
+                raise  # 다른 RuntimeError는 다시 발생
         
         # Remaining Domains Training
         logger.info("🔄 Remaining Domains Training...")

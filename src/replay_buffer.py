@@ -221,7 +221,16 @@ class ReplayBuffer:
             available_domains.remove(self.current_domain)
         
         if not available_domains:
-            logger.warning("Replay할 도메인이 없음")
+            # 첫 도메인 학습 시에는 정상적으로 replay할 도메인이 없음
+            if len(self.domains) == 0:
+                logger.debug("첫 도메인 학습 - replay할 도메인이 없음 (정상)")
+            else:
+                # domains가 dict인지 list인지 확인 후 처리
+                if isinstance(self.domains, dict):
+                    domain_keys = list(self.domains.keys())
+                else:
+                    domain_keys = self.domains
+                logger.debug(f"Replay할 도메인이 없음 - 사용 가능: {domain_keys}")
             return None
         
         # 도메인별 샘플 수 결정

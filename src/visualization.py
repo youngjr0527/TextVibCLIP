@@ -138,8 +138,8 @@ class AdvancedVisualizer:
                     bearing_condition = meta.get('bearing_condition', 'Unknown')
                     all_labels.extend([bearing_condition, bearing_condition])  # 텍스트, 진동 동일 라벨
             
-            # 임베딩 결합
-            embeddings = torch.cat(all_embeddings, dim=0).numpy()
+            # 임베딩 결합 (CUDA → CPU 변환)
+            embeddings = torch.cat(all_embeddings, dim=0).cpu().numpy()
             
             # t-SNE 실행
             logger.info("고급 t-SNE 실행 중...")
@@ -244,9 +244,9 @@ class AdvancedVisualizer:
                 vib_emb = results['vib_embeddings']
                 metadata = results['metadata']
                 
-                # 유사도 계산
+                # 유사도 계산 (CUDA → CPU 변환)
                 similarities = torch.cosine_similarity(text_emb, vib_emb, dim=1)
-                predictions = (similarities > 0.5).long().numpy()
+                predictions = (similarities > 0.5).long().cpu().numpy()
                 targets = np.ones_like(predictions)  # 모든 쌍이 positive
                 
                 # Confusion Matrix 생성 (Binary classification)
@@ -339,8 +339,8 @@ class AdvancedVisualizer:
             text_emb_norm = torch.nn.functional.normalize(text_emb_sample, dim=1)
             vib_emb_norm = torch.nn.functional.normalize(vib_emb_sample, dim=1)
             
-            # 유사도 행렬 계산
-            similarity_matrix = torch.matmul(text_emb_norm, vib_emb_norm.t()).numpy()
+            # 유사도 행렬 계산 (CUDA → CPU 변환)
+            similarity_matrix = torch.matmul(text_emb_norm, vib_emb_norm.t()).cpu().numpy()
             
             # 시각화
             plt.figure(figsize=(12, 10))
@@ -508,6 +508,11 @@ class AdvancedVisualizer:
             str: 저장된 파일 경로
         """
         try:
+            # 입력 데이터 검증
+            if not scenario_results:
+                logger.warning("시나리오 결과가 비어있습니다")
+                return None
+                
             fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
             
             scenario_names = list(scenario_results.keys())
@@ -518,8 +523,14 @@ class AdvancedVisualizer:
                 domain_names = results['domain_names']
                 accuracies = results['final_accuracies']
                 
-                ax1.plot(range(len(domain_names)), accuracies, 'o-', 
-                        color=colors[i], label=scenario_name, linewidth=2, markersize=8)
+                # 차원 일치 확인 및 보정
+                min_len = min(len(domain_names), len(accuracies))
+                domain_names = domain_names[:min_len]
+                accuracies = accuracies[:min_len]
+                
+                if min_len > 0:  # 데이터가 있을 때만 플롯
+                    ax1.plot(range(min_len), accuracies, 'o-', 
+                            color=colors[i], label=scenario_name, linewidth=2, markersize=8)
             
             ax1.set_xlabel('Domain Index')
             ax1.set_ylabel('Accuracy')
@@ -531,8 +542,8 @@ class AdvancedVisualizer:
             forgetting_data = []
             for scenario_name, results in scenario_results.items():
                 # Forgetting score 계산 (간단화)
-                accuracies = results['final_accuracies']
-                if len(accuracies) > 1:
+                accuracies = results.get('final_accuracies', [])
+                if isinstance(accuracies, list) and len(accuracies) > 1:
                     forgetting = max(0, accuracies[0] - accuracies[-1])
                 else:
                     forgetting = 0

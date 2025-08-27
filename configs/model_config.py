@@ -42,13 +42,13 @@ MODEL_CONFIG = {
     
     # InfoNCE Loss
     'infonce': {
-        # First Domain Training (Domain 1)
-        'first_domain_temperature_text': 0.07,
-        'first_domain_temperature_vib': 0.07,
+        # First Domain Training (Domain 1) - 더 안정적인 학습
+        'first_domain_temperature_text': 0.1,   # 0.07 → 0.1로 증가
+        'first_domain_temperature_vib': 0.1,    # 0.07 → 0.1로 증가
         
         # Continual Learning (Domain 2+) - 최적화된 비대칭 설정  
-        'continual_temperature_text': 0.12,  # 높음: text 변화 억제 (안정성 확보)
-        'continual_temperature_vib': 0.04,   # 낮음: vib 적응 강화 (학습 촉진)
+        'continual_temperature_text': 0.15,  # 0.12 → 0.15: text 안정성 더 강화
+        'continual_temperature_vib': 0.05,   # 0.04 → 0.05: vib 학습을 조금 완화
     },
     
     # Projection layers
@@ -63,8 +63,8 @@ MODEL_CONFIG = {
 TRAINING_CONFIG = {
     # 기본 학습 설정
     'batch_size': 8,  # 메모리 안전성을 위해 축소 (Quadro RTX 5000 16GB 고려)
-    'num_epochs': 50,
-    'learning_rate': 1e-4,
+    'num_epochs': 100,  # 50 → 100: 더 충분한 학습
+    'learning_rate': 1e-5,  # NaN 방지를 위해 더욱 감소 (5e-5 → 1e-5)
     'weight_decay': 1e-5,
     'warmup_steps': 1000,
     

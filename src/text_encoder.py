@@ -71,17 +71,22 @@ class TextEncoder(nn.Module):
     
     def _apply_lora(self):
         """DistilBERT에 LoRA 적용"""
-        lora_config = LoraConfig(
-            task_type=TaskType.FEATURE_EXTRACTION,
-            r=MODEL_CONFIG['text_encoder']['lora_config']['r'],
-            lora_alpha=MODEL_CONFIG['text_encoder']['lora_config']['lora_alpha'],
-            target_modules=MODEL_CONFIG['text_encoder']['lora_config']['target_modules'],
-            lora_dropout=MODEL_CONFIG['text_encoder']['lora_config']['lora_dropout'],
-            bias="none"
-        )
-        
-        self.distilbert = get_peft_model(self.distilbert, lora_config)
-        logger.info(f"LoRA 적용 완료: rank={lora_config.r}, alpha={lora_config.lora_alpha}")
+        try:
+            lora_config = LoraConfig(
+                task_type=TaskType.FEATURE_EXTRACTION,
+                r=MODEL_CONFIG['text_encoder']['lora_config']['r'],
+                lora_alpha=MODEL_CONFIG['text_encoder']['lora_config']['lora_alpha'],
+                target_modules=MODEL_CONFIG['text_encoder']['lora_config']['target_modules'],
+                lora_dropout=MODEL_CONFIG['text_encoder']['lora_config']['lora_dropout'],
+                bias="none"
+            )
+            
+            self.distilbert = get_peft_model(self.distilbert, lora_config)
+            logger.info(f"LoRA 적용 완료: rank={lora_config.r}, alpha={lora_config.lora_alpha}")
+            
+        except Exception as e:
+            logger.error(f"LoRA 적용 실패: {e}")
+            raise e
     
     def _freeze_base_model(self):
         """Base DistilBERT 파라미터 freeze (LoRA adapter는 제외)"""
@@ -94,24 +99,73 @@ class TextEncoder(nn.Module):
     
     def enable_lora_training(self):
         """LoRA 학습 활성화 (Domain 1에서 사용)"""
-        # PEFT 모델에서 어댑터는 이미 활성화되어 있으므로 enable_adapters() 호출 불필요
-        # 대신 LoRA 파라미터만 학습 가능하게 설정
+        # PEFT adapter 상태 확인 및 활성화
+        if hasattr(self.distilbert, 'peft_config') and self.distilbert.peft_config:
+            # adapter가 존재하는 경우
+            if hasattr(self.distilbert, 'enable_adapters'):
+                try:
+                    self.distilbert.enable_adapters()
+                    logger.info("LoRA adapter 활성화됨")
+                except Exception as e:
+                    logger.warning(f"LoRA adapter 활성화 시도 실패 (무시됨): {e}")
+        else:
+            logger.info("PEFT adapter가 초기화되지 않음 - LoRA 파라미터 직접 활성화")
+        
+        # LoRA 파라미터를 학습 가능하게 설정 (adapter 상태와 무관하게 실행)
+        lora_params_found = 0
         for name, param in self.distilbert.named_parameters():
             if 'lora_' in name:
                 param.requires_grad = True
+                lora_params_found += 1
         
-        logger.info("LoRA 학습 활성화")
+        logger.info(f"LoRA 학습 활성화: {lora_params_found}개 LoRA 파라미터")
     
     def disable_lora_training(self):
         """LoRA 학습 비활성화 (Domain 2+에서 사용)"""
-        if hasattr(self.distilbert, 'disable_adapters'):
-            self.distilbert.disable_adapters()
+        # PEFT adapter 비활성화 시도 (여러 조건 체크)
+        adapter_disabled = False
         
-        # 모든 DistilBERT 파라미터 freeze
+        if hasattr(self.distilbert, 'disable_adapters'):
+            try:
+                # 조건 1: peft_config 확인
+                if hasattr(self.distilbert, 'peft_config') and self.distilbert.peft_config:
+                    self.distilbert.disable_adapters()
+                    adapter_disabled = True
+                    logger.info("PEFT adapter 비활성화됨 (peft_config 경로)")
+                
+                # 조건 2: active_adapters 확인
+                elif hasattr(self.distilbert, 'active_adapters') and len(self.distilbert.active_adapters) > 0:
+                    self.distilbert.disable_adapters()
+                    adapter_disabled = True
+                    logger.info("PEFT adapter 비활성화됨 (active_adapters 경로)")
+                    
+                # 조건 3: adapter_name이 있는지 확인  
+                elif hasattr(self.distilbert, 'adapter_name'):
+                    try:
+                        self.distilbert.disable_adapters()
+                        adapter_disabled = True
+                        logger.info("PEFT adapter 비활성화됨 (adapter_name 경로)")
+                    except:
+                        pass
+                        
+            except ValueError as e:
+                if "No adapter loaded" in str(e):
+                    logger.info("비활성화할 adapter가 없습니다 - 이미 비활성화됨")
+                else:
+                    logger.warning(f"Adapter 비활성화 중 예상치 못한 오류: {e}")
+            except Exception as e:
+                logger.warning(f"Adapter 비활성화 시도 중 오류 (무시됨): {e}")
+        
+        if not adapter_disabled:
+            logger.info("PEFT adapter 상태 불명 - 파라미터 레벨에서 직접 freeze")
+        
+        # 모든 DistilBERT 파라미터 강제 freeze (adapter 상태와 무관)
+        frozen_count = 0
         for param in self.distilbert.parameters():
             param.requires_grad = False
-        
-        logger.info("LoRA 학습 비활성화")
+            frozen_count += 1
+            
+        logger.info(f"LoRA 학습 비활성화 완료: {frozen_count}개 파라미터 freeze")
     
     def tokenize_text(self, 
                      texts: List[str], 

@@ -100,23 +100,23 @@ class BearingDataset(Dataset):
                  data_dir: str = DATA_CONFIG['data_dir'],
                  dataset_type: str = 'uos',
                  domain_value: Optional[Union[int, str]] = None,
+                 subset: str = 'train',
                  window_size: int = DATA_CONFIG['window_size'],
                  overlap_ratio: float = DATA_CONFIG['overlap_ratio'],
                  normalization: str = DATA_CONFIG['signal_normalization'],
-                 max_text_length: int = DATA_CONFIG['max_text_length'],
-                 subset: str = 'train'):
+                 max_text_length: int = DATA_CONFIG['max_text_length']):
         """
         Args:
             data_dir (str): 데이터 폴더 경로 (data_scenario1 또는 data_scenario2)
             dataset_type (str): 'uos' 또는 'cwru'
             domain_value (Union[int, str], optional): 
                 - UOS: RPM 값 (600, 800, etc.)
-                - CWRU: Load 값 ('Load_0hp', 'Load_1hp', etc.)
+                - CWRU: Load 값 (0, 1, 2, 3)
+            subset (str): 'train', 'val', 'test' 중 하나
             window_size (int): 신호 윈도우 크기
             overlap_ratio (float): 윈도우 겹침 비율
             normalization (str): 신호 정규화 방법
             max_text_length (int): 텍스트 최대 길이
-            subset (str): 'train', 'val', 'test' 중 하나
         """
         self.data_dir = data_dir
         self.dataset_type = dataset_type.lower()
@@ -256,8 +256,13 @@ class BearingDataset(Dataset):
             # 첫 번째 파일로 윈도우 수 추정
             first_file = self.file_paths[0]
             signal = load_mat_file(first_file, dataset_type=self.dataset_type)
+            
+            # 타입 안전성 확보
+            window_size = int(self.window_size)
+            overlap_ratio = float(self.overlap_ratio)
+            
             windowed_signals = create_windowed_signal(
-                signal, self.window_size, self.overlap_ratio
+                signal, window_size, overlap_ratio
             )
             return len(windowed_signals)
         except Exception as e:
@@ -276,65 +281,200 @@ class BearingDataset(Dataset):
             return self._split_uos_dataset()
     
     def _split_cwru_dataset(self) -> Tuple[List[str], List[Dict]]:
-        """CWRU 데이터셋 분할 (데이터가 적어서 전체 사용)"""
-        # CWRU는 각 도메인당 4개 파일만 있으므로 split 없이 전체 사용
-        if self.subset in ['train', 'val', 'test']:
-            # 모든 subset에서 전체 데이터 반환 (데이터 부족으로 인한 임시 해결책)
-            return self.file_paths, self.metadata_list
+        """CWRU 데이터셋 분할 (개선된 전략)"""
+        # CWRU 특성: 도메인당 4개 파일 (Normal, B, IR, OR)
+        # 연구 목적에 맞는 분할 전략 적용
+        
+        # 베어링 상태별 라벨 (Normal, B, IR, OR)
+        bearing_labels = [metadata['bearing_condition'] for metadata in self.metadata_list]
+        
+        from collections import Counter
+        label_counts = Counter(bearing_labels)
+        logger.info(f"CWRU 데이터 라벨 분포: {dict(label_counts)}")
+        
+        # CWRU 특별 처리: 파일 수가 적으므로 적응적 분할
+        total_files = len(self.file_paths)
+        
+        if total_files <= 4:
+            # 도메인당 4개 파일인 경우 - 연구 목적에 맞게 분할
+            # 파일 순서: [Normal, B, IR, OR] (알파벳순)
+            
+            if self.subset == 'train':
+                # Train: Normal + 2개 결함 타입 사용
+                selected_indices = [0, 1, 2]  # Normal, B, IR
+            elif self.subset == 'val':
+                # Validation: 1개 결함 타입 사용 (OR)
+                selected_indices = [3] if total_files > 3 else [0]
+            elif self.subset == 'test':
+                # Test: 모든 결함 타입 사용 (완전한 성능 평가)
+                selected_indices = list(range(total_files))
+            else:
+                raise ValueError(f"알 수 없는 subset: {self.subset}")
+            
+            # 인덱스 범위 체크
+            valid_indices = [i for i in selected_indices if i < len(self.file_paths)]
+            selected_files = [self.file_paths[i] for i in valid_indices]
+            selected_meta = [self.metadata_list[i] for i in valid_indices]
+            
+            logger.info(f"CWRU {self.subset} subset: {len(selected_files)}개 파일 사용 (총 {total_files}개 중)")
+            
+            # 실제 선택된 파일명 로깅 (디버깅용)
+            file_names = [os.path.basename(f) for f in selected_files]
+            logger.info(f"CWRU {self.subset} 파일들: {file_names}")
+            
+            return selected_files, selected_meta
+            
         else:
-            raise ValueError(f"알 수 없는 subset: {self.subset}")
+            # 파일이 많은 경우 (여러 도메인 통합 등) - 표준 분할 적용
+            try:
+                # 베어링 상태로 stratified split 시도
+                files_train, files_temp, meta_train, meta_temp = train_test_split(
+                    self.file_paths, self.metadata_list,
+                    test_size=0.4,  # 40%를 test+val용으로
+                    stratify=bearing_labels,
+                    random_state=42
+                )
+                
+                # Temp를 val/test로 분할
+                temp_labels = [metadata['bearing_condition'] for metadata in meta_temp]
+                files_val, files_test, meta_val, meta_test = train_test_split(
+                    files_temp, meta_temp,
+                    test_size=0.5,  # temp의 50%씩 val/test로
+                    stratify=temp_labels,
+                    random_state=42
+                )
+                
+                logger.info("CWRU stratified split 성공")
+                
+            except ValueError:
+                # Stratify 실패 시 랜덤 분할
+                logger.warning("CWRU stratified split 실패 - 랜덤 분할 사용")
+                files_train, files_temp, meta_train, meta_temp = train_test_split(
+                    self.file_paths, self.metadata_list,
+                    test_size=0.4,
+                    random_state=42
+                )
+                
+                files_val, files_test, meta_val, meta_test = train_test_split(
+                    files_temp, meta_temp,
+                    test_size=0.5,
+                    random_state=42
+                )
+            
+            # 요청된 subset 반환
+            if self.subset == 'train':
+                return files_train, meta_train
+            elif self.subset == 'val':
+                return files_val, meta_val
+            elif self.subset == 'test':
+                return files_test, meta_test
+            else:
+                raise ValueError(f"알 수 없는 subset: {self.subset}")
     
     def _split_uos_dataset(self) -> Tuple[List[str], List[Dict]]:
-        """UOS 데이터셋 분할 (stratified split)"""
-        # 클래스별 stratified split을 위한 라벨 생성
-        labels = []
-        for metadata in self.metadata_list:
-            # 3가지 속성을 결합한 복합 라벨 생성
-            label = f"{metadata['rotating_component']}_{metadata['bearing_condition']}_{metadata['bearing_type']}"
-            labels.append(label)
+        """UOS 데이터셋 분할 (개선된 stratified split)"""
+        # 연구 목적에 맞는 stratification 전략:
+        # 베어링 상태(bearing_condition)를 주요 클래스로 사용
+        # - 진단 모델의 핵심은 베어링 결함 타입 분류
+        # - H/B/IR/OR 4개 클래스로 균형 유지
         
-        # 클래스별 샘플 수 확인
-        unique_labels = set(labels)
-        min_samples = min(labels.count(label) for label in unique_labels)
+        # 주요 라벨: 베어링 상태 (H/B/IR/OR)
+        primary_labels = [metadata['bearing_condition'] for metadata in self.metadata_list]
         
-        if min_samples < 2:
-            # 샘플이 너무 적으면 stratify 없이 랜덤 분할
-            logger.warning(f"일부 클래스의 샘플이 {min_samples}개뿐이어서 stratified split을 사용할 수 없습니다. 랜덤 분할을 사용합니다.")
-            files_train, files_test, meta_train, meta_test = train_test_split(
-                self.file_paths, self.metadata_list, 
-                test_size=DATA_CONFIG['test_split'],
-                random_state=42
-            )
-        else:
-            # Train/Test 분할 (80/20)
-            files_train, files_test, meta_train, meta_test = train_test_split(
-                self.file_paths, self.metadata_list, 
-                test_size=DATA_CONFIG['test_split'],
-                stratify=labels, 
-                random_state=42
-            )
+        # 보조 라벨: 베어링 타입 (stratification 보강용)
+        secondary_labels = [metadata['bearing_type'] for metadata in self.metadata_list]
+        
+        # 복합 라벨 생성 (베어링 상태 + 베어링 타입)
+        # 예: H_DeepGrooveBall, IR_TaperedRoller 등
+        combined_labels = [f"{primary}_{secondary}" for primary, secondary in zip(primary_labels, secondary_labels)]
+        
+        # 라벨 분포 확인
+        from collections import Counter
+        label_counts = Counter(combined_labels)
+        min_samples = min(label_counts.values())
+        
+        logger.info(f"UOS 데이터 라벨 분포: {dict(label_counts)}")
+        logger.info(f"최소 샘플 수: {min_samples}")
+        
+        # Stratified split 시도
+        try:
+            if min_samples >= 2:
+                # 복합 라벨로 stratified split
+                files_train, files_test, meta_train, meta_test = train_test_split(
+                    self.file_paths, self.metadata_list, 
+                    test_size=DATA_CONFIG['test_split'],
+                    stratify=combined_labels, 
+                    random_state=42
+                )
+                logger.info("복합 라벨 기반 stratified split 성공")
+                stratify_success = True
+            else:
+                raise ValueError("샘플 수 부족")
+                
+        except (ValueError, Exception) as e:
+            # Fallback 1: 베어링 상태만으로 stratify 시도
+            try:
+                primary_counts = Counter(primary_labels)
+                if min(primary_counts.values()) >= 2:
+                    files_train, files_test, meta_train, meta_test = train_test_split(
+                        self.file_paths, self.metadata_list, 
+                        test_size=DATA_CONFIG['test_split'],
+                        stratify=primary_labels, 
+                        random_state=42
+                    )
+                    logger.info("베어링 상태 기반 stratified split 사용")
+                    combined_labels = primary_labels  # validation split용
+                    stratify_success = True
+                else:
+                    raise ValueError("베어링 상태 샘플 수도 부족")
+                    
+            except (ValueError, Exception):
+                # Fallback 2: 완전 랜덤 분할
+                logger.warning(f"Stratified split 불가능 (최소 샘플: {min_samples}) - 랜덤 분할 사용")
+                files_train, files_test, meta_train, meta_test = train_test_split(
+                    self.file_paths, self.metadata_list, 
+                    test_size=DATA_CONFIG['test_split'],
+                    random_state=42
+                )
+                stratify_success = False
         
         # Train에서 Validation 분할
         if len(files_train) > 1:
-            if min_samples >= 2:
-                labels_train = [f"{m['rotating_component']}_{m['bearing_condition']}_{m['bearing_type']}" 
-                               for m in meta_train]
-                
+            try:
+                if stratify_success:
+                    # Train 데이터의 라벨 재생성
+                    if min_samples >= 2:
+                        train_combined_labels = [f"{m['bearing_condition']}_{m['bearing_type']}" for m in meta_train]
+                    else:
+                        train_combined_labels = [m['bearing_condition'] for m in meta_train]
+                    
+                    files_train_final, files_val, meta_train_final, meta_val = train_test_split(
+                        files_train, meta_train,
+                        test_size=DATA_CONFIG['validation_split'] / (1 - DATA_CONFIG['test_split']),
+                        stratify=train_combined_labels,
+                        random_state=42
+                    )
+                    logger.info("Validation split도 stratified로 성공")
+                else:
+                    raise ValueError("Stratify 실패")
+                    
+            except (ValueError, Exception):
+                # Validation도 랜덤 분할
                 files_train_final, files_val, meta_train_final, meta_val = train_test_split(
                     files_train, meta_train,
                     test_size=DATA_CONFIG['validation_split'] / (1 - DATA_CONFIG['test_split']),
-                    stratify=labels_train,
                     random_state=42
                 )
-            else:
-                files_train_final, files_val, meta_train_final, meta_val = train_test_split(
-                    files_train, meta_train,
-                    test_size=DATA_CONFIG['validation_split'] / (1 - DATA_CONFIG['test_split']),
-                    random_state=42
-                )
+                logger.info("Validation split은 랜덤 분할 사용")
         else:
             files_train_final, files_val = files_train, []
             meta_train_final, meta_val = meta_train, []
+        
+        # 분할 결과 로깅 (디버깅용)
+        logger.info(f"UOS {self.subset} 분할 결과:")
+        logger.info(f"  Train: {len(files_train_final)}개 파일")
+        logger.info(f"  Val: {len(files_val)}개 파일") 
+        logger.info(f"  Test: {len(files_test)}개 파일")
         
         # 요청된 subset 반환
         if self.subset == 'train':

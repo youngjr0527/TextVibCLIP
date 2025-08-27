@@ -202,11 +202,11 @@ class TextVibCLIP(nn.Module):
             logits_v2t = torch.matmul(vib_norm, all_text.t()) / self.infonce_loss.temperature_vib  # (N, N+R)
             loss_v2t = F.cross_entropy(logits_v2t, labels, reduction=self.infonce_loss.reduction)
             
-            total_loss = (loss_t2v + loss_v2t) / 2.0
+            loss = (loss_t2v + loss_v2t) / 2.0
             loss_components = {
                 'text_to_vib': loss_t2v,
                 'vib_to_text': loss_v2t,
-                'total': total_loss
+                'total': loss
             }
         else:
             # 표준 InfoNCE
