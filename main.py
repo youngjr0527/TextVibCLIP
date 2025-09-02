@@ -13,6 +13,7 @@ import os
 import time
 import torch
 from datetime import datetime
+from typing import Dict
 import warnings
 
 # Torchvision beta warning 비활성화
@@ -429,49 +430,44 @@ def main():
         if first_domain_results and remaining_domains_results:
             print_experiment_summary(first_domain_results, remaining_domains_results, logger)
         
-        # 고급 시각화 생성 (옵션)
+        # 고급 시각화 생성 (옵션) - 기존 호환 가능한 함수들로 교체
         if args.save_visualizations and remaining_domains_results:
             logger.info("🎨 고급 시각화 생성 중...")
             try:
                 visualizer = create_visualizer(os.path.join(exp_dir, 'visualizations'))
                 
-                # 도메인별 임베딩 수집
+                # 1) 성능 플롯 (도메인별 정확도 + forgetting)
+                domain_names = [f"{d}RPM" if args.dataset_type == 'uos' else f"{d}HP" for d in DATA_CONFIG['domain_order']]
+                final_metrics = remaining_domains_results['final_metrics']
+                accuracies = final_metrics.get('final_accuracies', [])
+                forgetting_scores = remaining_domains_results.get('forgetting_scores', [0.0]*len(domain_names))
+                perf_path = visualizer.create_continual_learning_performance_plot(
+                    domain_names=domain_names,
+                    accuracies=accuracies,
+                    forgetting_scores=forgetting_scores,
+                    scenario_name=f"{args.dataset_type.upper()}_Scenario"
+                )
+                logger.info(f"   ✅ 성능 시각화: {Path(perf_path).name}")
+
+                # 2) 도메인 시프트/정렬 플롯 (PCA 기반)
                 domain_embeddings = collect_domain_embeddings_for_visualization(
                     trainer, args, device, logger
                 )
-                
                 if domain_embeddings:
-                    # 시나리오 정보 구성
-                    scenario_name = f"{args.dataset_type.upper()}_Scenario"
-                    shift_type = "Varying Speed" if args.dataset_type == 'uos' else "Varying Load"
-                    
-                    scenario_results = {
-                        shift_type: {
-                            'domain_names': [f"D{d}" for d in DATA_CONFIG['domain_order']],
-                            'shift_type': shift_type,
-                            'final_accuracies': remaining_domains_results['final_metrics']['final_accuracies'],
-                            'final_top1_retrievals': remaining_domains_results['final_metrics'].get('final_top1_retrievals', []),
-                            'final_top5_retrievals': remaining_domains_results['final_metrics'].get('final_top5_retrievals', []),
-                            'average_accuracy': remaining_domains_results['final_metrics']['average_accuracy'],
-                            'average_forgetting': remaining_domains_results['final_metrics']['average_forgetting']
-                        }
-                    }
-                    
-                    domain_results = {shift_type: domain_embeddings}
-                    
-                    # 논문용 Figure 생성
-                    figure_paths = visualizer.create_paper_figures(
-                        scenario_results,
-                        domain_results,
-                        output_prefix=f"{scenario_name}_SingleRun"
+                    # 시각화 모듈 입력 형식에 맞추어 키 변환 및 CPU numpy 변환
+                    viz_dict = {}
+                    for dom, emb in domain_embeddings.items():
+                        txt = emb['text_embeddings'].detach().cpu().numpy()
+                        vib = emb['vib_embeddings'].detach().cpu().numpy()
+                        viz_dict[dom] = {'text': txt, 'vib': vib, 'metadata': emb.get('metadata', [])}
+                    shift_path = visualizer.create_domain_shift_robustness_plot(
+                        domain_embeddings=viz_dict,
+                        scenario_name=f"{args.dataset_type.upper()}_Scenario"
                     )
-                    
-                    logger.info(f"✅ 시각화 Figure {len(figure_paths)}개 생성 완료!")
-                    for path in figure_paths:
-                        logger.info(f"   📊 {Path(path).name}")
+                    if shift_path:
+                        logger.info(f"   ✅ 도메인 시프트 시각화: {Path(shift_path).name}")
                 else:
                     logger.warning("⚠️ 시각화용 임베딩 수집 실패")
-                    
             except Exception as e:
                 logger.error(f"❌ 시각화 생성 실패: {str(e)}")
         

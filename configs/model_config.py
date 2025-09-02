@@ -17,7 +17,7 @@ MODEL_CONFIG = {
         'lora_config': {
             'r': 32,  # LoRA rank
             'lora_alpha': 64,
-            'target_modules': ["q_lin", "v_lin"],  # DistilBERT attention layers
+            'target_modules': ["q_lin", "v_lin"], 
             'lora_dropout': 0.1
         }
     },
@@ -56,6 +56,13 @@ MODEL_CONFIG = {
         'hidden_dim': 1024,
         'output_dim': 512,
         'dropout': 0.1
+    },
+    # Auxiliary classification for first domain bootstrapping
+    'aux_classification': {
+        'enabled': True,
+        'num_classes': 4,
+        'loss_weight': 1.0,
+        'dropout': 0.1
     }
 }
 
@@ -79,6 +86,8 @@ TRAINING_CONFIG = {
     # 체크포인트
     'save_interval': 5,
     'checkpoint_dir': 'checkpoints',
+    # Gradient accumulation to reduce memory footprint
+    'grad_accum_steps': 1,
 }
 
 # 데이터 설정
@@ -132,7 +141,12 @@ EVAL_CONFIG = {
         'forgetting_rate',       # 이전 도메인 성능 저하
         'forward_transfer',      # 새 도메인 학습 효율
         'backward_transfer'      # 이전 도메인 성능 향상
-    ]
+    ],
+
+    # 평가 배치 제한 (전체 평가에서 하드 캡 제거; -1이면 무제한)
+    'max_full_eval_batches': -1,
+    # 빠른 평가 배치 제한 (FAST 경로)
+    'max_fast_eval_batches': 5
 }
 
 # 디바이스 설정

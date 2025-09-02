@@ -187,6 +187,19 @@ class VibrationEncoder(nn.Module):
             nn.Linear(MODEL_CONFIG['projection']['hidden_dim'], embedding_dim),
             nn.LayerNorm(embedding_dim)
         )
+
+        # Auxiliary classification head (bearing condition 4-class)
+        aux_cfg = MODEL_CONFIG.get('aux_classification', {'enabled': False})
+        self.use_aux_head = bool(aux_cfg.get('enabled', False))
+        if self.use_aux_head:
+            num_classes = int(aux_cfg.get('num_classes', 4))
+            aux_dropout = float(aux_cfg.get('dropout', 0.1))
+            self.aux_head = nn.Sequential(
+                nn.Dropout(aux_dropout),
+                nn.Linear(embedding_dim, embedding_dim // 2),
+                nn.ReLU(),
+                nn.Linear(embedding_dim // 2, num_classes)
+            )
         
         # 파라미터 초기화
         self._init_parameters()

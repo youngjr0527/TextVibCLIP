@@ -66,6 +66,7 @@ def create_collate_fn(tokenizer: DistilBertTokenizer = None, max_length: int = 1
         metadata_list = [item['metadata'] for item in batch]
         labels = torch.stack([item['labels'] for item in batch])
         rpms = torch.tensor([item['domain_key'] for item in batch])
+        file_indices = torch.tensor([item['file_idx'] for item in batch])
         
         # 배치 토크나이징 (더 효율적)
         tokenized = tokenizer(
@@ -83,7 +84,8 @@ def create_collate_fn(tokenizer: DistilBertTokenizer = None, max_length: int = 1
             'attention_mask': tokenized['attention_mask'],
             'metadata': metadata_list,
             'labels': labels,
-            'rpm': rpms
+            'rpm': rpms,
+            'file_idx': file_indices
         }
     
     return collate_fn

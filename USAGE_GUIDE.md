@@ -27,7 +27,7 @@ python prepare_cwru_scenario2.py
 #### 🚀 **통합 실험 (권장)** - 두 시나리오 한번에 실행
 ```bash
 # 전체 실험 (UOS + CWRU)
-python run_all_scenarios.py --output_dir results_comparison
+python run_all_scenarios.py --output_dir results
 
 # 빠른 테스트
 python run_all_scenarios.py --quick_test --epochs 5 --output_dir test_results
@@ -115,7 +115,7 @@ python main.py \
 
 ### 통합 실험 결과 (CSV + 시각화)
 ```
-results_comparison/
+results/
 ├── detailed_results_YYYYMMDD_HHMMSS.csv              # 도메인별 상세 성능
 ├── summary_results_YYYYMMDD_HHMMSS.csv               # 시나리오별 요약 성능
 ├── comparison_results_YYYYMMDD_HHMMSS.csv            # 시나리오 간 비교표

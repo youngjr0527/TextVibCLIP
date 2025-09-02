@@ -1,691 +1,389 @@
 """
-TextVibCLIP 고급 시각화 모듈
-논문 품질의 Figure 생성을 위한 시각화 함수들
+TextVibCLIP 시각화 모듈 
+Research-quality visualization for TextVibCLIP continual learning experiments
 """
 
-import numpy as np
-import torch
-import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple, Optional, Any
+import os
 import logging
-from pathlib import Path
-import warnings
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+import torch
+import torch.nn.functional as F
+from typing import Dict, List, Any, Optional, Tuple
+import pandas as pd
 
-# Warning 억제
-warnings.filterwarnings("ignore", category=UserWarning)
-try:
-    import torchvision
-    torchvision.disable_beta_transforms_warning()
-except:
-    pass
-
-# 선택적 import (설치되지 않은 경우 대체 기능 제공)
-try:
-    import seaborn as sns
-    SEABORN_AVAILABLE = True
-except ImportError:
-    SEABORN_AVAILABLE = False
-    print("⚠️ seaborn이 설치되지 않았습니다. 일부 시각화가 제한됩니다.")
-
-try:
-    from sklearn.manifold import TSNE
-    from sklearn.decomposition import PCA
-    from sklearn.metrics import confusion_matrix
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    SKLEARN_AVAILABLE = False
-    print("⚠️ scikit-learn이 설치되지 않았습니다. t-SNE 시각화가 제한됩니다.")
-
-try:
-    import pandas as pd
-    PANDAS_AVAILABLE = True
-except ImportError:
-    PANDAS_AVAILABLE = False
+# 한글 폰트 및 스타일 설정
+plt.rcParams['font.family'] = ['DejaVu Sans']
+plt.rcParams['font.size'] = 12
+plt.rcParams['axes.linewidth'] = 1.2
+plt.rcParams['grid.alpha'] = 0.3
 
 logger = logging.getLogger(__name__)
 
-# 논문 품질 설정
-plt.rcParams.update({
-    'font.size': 12,
-    'axes.titlesize': 14,
-    'axes.labelsize': 12,
-    'xtick.labelsize': 10,
-    'ytick.labelsize': 10,
-    'legend.fontsize': 11,
-    'figure.titlesize': 16,
-    'font.family': 'serif',
-    'figure.dpi': 300
-})
 
-# 색맹 친화적 색상 팔레트
-COLORBLIND_PALETTE = [
-    '#1f77b4',  # 파랑
-    '#ff7f0e',  # 주황  
-    '#2ca02c',  # 초록
-    '#d62728',  # 빨강
-    '#9467bd',  # 보라
-    '#8c564b',  # 갈색
-    '#e377c2',  # 분홍
-    '#7f7f7f',  # 회색
-    '#bcbd22',  # 올리브
-    '#17becf'   # 청록
-]
-
-
-class AdvancedVisualizer:
-    """논문용 고급 시각화 클래스"""
+class PaperVisualizer:
+    """논문용 고품질 시각화 클래스"""
     
-    def __init__(self, output_dir: str = 'visualizations'):
+    def __init__(self, output_dir: str):
         """
         Args:
-            output_dir (str): 시각화 결과 저장 디렉토리
+            output_dir: 시각화 결과 저장 디렉토리
         """
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
         
-        logger.info(f"AdvancedVisualizer 초기화: {output_dir}")
+        # 컬러 팔레트 설정 (논문용 고품질)
+        self.colors = {
+            'primary': '#2E86AB',      # 블루
+            'secondary': '#F24236',    # 레드  
+            'accent': '#F6AE2D',       # 옐로우
+            'success': '#2F9B69',      # 그린
+            'warning': '#F18F01',      # 오렌지
+            'neutral': '#6C757D',      # 그레이
+            'background': '#F8F9FA'    # 라이트 그레이
+        }
+        
+        # 베어링 상태별 색상 매핑
+        self.bearing_colors = {
+            'H': self.colors['success'],    # Healthy - 그린
+            'B': self.colors['primary'],    # Ball fault - 블루
+            'IR': self.colors['secondary'],  # Inner race - 레드
+            'OR': self.colors['warning'],   # Outer race - 오렌지
+            'M': self.colors['accent'],     # Misalignment - 옐로우
+            'U': '#9B59B6',                 # Unbalance - 퍼플
+            'L': '#8E44AD'                  # Looseness - 다크퍼플
+        }
+        
+        # 베어링 타입별 마커
+        self.bearing_markers = {
+            'N204': 'o',      # 원형
+            'NJ204': 's',     # 사각형
+            '6204': '^',      # 삼각형
+            '30204': 'D'      # 다이아몬드
+        }
+        
+        logger.info(f"PaperVisualizer 초기화 완료: {output_dir}")
     
-    def plot_advanced_tsne(self, 
-                          domain_results: Dict[int, Dict],
-                          scenario_name: str = "Scenario",
-                          max_samples_per_domain: int = 200,
-                          save_path: Optional[str] = None) -> str:
+    def create_encoder_alignment_plot(self, 
+                                    text_embeddings: np.ndarray,
+                                    vib_embeddings: np.ndarray,
+                                    labels: List[str],
+                                    bearing_types: List[str],
+                                    domain_name: str,
+                                    save_name: str = "encoder_alignment") -> str:
         """
-        라벨별 구분이 있는 고급 t-SNE 시각화
+        첫 번째 도메인에서 두 encoder의 alignment 확인용 t-SNE 시각화
+        """
+        logger.info(f"Encoder alignment 시각화 생성 중: {domain_name}")
         
-        Args:
-            domain_results: 도메인별 임베딩 결과
-            scenario_name: 시나리오 이름
-            max_samples_per_domain: 도메인당 최대 샘플 수
-            save_path: 저장 경로
+        # 안전: torch.Tensor → CPU numpy 로 변환
+        def _to_numpy(x):
+            try:
+                import torch
+                if isinstance(x, torch.Tensor):
+                    return x.detach().cpu().numpy()
+            except Exception:
+                pass
+            return np.asarray(x)
+        text_np = _to_numpy(text_embeddings)
+        vib_np = _to_numpy(vib_embeddings)
+
+        # 데이터 준비
+        all_embeddings = np.concatenate([text_np, vib_np], axis=0)
+        modality_labels = ['Text'] * len(text_np) + ['Vibration'] * len(vib_np)
+        condition_labels = labels + labels  # 두 번 반복 (text + vib)
+        type_labels = bearing_types + bearing_types
+        
+        # t-SNE 차원 축소
+        logger.info("t-SNE 차원 축소 실행 중...")
+        tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(all_embeddings)//4))
+        embeddings_2d = tsne.fit_transform(all_embeddings)
+        
+        # 서브플롯 생성 (2x2 layout)
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig.suptitle(f'Encoder Alignment Analysis - {domain_name}', fontsize=16, fontweight='bold')
+        
+        # 1. 모달리티별 분포 (Text vs Vibration)
+        ax1 = axes[0, 0]
+        for i, modality in enumerate(['Text', 'Vibration']):
+            mask = np.array(modality_labels) == modality
+            alpha = 0.7 if modality == 'Text' else 0.9
+            marker = 'o' if modality == 'Text' else 's'
+            color = self.colors['primary'] if modality == 'Text' else self.colors['secondary']
             
-        Returns:
-            str: 저장된 파일 경로
+            ax1.scatter(embeddings_2d[mask, 0], embeddings_2d[mask, 1], 
+                       c=color, alpha=alpha, s=60, marker=marker, 
+                       label=modality, edgecolors='white', linewidth=0.5)
+        
+        ax1.set_title('Modality Distribution', fontweight='bold')
+        ax1.legend(frameon=True, fancybox=True, shadow=True)
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. 베어링 상태별 분포 (Text만)
+        ax2 = axes[0, 1]
+        text_mask = np.array(modality_labels) == 'Text'
+        text_coords = embeddings_2d[text_mask]
+        text_conditions = np.array(condition_labels)[text_mask]
+        
+        for condition in np.unique(text_conditions):
+            mask = text_conditions == condition
+            ax2.scatter(text_coords[mask, 0], text_coords[mask, 1],
+                       c=self.bearing_colors.get(condition, self.colors['neutral']),
+                       alpha=0.8, s=70, label=f'{condition}', 
+                       edgecolors='white', linewidth=0.8)
+        
+        ax2.set_title('Text Embeddings - Bearing Conditions', fontweight='bold')
+        ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax2.grid(True, alpha=0.3)
+        
+        # 3. 베어링 상태별 분포 (Vibration만)
+        ax3 = axes[1, 0]
+        vib_mask = np.array(modality_labels) == 'Vibration'
+        vib_coords = embeddings_2d[vib_mask]
+        vib_conditions = np.array(condition_labels)[vib_mask]
+        
+        for condition in np.unique(vib_conditions):
+            mask = vib_conditions == condition
+            ax3.scatter(vib_coords[mask, 0], vib_coords[mask, 1],
+                       c=self.bearing_colors.get(condition, self.colors['neutral']),
+                       alpha=0.8, s=70, label=f'{condition}',
+                       edgecolors='white', linewidth=0.8)
+        
+        ax3.set_title('Vibration Embeddings - Bearing Conditions', fontweight='bold')
+        ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax3.grid(True, alpha=0.3)
+        
+        # 4. 베어링 타입별 분포 (Text + Vibration)
+        ax4 = axes[1, 1]
+        for type_name in np.unique(type_labels):
+            mask = np.array(type_labels) == type_name
+            marker = self.bearing_markers.get(type_name, 'o')
+            
+            # Text와 Vibration을 다른 색상으로
+            text_type_mask = mask & (np.array(modality_labels) == 'Text')
+            vib_type_mask = mask & (np.array(modality_labels) == 'Vibration')
+            
+            if np.any(text_type_mask):
+                ax4.scatter(embeddings_2d[text_type_mask, 0], embeddings_2d[text_type_mask, 1],
+                           c=self.colors['primary'], alpha=0.7, s=70, marker=marker,
+                           label=f'{type_name} (Text)', edgecolors='white', linewidth=0.8)
+            
+            if np.any(vib_type_mask):
+                ax4.scatter(embeddings_2d[vib_type_mask, 0], embeddings_2d[vib_type_mask, 1],
+                           c=self.colors['secondary'], alpha=0.7, s=70, marker=marker,
+                           label=f'{type_name} (Vib)', edgecolors='black', linewidth=0.8)
+        
+        ax4.set_title('Bearing Types - Text vs Vibration', fontweight='bold')
+        ax4.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
+        ax4.grid(True, alpha=0.3)
+        
+        # 레이아웃 조정 및 저장
+        plt.tight_layout()
+        save_path = os.path.join(self.output_dir, f"{save_name}_{domain_name}.png")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        
+        logger.info(f"Encoder alignment 시각화 저장 완료: {save_path}")
+        return save_path
+    
+    def create_continual_learning_performance_plot(self,
+                                                 domain_names: List[str],
+                                                 accuracies: List[float],
+                                                 forgetting_scores: List[float],
+                                                 scenario_name: str,
+                                                 save_name: str = "continual_performance") -> str:
         """
-        if not SKLEARN_AVAILABLE:
-            logger.error("scikit-learn이 설치되지 않아 t-SNE를 실행할 수 없습니다.")
-            return None
-            
+        도메인별 정확도와 forgetting 점수 막대 그래프
+        """
+        logger.info(f"Continual learning 성능 시각화 생성 중: {scenario_name}")
+        
+        # 입력 길이 정합성 보정
         try:
-            # 임베딩과 라벨 수집
-            all_embeddings = []
-            all_labels = []
-            all_modalities = []
-            all_domains = []
-            
-            for domain_id, results in domain_results.items():
-                text_emb = results['text_embeddings']
-                vib_emb = results['vib_embeddings']
-                metadata = results['metadata']
-                
-                # 샘플링
-                num_samples = min(max_samples_per_domain, len(text_emb))
-                indices = torch.randperm(len(text_emb))[:num_samples]
-                
-                # 텍스트 임베딩
-                all_embeddings.append(text_emb[indices])
-                all_modalities.extend(['Text'] * num_samples)
-                all_domains.extend([f'D{domain_id}'] * num_samples)
-                
-                # 진동 임베딩
-                all_embeddings.append(vib_emb[indices])
-                all_modalities.extend(['Vibration'] * num_samples)
-                all_domains.extend([f'D{domain_id}'] * num_samples)
-                
-                # 라벨 추출 (메타데이터에서)
-                for i in indices:
-                    meta = metadata[i] if i < len(metadata) else metadata[0]
-                    bearing_condition = meta.get('bearing_condition', 'Unknown')
-                    all_labels.extend([bearing_condition, bearing_condition])  # 텍스트, 진동 동일 라벨
-            
-            # 임베딩 결합 (CUDA → CPU 변환)
-            embeddings = torch.cat(all_embeddings, dim=0).cpu().numpy()
-            
-            # t-SNE 실행
-            logger.info("고급 t-SNE 실행 중...")
-            tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(embeddings)//4))
-            embeddings_2d = tsne.fit_transform(embeddings)
-            
-            # 시각화
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
-            
-            # 서브플롯 1: 모달리티별 구분
-            unique_modalities = list(set(all_modalities))
-            for i, modality in enumerate(unique_modalities):
-                indices = [j for j, m in enumerate(all_modalities) if m == modality]
-                x = embeddings_2d[indices, 0]
-                y = embeddings_2d[indices, 1]
-                
-                marker = 'o' if modality == 'Text' else '^'
-                ax1.scatter(x, y, c=COLORBLIND_PALETTE[i], label=modality, 
-                           marker=marker, alpha=0.7, s=50)
-            
-            ax1.set_xlabel('t-SNE Component 1')
-            ax1.set_ylabel('t-SNE Component 2')
-            ax1.set_title(f'{scenario_name}: Embedding Space by Modality')
-            ax1.legend()
-            ax1.grid(True, alpha=0.3)
-            
-            # 서브플롯 2: 라벨별 구분
-            unique_labels = list(set(all_labels))
-            for i, label in enumerate(unique_labels):
-                indices = [j for j, l in enumerate(all_labels) if l == label]
-                x = embeddings_2d[indices, 0]
-                y = embeddings_2d[indices, 1]
-                
-                # 모달리티별 마커
-                text_indices = [j for j in indices if all_modalities[j] == 'Text']
-                vib_indices = [j for j in indices if all_modalities[j] == 'Vibration']
-                
-                if text_indices:
-                    ax2.scatter(embeddings_2d[text_indices, 0], embeddings_2d[text_indices, 1], 
-                               c=COLORBLIND_PALETTE[i], marker='o', label=f'{label}-Text', 
-                               alpha=0.7, s=50)
-                if vib_indices:
-                    ax2.scatter(embeddings_2d[vib_indices, 0], embeddings_2d[vib_indices, 1], 
-                               c=COLORBLIND_PALETTE[i], marker='^', label=f'{label}-Vib', 
-                               alpha=0.7, s=50)
-            
-            ax2.set_xlabel('t-SNE Component 1')
-            ax2.set_ylabel('t-SNE Component 2')
-            ax2.set_title(f'{scenario_name}: Embedding Space by Fault Type')
-            ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-            ax2.grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            
-            # 저장
-            if save_path is None:
-                save_path = self.output_dir / f'{scenario_name}_advanced_tsne.png'
-            
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logger.info(f"고급 t-SNE 저장됨: {save_path}")
-            return str(save_path)
-            
-        except Exception as e:
-            logger.error(f"고급 t-SNE 생성 실패: {e}")
-            return None
+            n = len(domain_names)
+            acc = list(accuracies) if accuracies is not None else []
+            fog = list(forgetting_scores) if forgetting_scores is not None else []
+            # 길이 초과 시 자르기
+            acc = acc[:n]
+            fog = fog[:n]
+            # 길이 부족 시 0으로 패딩
+            if len(acc) < n:
+                acc = acc + [0.0] * (n - len(acc))
+            if len(fog) < n:
+                fog = fog + [0.0] * (n - len(fog))
+        except Exception:
+            # 실패 시 보수적으로 도메인 수만큼 0 배열 사용
+            n = len(domain_names)
+            acc = [0.0] * n
+            fog = [0.0] * n
+
+        # Figure 생성
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        fig.suptitle(f'Continual Learning Performance - {scenario_name}', 
+                    fontsize=16, fontweight='bold')
+        
+        x_positions = np.arange(len(domain_names))
+        bar_width = 0.6
+        
+        # 1. 정확도 막대 그래프
+        bars1 = ax1.bar(x_positions, acc, bar_width, 
+                        color=self.colors['primary'], alpha=0.8, 
+                        edgecolor='white', linewidth=1.5)
+        
+        # 정확도 값 표시
+        for i, (bar, a) in enumerate(zip(bars1, acc)):
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                    f'{a:.3f}', ha='center', va='bottom', fontweight='bold')
+        
+        ax1.set_title('Accuracy per Domain', fontweight='bold', fontsize=14)
+        ax1.set_ylabel('Accuracy', fontweight='bold')
+        ax1.set_xticks(x_positions)
+        ax1.set_xticklabels(domain_names)
+        ax1.set_ylim(0, (max(acc) if len(acc) else 1.0) * 1.15 if any(np.isfinite(acc)) else 1.0)
+        ax1.grid(True, alpha=0.3, axis='y')
+        
+        # 80% 기준선 추가
+        ax1.axhline(y=0.8, color=self.colors['success'], linestyle='--', 
+                   linewidth=2, alpha=0.7, label='80% Target')
+        ax1.legend()
+        
+        # 2. Forgetting 점수 막대 그래프
+        bars2 = ax2.bar(x_positions, fog, bar_width,
+                        color=self.colors['secondary'], alpha=0.8,
+                        edgecolor='white', linewidth=1.5)
+        
+        # Forgetting 값 표시
+        for i, (bar, forget) in enumerate(zip(bars2, fog)):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height + 0.001,
+                    f'{forget:.4f}', ha='center', va='bottom', fontweight='bold')
+        
+        ax2.set_title('Forgetting Score per Domain', fontweight='bold', fontsize=14)
+        ax2.set_ylabel('Forgetting Score', fontweight='bold')
+        ax2.set_xlabel('Domains', fontweight='bold')
+        ax2.set_xticks(x_positions)
+        ax2.set_xticklabels(domain_names)
+        ax2.set_ylim(0, (max(fog) * 1.15) if len(fog) else 0.1)
+        ax2.grid(True, alpha=0.3, axis='y')
+        
+        # 레이아웃 조정 및 저장
+        plt.tight_layout()
+        save_path = os.path.join(self.output_dir, f"{save_name}_{scenario_name}.png")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        
+        logger.info(f"Continual learning 성능 시각화 저장 완료: {save_path}")
+        return save_path
     
-    def plot_confusion_matrices(self,
-                               domain_results: Dict[int, Dict],
-                               scenario_name: str = "Scenario",
-                               save_path: Optional[str] = None) -> str:
+    def create_domain_shift_robustness_plot(self,
+                                          domain_embeddings: Dict[str, Dict[str, np.ndarray]],
+                                          scenario_name: str,
+                                          save_name: str = "domain_shift_robustness") -> str:
         """
-        도메인별 Confusion Matrix 시각화
+        도메인 시프트와 continual learning robustness 시각화
+        """
+        logger.info(f"Domain shift robustness 시각화 생성 중: {scenario_name}")
         
-        Args:
-            domain_results: 도메인별 결과
-            scenario_name: 시나리오 이름
-            save_path: 저장 경로
-            
-        Returns:
-            str: 저장된 파일 경로
-        """
-        try:
-            num_domains = len(domain_results)
-            cols = min(3, num_domains)
-            rows = (num_domains + cols - 1) // cols
-            
-            fig, axes = plt.subplots(rows, cols, figsize=(5*cols, 4*rows))
-            if num_domains == 1:
-                axes = [axes]
-            elif rows == 1:
-                axes = axes.reshape(1, -1)
-            
-            for idx, (domain_id, results) in enumerate(domain_results.items()):
-                row = idx // cols
-                col = idx % cols
-                ax = axes[row, col] if rows > 1 else axes[col]
-                
-                # 실제 라벨과 예측 라벨 생성 (간단한 threshold 기반)
-                text_emb = results['text_embeddings']
-                vib_emb = results['vib_embeddings']
-                metadata = results['metadata']
-                
-                # 유사도 계산 (CUDA → CPU 변환)
-                similarities = torch.cosine_similarity(text_emb, vib_emb, dim=1)
-                predictions = (similarities > 0.5).long().cpu().numpy()
-                targets = np.ones_like(predictions)  # 모든 쌍이 positive
-                
-                # Confusion Matrix 생성 (Binary classification)
-                cm = confusion_matrix(targets, predictions)
-                
-                # 히트맵 그리기
-                if SEABORN_AVAILABLE:
-                    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
-                               xticklabels=['Negative', 'Positive'],
-                               yticklabels=['Negative', 'Positive'])
-                else:
-                    # seaborn 없으면 matplotlib으로 대체
-                    im = ax.imshow(cm, cmap='Blues')
-                    ax.set_xticks([0, 1])
-                    ax.set_yticks([0, 1])
-                    ax.set_xticklabels(['Negative', 'Positive'])
-                    ax.set_yticklabels(['Negative', 'Positive'])
-                    
-                    # 값 표시
-                    for i in range(2):
-                        for j in range(2):
-                            ax.text(j, i, str(cm[i, j]), ha='center', va='center')
-                
-                domain_name = f'Domain {domain_id}'
-                accuracy = (predictions == targets).mean()
-                ax.set_title(f'{domain_name} (Acc: {accuracy:.3f})')
-                ax.set_xlabel('Predicted')
-                ax.set_ylabel('Actual')
-            
-            # 빈 서브플롯 숨기기
-            for idx in range(num_domains, rows * cols):
-                row = idx // cols
-                col = idx % cols
-                if rows > 1:
-                    axes[row, col].set_visible(False)
-                else:
-                    axes[col].set_visible(False)
-            
-            plt.suptitle(f'{scenario_name}: Confusion Matrices', fontsize=16)
-            plt.tight_layout()
-            
-            # 저장
-            if save_path is None:
-                save_path = self.output_dir / f'{scenario_name}_confusion_matrices.png'
-            
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logger.info(f"Confusion matrices 저장됨: {save_path}")
-            return str(save_path)
-            
-        except Exception as e:
-            logger.error(f"Confusion matrix 생성 실패: {e}")
-            return None
-    
-    def plot_similarity_heatmap(self,
-                               text_embeddings: torch.Tensor,
-                               vib_embeddings: torch.Tensor,
-                               text_labels: List[str],
-                               vib_labels: List[str],
-                               scenario_name: str = "Scenario",
-                               max_samples: int = 50,
-                               save_path: Optional[str] = None) -> str:
-        """
-        Cross-modal Similarity Heatmap 생성
+        # 모든 도메인의 임베딩을 결합
+        all_text_embeddings = []
+        all_vib_embeddings = []
+        domain_labels = []
         
-        Args:
-            text_embeddings: 텍스트 임베딩 (N, 512)
-            vib_embeddings: 진동 임베딩 (N, 512)
-            text_labels: 텍스트 라벨 리스트
-            vib_labels: 진동 라벨 리스트
-            scenario_name: 시나리오 이름
-            max_samples: 최대 샘플 수 (계산 효율성)
-            save_path: 저장 경로
-            
-        Returns:
-            str: 저장된 파일 경로
-        """
-        try:
-            # 샘플링 (너무 크면 히트맵이 복잡함)
-            num_samples = min(max_samples, len(text_embeddings))
-            indices = torch.randperm(len(text_embeddings))[:num_samples]
-            
-            text_emb_sample = text_embeddings[indices]
-            vib_emb_sample = vib_embeddings[indices]
-            text_labels_sample = [text_labels[i] for i in indices]
-            vib_labels_sample = [vib_labels[i] for i in indices]
-            
-            # L2 정규화
-            text_emb_norm = torch.nn.functional.normalize(text_emb_sample, dim=1)
-            vib_emb_norm = torch.nn.functional.normalize(vib_emb_sample, dim=1)
-            
-            # 유사도 행렬 계산 (CUDA → CPU 변환)
-            similarity_matrix = torch.matmul(text_emb_norm, vib_emb_norm.t()).cpu().numpy()
-            
-            # 시각화
-            plt.figure(figsize=(12, 10))
-            
-            # 히트맵 생성
-            sns.heatmap(similarity_matrix, 
-                       xticklabels=vib_labels_sample,
-                       yticklabels=text_labels_sample,
-                       cmap='RdYlBu_r',
-                       center=0,
-                       annot=False,
-                       cbar_kws={'label': 'Cosine Similarity'})
-            
-            plt.title(f'{scenario_name}: Cross-Modal Similarity Matrix')
-            plt.xlabel('Vibration Embeddings')
-            plt.ylabel('Text Embeddings')
-            
-            # 대각선 강조 (positive pairs)
-            for i in range(min(len(text_labels_sample), len(vib_labels_sample))):
-                plt.gca().add_patch(plt.Rectangle((i, i), 1, 1, fill=False, 
-                                                 edgecolor='red', linewidth=2))
-            
-            plt.tight_layout()
-            
-            # 저장
-            if save_path is None:
-                save_path = self.output_dir / f'{scenario_name}_similarity_heatmap.png'
-            
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logger.info(f"Similarity heatmap 저장됨: {save_path}")
-            return str(save_path)
-            
-        except Exception as e:
-            logger.error(f"Similarity heatmap 생성 실패: {e}")
-            return None
-    
-    def plot_domain_shift_analysis(self,
-                                  domain_results: Dict[int, Dict],
-                                  scenario_name: str = "Scenario",
-                                  save_path: Optional[str] = None) -> str:
-        """
-        Domain Shift 분석 시각화
+        for domain, embeddings in domain_embeddings.items():
+            if 'text' in embeddings and 'vib' in embeddings:
+                def _to_numpy(x):
+                    try:
+                        import torch
+                        if isinstance(x, torch.Tensor):
+                            return x.detach().cpu().numpy()
+                    except Exception:
+                        pass
+                    return np.asarray(x)
+                text_emb = _to_numpy(embeddings['text'])
+                vib_emb = _to_numpy(embeddings['vib'])
+                
+                # 샘플링 (시각화를 위해 각 도메인에서 최대 100개)
+                n_samples = min(100, len(text_emb))
+                indices = np.random.choice(len(text_emb), n_samples, replace=False)
+                
+                all_text_embeddings.append(text_emb[indices])
+                all_vib_embeddings.append(vib_emb[indices])
+                domain_labels.extend([domain] * n_samples)
         
-        Args:
-            domain_results: 도메인별 결과
-            scenario_name: 시나리오 이름
-            save_path: 저장 경로
-            
-        Returns:
-            str: 저장된 파일 경로
-        """
-        try:
-            # 도메인별 임베딩 중심 계산
-            domain_centers = {}
-            domain_names = []
-            
-            for domain_id, results in domain_results.items():
-                text_emb = results['text_embeddings']
-                vib_emb = results['vib_embeddings']
-                
-                # 각 모달리티별 중심 계산
-                text_center = torch.mean(text_emb, dim=0)
-                vib_center = torch.mean(vib_emb, dim=0)
-                
-                domain_centers[domain_id] = {
-                    'text_center': text_center,
-                    'vib_center': vib_center,
-                    'combined_center': (text_center + vib_center) / 2
-                }
-                domain_names.append(str(domain_id))
-            
-            # 도메인간 거리 계산
-            domain_ids = list(domain_centers.keys())
-            num_domains = len(domain_ids)
-            
-            text_distances = np.zeros((num_domains, num_domains))
-            vib_distances = np.zeros((num_domains, num_domains))
-            combined_distances = np.zeros((num_domains, num_domains))
-            
-            for i, domain1 in enumerate(domain_ids):
-                for j, domain2 in enumerate(domain_ids):
-                    # 코사인 거리 계산
-                    text_dist = 1 - torch.cosine_similarity(
-                        domain_centers[domain1]['text_center'].unsqueeze(0),
-                        domain_centers[domain2]['text_center'].unsqueeze(0)
-                    ).item()
-                    
-                    vib_dist = 1 - torch.cosine_similarity(
-                        domain_centers[domain1]['vib_center'].unsqueeze(0),
-                        domain_centers[domain2]['vib_center'].unsqueeze(0)
-                    ).item()
-                    
-                    combined_dist = 1 - torch.cosine_similarity(
-                        domain_centers[domain1]['combined_center'].unsqueeze(0),
-                        domain_centers[domain2]['combined_center'].unsqueeze(0)
-                    ).item()
-                    
-                    text_distances[i, j] = text_dist
-                    vib_distances[i, j] = vib_dist
-                    combined_distances[i, j] = combined_dist
-            
-            # 시각화
-            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-            
-            # 1. 텍스트 임베딩 거리
-            sns.heatmap(text_distances, annot=True, fmt='.3f', cmap='viridis',
-                       xticklabels=domain_names, yticklabels=domain_names, ax=ax1)
-            ax1.set_title('Text Embedding Distances')
-            
-            # 2. 진동 임베딩 거리
-            sns.heatmap(vib_distances, annot=True, fmt='.3f', cmap='viridis',
-                       xticklabels=domain_names, yticklabels=domain_names, ax=ax2)
-            ax2.set_title('Vibration Embedding Distances')
-            
-            # 3. 결합 임베딩 거리
-            sns.heatmap(combined_distances, annot=True, fmt='.3f', cmap='viridis',
-                       xticklabels=domain_names, yticklabels=domain_names, ax=ax3)
-            ax3.set_title('Combined Embedding Distances')
-            
-            # 4. 도메인 순서별 거리 변화
-            sequential_distances = []
-            for i in range(len(domain_ids) - 1):
-                dist = combined_distances[i, i+1]
-                sequential_distances.append(dist)
-            
-            ax4.plot(range(1, len(sequential_distances)+1), sequential_distances, 'o-', linewidth=2)
-            ax4.set_xlabel('Domain Transition')
-            ax4.set_ylabel('Distance')
-            ax4.set_title('Sequential Domain Shift Magnitude')
-            ax4.grid(True, alpha=0.3)
-            ax4.set_xticks(range(1, len(sequential_distances)+1))
-            ax4.set_xticklabels([f'D{domain_ids[i]}→D{domain_ids[i+1]}' 
-                                for i in range(len(sequential_distances))])
-            
-            plt.suptitle(f'{scenario_name}: Domain Shift Analysis', fontsize=16)
-            plt.tight_layout()
-            
-            # 저장
-            if save_path is None:
-                save_path = self.output_dir / f'{scenario_name}_domain_shift_analysis.png'
-            
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logger.info(f"Domain shift analysis 저장됨: {save_path}")
-            return str(save_path)
-            
-        except Exception as e:
-            logger.error(f"Domain shift analysis 생성 실패: {e}")
-            return None
-    
-    def plot_continual_learning_summary(self,
-                                       scenario_results: Dict[str, Dict],
-                                       save_path: Optional[str] = None) -> str:
-        """
-        여러 시나리오의 Continual Learning 결과 종합 비교
+        if not all_text_embeddings:
+            logger.warning("도메인 임베딩 데이터가 없습니다.")
+            return ""
         
-        Args:
-            scenario_results: 시나리오별 결과 딕셔너리
-            save_path: 저장 경로
-            
-        Returns:
-            str: 저장된 파일 경로
-        """
-        try:
-            # 입력 데이터 검증
-            if not scenario_results:
-                logger.warning("시나리오 결과가 비어있습니다")
-                return None
-                
-            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-            
-            scenario_names = list(scenario_results.keys())
-            colors = COLORBLIND_PALETTE[:len(scenario_names)]
-            
-            # 1. 도메인별 정확도 비교
-            for i, (scenario_name, results) in enumerate(scenario_results.items()):
-                domain_names = results['domain_names']
-                accuracies = results['final_accuracies']
-                
-                # 차원 일치 확인 및 보정
-                min_len = min(len(domain_names), len(accuracies))
-                domain_names = domain_names[:min_len]
-                accuracies = accuracies[:min_len]
-                
-                if min_len > 0:  # 데이터가 있을 때만 플롯
-                    ax1.plot(range(min_len), accuracies, 'o-', 
-                            color=colors[i], label=scenario_name, linewidth=2, markersize=8)
-            
-            ax1.set_xlabel('Domain Index')
-            ax1.set_ylabel('Accuracy')
-            ax1.set_title('Accuracy Evolution Across Domains')
-            ax1.legend()
-            ax1.grid(True, alpha=0.3)
-            
-            # 2. Forgetting Score 비교
-            forgetting_data = []
-            for scenario_name, results in scenario_results.items():
-                # Forgetting score 계산 (간단화)
-                accuracies = results.get('final_accuracies', [])
-                if isinstance(accuracies, list) and len(accuracies) > 1:
-                    forgetting = max(0, accuracies[0] - accuracies[-1])
-                else:
-                    forgetting = 0
-                forgetting_data.append(forgetting)
-            
-            bars = ax2.bar(scenario_names, forgetting_data, color=colors[:len(scenario_names)])
-            ax2.set_ylabel('Forgetting Score')
-            ax2.set_title('Catastrophic Forgetting Comparison')
-            ax2.grid(True, alpha=0.3)
-            
-            # 값 표시
-            for bar, value in zip(bars, forgetting_data):
-                ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                        f'{value:.3f}', ha='center', va='bottom')
-            
-            # 3. Retrieval 성능 비교
-            retrieval_metrics = ['Top1', 'Top5']
-            x = np.arange(len(scenario_names))
-            width = 0.35
-            
-            top1_scores = [np.mean(results.get('final_top1_retrievals', [0])) 
-                          for results in scenario_results.values()]
-            top5_scores = [np.mean(results.get('final_top5_retrievals', [0])) 
-                          for results in scenario_results.values()]
-            
-            ax3.bar(x - width/2, top1_scores, width, label='Top-1', color=colors[0])
-            ax3.bar(x + width/2, top5_scores, width, label='Top-5', color=colors[1])
-            
-            ax3.set_xlabel('Scenario')
-            ax3.set_ylabel('Retrieval Accuracy')
-            ax3.set_title('Retrieval Performance Comparison')
-            ax3.set_xticks(x)
-            ax3.set_xticklabels(scenario_names)
-            ax3.legend()
-            ax3.grid(True, alpha=0.3)
-            
-            # 4. 데이터 규모 vs 성능 산점도
-            for i, (scenario_name, results) in enumerate(scenario_results.items()):
-                total_samples = results.get('total_samples', 0)
-                avg_accuracy = results.get('average_accuracy', 0)
-                
-                ax4.scatter(total_samples, avg_accuracy, s=200, 
-                           color=colors[i], label=scenario_name, alpha=0.7)
-                
-                # 라벨 추가
-                ax4.annotate(scenario_name, (total_samples, avg_accuracy),
-                            xytext=(10, 10), textcoords='offset points')
-            
-            ax4.set_xlabel('Total Samples')
-            ax4.set_ylabel('Average Accuracy')
-            ax4.set_title('Data Scale vs Performance')
-            ax4.grid(True, alpha=0.3)
-            ax4.legend()
-            
-            plt.suptitle('Continual Learning Performance Summary', fontsize=16)
-            plt.tight_layout()
-            
-            # 저장
-            if save_path is None:
-                save_path = self.output_dir / 'continual_learning_summary.png'
-            
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logger.info(f"Continual learning summary 저장됨: {save_path}")
-            return str(save_path)
-            
-        except Exception as e:
-            logger.error(f"Continual learning summary 생성 실패: {e}")
-            return None
-    
-    def create_paper_figures(self,
-                            scenario_results: Dict[str, Dict],
-                            domain_results: Dict[str, Dict[int, Dict]],
-                            output_prefix: str = "paper_figure") -> List[str]:
-        """
-        논문용 통합 Figure 생성
+        # 임베딩 결합
+        text_embeddings = np.vstack(all_text_embeddings)
+        vib_embeddings = np.vstack(all_vib_embeddings)
+        all_embeddings = np.vstack([text_embeddings, vib_embeddings])
         
-        Args:
-            scenario_results: 시나리오별 종합 결과
-            domain_results: 시나리오별 도메인 결과
-            output_prefix: 파일명 접두사
-            
-        Returns:
-            List[str]: 생성된 파일 경로들
-        """
-        generated_files = []
+        # 모달리티 라벨
+        modality_labels = ['Text'] * len(text_embeddings) + ['Vibration'] * len(vib_embeddings)
+        domain_labels_full = domain_labels + domain_labels
         
-        try:
-            # Figure 1: 각 시나리오별 고급 t-SNE
-            for scenario_name, domain_data in domain_results.items():
-                tsne_path = self.plot_advanced_tsne(
-                    domain_data, scenario_name,
-                    save_path=self.output_dir / f'{output_prefix}_1_{scenario_name}_tsne.png'
-                )
-                if tsne_path:
-                    generated_files.append(tsne_path)
-            
-            # Figure 2: Continual Learning 종합 비교
-            summary_path = self.plot_continual_learning_summary(
-                scenario_results,
-                save_path=self.output_dir / f'{output_prefix}_2_continual_summary.png'
-            )
-            if summary_path:
-                generated_files.append(summary_path)
-            
-            # Figure 3: 각 시나리오별 Domain Shift 분석
-            for scenario_name, domain_data in domain_results.items():
-                shift_path = self.plot_domain_shift_analysis(
-                    domain_data, scenario_name,
-                    save_path=self.output_dir / f'{output_prefix}_3_{scenario_name}_domain_shift.png'
-                )
-                if shift_path:
-                    generated_files.append(shift_path)
-            
-            # Figure 4: 각 시나리오별 Confusion Matrix
-            for scenario_name, domain_data in domain_results.items():
-                cm_path = self.plot_confusion_matrices(
-                    domain_data, scenario_name,
-                    save_path=self.output_dir / f'{output_prefix}_4_{scenario_name}_confusion.png'
-                )
-                if cm_path:
-                    generated_files.append(cm_path)
-            
-            logger.info(f"논문용 Figure {len(generated_files)}개 생성 완료!")
-            return generated_files
-            
-        except Exception as e:
-            logger.error(f"논문용 Figure 생성 실패: {e}")
-            return generated_files
+        # PCA 차원 축소 (더 안정적)
+        logger.info("PCA 차원 축소 실행 중...")
+        pca = PCA(n_components=2, random_state=42)
+        embeddings_2d = pca.fit_transform(all_embeddings)
+        
+        # Figure 생성
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        fig.suptitle(f'Domain Shift Analysis - {scenario_name}', 
+                    fontsize=16, fontweight='bold')
+        
+        # 1. 도메인별 분포 (Text 임베딩)
+        text_mask = np.array(modality_labels) == 'Text'
+        text_coords = embeddings_2d[text_mask]
+        text_domains = np.array(domain_labels_full)[text_mask]
+        
+        unique_domains = np.unique(domain_labels)
+        colors = plt.cm.tab10(np.linspace(0, 1, len(unique_domains)))
+        
+        for i, domain in enumerate(unique_domains):
+            mask = text_domains == domain
+            ax1.scatter(text_coords[mask, 0], text_coords[mask, 1],
+                       c=[colors[i]], alpha=0.7, s=60, label=f'{domain}',
+                       edgecolors='white', linewidth=0.8)
+        
+        ax1.set_title('Text Embeddings - Domain Distribution', fontweight='bold')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. 도메인별 분포 (Vibration 임베딩)
+        vib_mask = np.array(modality_labels) == 'Vibration'
+        vib_coords = embeddings_2d[vib_mask]
+        vib_domains = np.array(domain_labels_full)[vib_mask]
+        
+        for i, domain in enumerate(unique_domains):
+            mask = vib_domains == domain
+            ax2.scatter(vib_coords[mask, 0], vib_coords[mask, 1],
+                       c=[colors[i]], alpha=0.7, s=60, label=f'{domain}',
+                       edgecolors='white', linewidth=0.8)
+        
+        ax2.set_title('Vibration Embeddings - Domain Distribution', fontweight='bold')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # PCA 설명력 추가
+        explained_variance = pca.explained_variance_ratio_
+        fig.text(0.5, 0.02, f'PCA Explained Variance: PC1={explained_variance[0]:.3f}, PC2={explained_variance[1]:.3f}', 
+                ha='center', fontsize=10, style='italic')
+        
+        # 레이아웃 조정 및 저장
+        plt.tight_layout()
+        save_path = os.path.join(self.output_dir, f"{save_name}_{scenario_name}.png")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        
+        logger.info(f"Domain shift robustness 시각화 저장 완료: {save_path}")
+        return save_path
 
 
-def create_visualizer(output_dir: str = 'visualizations') -> AdvancedVisualizer:
-    """AdvancedVisualizer 인스턴스 생성"""
-    return AdvancedVisualizer(output_dir)
-
-
-if __name__ == "__main__":
-    # 테스트 코드
-    print("=== AdvancedVisualizer 테스트 ===")
-    
-    visualizer = create_visualizer('test_visualizations')
-    print(f"시각화 모듈 초기화 완료: {visualizer.output_dir}")
-    
-    print("=== 테스트 완료 ===")
+def create_visualizer(output_dir: str) -> PaperVisualizer:
+    """PaperVisualizer 인스턴스 생성 (기존 호환성 유지)"""
+    return PaperVisualizer(output_dir)

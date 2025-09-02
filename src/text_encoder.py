@@ -107,7 +107,9 @@ class TextEncoder(nn.Module):
                     self.distilbert.enable_adapters()
                     logger.info("LoRA adapter 활성화됨")
                 except Exception as e:
-                    logger.warning(f"LoRA adapter 활성화 시도 실패 (무시됨): {e}")
+                    # 일부 백엔드에서 adapter registry 미구현으로 ValueError("No adapter loaded")가 발생할 수 있음
+                    # 파라미터 레벨에서 LoRA 학습을 강제 활성화하므로 경고가 아니라 정보로만 남김
+                    logger.info(f"LoRA adapter 활성화 시도 건너뜀: {e}")
         else:
             logger.info("PEFT adapter가 초기화되지 않음 - LoRA 파라미터 직접 활성화")
         

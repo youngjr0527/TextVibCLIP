@@ -178,6 +178,15 @@ class TextVibCLIP(nn.Module):
             # 텍스트 리스트 직접 토크나이징 (하위 호환성)
             text_embeddings = self.text_encoder.encode_texts(texts, device, max_length=128)
         
+        # 멀티-포지티브(같은 파일의 다른 윈도우들) 대응을 위한 라벨 구성
+        # file_idx가 있으면 같은 file_idx는 모두 양성으로 취급
+        file_idx = batch.get('file_idx', None)
+        multi_positive = None
+        if file_idx is not None:
+            # (N, N) 마스크: 동일 파일이면 True
+            same_file = (file_idx.unsqueeze(1) == file_idx.unsqueeze(0))
+            multi_positive = same_file
+
         # Replay 임베딩이 제공되면 분모(negative pool)를 확장하여 InfoNCE 계산
         replay_text = batch.get('replay_text_embeddings', None)
         replay_vib = batch.get('replay_vib_embeddings', None)
@@ -192,15 +201,26 @@ class TextVibCLIP(nn.Module):
             batch_size = text_norm.size(0)
             labels = torch.arange(batch_size, device=device)
             
-            # Text->Vib: 현재 텍스트를 쿼리로, 현재 진동(정답) + 리플레이 진동(모두 negative)으로 분모 확장
+            # Text->Vib
             all_vib = torch.cat([vib_norm, replay_vib_norm], dim=0)  # (N+R, d)
             logits_t2v = torch.matmul(text_norm, all_vib.t()) / self.infonce_loss.temperature_text  # (N, N+R)
-            loss_t2v = F.cross_entropy(logits_t2v, labels, reduction=self.infonce_loss.reduction)
+            if multi_positive is not None:
+                # 멀티-포지티브 InfoNCE: -log( sum_{pos} exp / sum_{all} exp )
+                pos_mask_t2v = torch.zeros_like(logits_t2v, dtype=torch.bool)
+                pos_mask_t2v[:, :vib_norm.size(0)] = multi_positive
+                loss_t2v = self._multi_positive_infonce_loss(logits_t2v, pos_mask_t2v)
+            else:
+                loss_t2v = F.cross_entropy(logits_t2v, labels, reduction=self.infonce_loss.reduction)
             
-            # Vib->Text: 현재 진동을 쿼리로, 현재 텍스트(정답) + 리플레이 텍스트(모두 negative)
+            # Vib->Text
             all_text = torch.cat([text_norm, replay_text_norm], dim=0)  # (N+R, d)
             logits_v2t = torch.matmul(vib_norm, all_text.t()) / self.infonce_loss.temperature_vib  # (N, N+R)
-            loss_v2t = F.cross_entropy(logits_v2t, labels, reduction=self.infonce_loss.reduction)
+            if multi_positive is not None:
+                pos_mask_v2t = torch.zeros_like(logits_v2t, dtype=torch.bool)
+                pos_mask_v2t[:, :text_norm.size(0)] = multi_positive
+                loss_v2t = self._multi_positive_infonce_loss(logits_v2t, pos_mask_v2t)
+            else:
+                loss_v2t = F.cross_entropy(logits_v2t, labels, reduction=self.infonce_loss.reduction)
             
             loss = (loss_t2v + loss_v2t) / 2.0
             loss_components = {
@@ -209,8 +229,40 @@ class TextVibCLIP(nn.Module):
                 'total': loss
             }
         else:
-            # 표준 InfoNCE
-            loss, loss_components = self.infonce_loss(text_embeddings, vib_embeddings)
+            # 표준 또는 멀티-포지티브 InfoNCE
+            if multi_positive is None:
+                loss, loss_components = self.infonce_loss(text_embeddings, vib_embeddings)
+            else:
+                text_norm = F.normalize(text_embeddings, dim=1)
+                vib_norm = F.normalize(vib_embeddings, dim=1)
+                logits_t2v = torch.matmul(text_norm, vib_norm.t()) / self.infonce_loss.temperature_text
+                logits_v2t = torch.matmul(vib_norm, text_norm.t()) / self.infonce_loss.temperature_vib
+                pos_t2v = multi_positive
+                pos_v2t = multi_positive
+                loss_t2v = self._multi_positive_infonce_loss(logits_t2v, pos_t2v)
+                loss_v2t = self._multi_positive_infonce_loss(logits_v2t, pos_v2t)
+                loss = (loss_t2v + loss_v2t) / 2.0
+                loss_components = {
+                    'text_to_vib': loss_t2v,
+                    'vib_to_text': loss_v2t,
+                    'total': loss
+                }
+
+        # Auxiliary classification loss (first domain only)
+        aux_cfg = MODEL_CONFIG.get('aux_classification', {'enabled': False})
+        if aux_cfg.get('enabled', False) and not self.is_continual_mode:
+            # labels: batch['labels'] -> UOS: [rc, bc, bt], CWRU: [bc]
+            labels = batch.get('labels', None)
+            if labels is not None:
+                if labels.dim() == 2 and labels.size(1) >= 1:
+                    # bearing_condition index: UOS에서 두 번째(1)
+                    bearing_condition = labels[:, 1] if labels.size(1) >= 2 else labels[:, 0]
+                    # 분류 head 존재 시에만
+                    if hasattr(self.vibration_encoder, 'use_aux_head') and self.vibration_encoder.use_aux_head:
+                        logits_cls = self.vibration_encoder.aux_head(vib_embeddings)
+                        ce_loss = F.cross_entropy(logits_cls, bearing_condition)
+                        loss = loss + float(aux_cfg.get('loss_weight', 1.0)) * ce_loss
+                        loss_components['aux_ce'] = ce_loss
         
         # 결과 딕셔너리 구성
         results = {
@@ -225,6 +277,25 @@ class TextVibCLIP(nn.Module):
             })
         
         return results
+
+    def _multi_positive_infonce_loss(self, logits: torch.Tensor, positive_mask: torch.Tensor) -> torch.Tensor:
+        """멀티-포지티브 InfoNCE 손실
+        Args:
+            logits: (N, M) 유사도 로짓
+            positive_mask: (N, M) bool 텐서, 양성 위치 True
+        Returns:
+            스칼라 손실 (mean)
+        """
+        # AMP(half)에서의 overflow 회피: 연산을 float32로 수행
+        logits_f32 = logits.float()
+        # 정규화를 위한 log-sum-exp (분모)
+        log_denom = torch.logsumexp(logits_f32, dim=1)  # (N,)
+        # 양성 로짓만 남기고 log-sum-exp (분자)
+        # 모든 행에 최소 하나 이상의 양성이 존재한다고 가정 (자기 자신 포함)
+        masked_logits = logits_f32.masked_fill(~positive_mask, -1e9)
+        log_num = torch.logsumexp(masked_logits, dim=1)  # (N,)
+        loss_vec = -(log_num - log_denom)
+        return loss_vec.mean()
     
     def encode_text(self, texts: List[str], device: torch.device) -> torch.Tensor:
         """텍스트만 인코딩 (추론용)"""
@@ -259,6 +330,20 @@ class TextVibCLIP(nn.Module):
         
         # Text encoder LoRA 학습 활성화
         self.text_encoder.enable_lora_training()
+        # LoRA 파라미터 개수/학습 가능 상태 로깅
+        try:
+            lora_params_total = 0
+            lora_params_trainable = 0
+            for name, p in self.text_encoder.distilbert.named_parameters():
+                if 'lora_' in name:
+                    lora_params_total += p.numel()
+                    if p.requires_grad:
+                        lora_params_trainable += p.numel()
+            logger.info(
+                f"LoRA 파라미터 상태: total={lora_params_total:,}, trainable={lora_params_trainable:,}"
+            )
+        except Exception as e:
+            logger.info(f"LoRA 파라미터 상태 확인 스킵: {e}")
         
         # Projection layer 재활성화
         if hasattr(self.text_encoder, 'projection'):

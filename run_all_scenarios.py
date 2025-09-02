@@ -9,7 +9,7 @@ TextVibCLIP 전체 시나리오 통합 실험 실행 스크립트
 4. 실험 진행 상황 실시간 모니터링
 
 Usage:
-    python run_all_scenarios.py --output_dir results_comparison
+    python run_all_scenarios.py --output_dir results
     python run_all_scenarios.py --quick_test --epochs 10
 """
 
@@ -20,7 +20,7 @@ import torch
 import time
 import json
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, Tuple
 import numpy as np
 import warnings
 
@@ -57,12 +57,16 @@ from src.visualization import create_visualizer
 from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, CWRU_DATA_CONFIG
 
 # 로깅 설정
-def setup_logging(log_dir: str) -> logging.Logger:
-    """통합 실험용 로깅 설정"""
-    os.makedirs(log_dir, exist_ok=True)
+def setup_logging(log_dir: str) -> Tuple[logging.Logger, str]:
+    """통합 실험용 로깅 설정 및 실험별 폴더 생성"""
+    # 실험별 고유 폴더 생성 (날짜시간 기준)
+    experiment_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    # 폴더명을 간결하게: 접두사 없이 타임스탬프만 사용
+    experiment_dir = os.path.join(log_dir, experiment_timestamp)
+    os.makedirs(experiment_dir, exist_ok=True)
     
-    log_filename = f"all_scenarios_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    log_path = os.path.join(log_dir, log_filename)
+    log_filename = f"all_scenarios_{experiment_timestamp}.log"
+    log_path = os.path.join(experiment_dir, log_filename)
     
     # 기존 핸들러 제거
     for handler in logging.root.handlers[:]:
@@ -79,7 +83,9 @@ def setup_logging(log_dir: str) -> logging.Logger:
     
     logger = logging.getLogger(__name__)
     logger.info(f"통합 실험 로깅 시작: {log_path}")
-    return logger
+    logger.info(f"실험 결과 폴더: {experiment_dir}")
+    
+    return logger, experiment_dir
 
 
 class ScenarioConfig:
@@ -94,7 +100,7 @@ class ScenarioConfig:
         'shift_type': 'Varying Speed',
         'first_domain_epochs': 30,  # 데이터 많음
         'remaining_epochs': 20,
-        'batch_size': 32,
+        'batch_size': 4,  # 메모리 안전성 강화
         'replay_buffer_size': 1000,
         'patience': 5
     }
@@ -215,9 +221,12 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         trainer = ContinualTrainer(
             device=device,
             save_dir=f"checkpoints/{config['name']}",
-            use_amp=False,  # AMP 비활성화로 수치 안정성 확보
-            max_grad_norm=0.1,  # Gradient clipping 강화
-            domain_order=config['domain_order']
+            use_amp=True,  # OOM 방지를 위해 AMP 활성화
+            max_grad_norm=0.1,
+            domain_order=config['domain_order'],
+            data_dir=config['data_dir'],
+            dataset_type=config['dataset_type'],
+            patience=config.get('patience', TRAINING_CONFIG.get('patience', 10))
         )
         
         # 하이퍼파라미터 설정
@@ -261,7 +270,82 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
             else:
                 raise  # 다른 RuntimeError는 다시 발생
         
-        # Remaining Domains Training
+        # SANITY 모드: Remaining domains 완전 스킵하고 첫 도메인만 결과 반환
+        if config.get('remaining_epochs', 0) == 0:
+            logger.info("🧪 SANITY 모드 감지: Remaining domains 학습/평가 스킵")
+            first_domain_value = config['domain_order'][0]
+            first_domain_name = config['domain_names'][0]
+            perf = first_results.get('domain_performances', {})
+            metrics = perf.get(first_domain_value, {'accuracy': 0.0, 'top1_retrieval': 0.0, 'top5_retrieval': 0.0})
+
+            total_time = time.time() - start_time
+
+            results = {
+                'domain_names': [first_domain_name],
+                'shift_type': config['shift_type'],
+                'final_accuracies': [metrics.get('accuracy', 0.0)],
+                'final_top1_retrievals': [metrics.get('top1_retrieval', 0.0)],
+                'final_top5_retrievals': [metrics.get('top5_retrieval', 0.0)],
+                'average_accuracy': metrics.get('accuracy', 0.0),
+                'average_forgetting': 0.0,
+                'samples_per_domain': samples_per_domain,
+                'total_samples': samples_per_domain,
+                'total_time': total_time,
+                'first_domain_epochs': config['first_domain_epochs'],
+                'remaining_epochs': 0,
+                'batch_size': config['batch_size']
+            }
+
+            # 첫 도메인만 임베딩 수집 (시각화용)
+            logger.info("📊 SANITY - 첫 도메인 임베딩 수집 중...")
+            domain = first_domain_value
+            test_dataset = BearingDataset(
+                data_dir=config['data_dir'],
+                dataset_type=config['dataset_type'],
+                domain_value=domain,
+                subset='test'
+            )
+            domain_embeddings = {}
+            if len(test_dataset) > 0:
+                max_viz_samples = min(config.get('sanity_samples', 100), len(test_dataset))
+                indices = torch.randperm(len(test_dataset))[:max_viz_samples]
+                text_embeddings = []
+                vib_embeddings = []
+                metadata_list = []
+                trainer.model.eval()
+                # 배치 추론으로 효율화
+                from torch.utils.data import DataLoader, Subset
+                subset = Subset(test_dataset, indices.tolist())
+                # 기본 콜레이트는 dict-of-lists를 반환하므로 list-of-dicts로 복원
+                def _collate_identity(samples):
+                    return samples  # list of dicts 유지
+                dl = DataLoader(subset, batch_size=16, shuffle=False, collate_fn=_collate_identity)
+                with torch.no_grad():
+                    for samples in dl:
+                        # samples: list of dicts
+                        vib_batch = torch.stack([s['vibration'] for s in samples], dim=0).to(device)
+                        text_batch = [s['text'] for s in samples]
+                        meta_batch = [s.get('metadata', {}) for s in samples]
+                        batch = {
+                            'vibration': vib_batch,
+                            'text': text_batch
+                        }
+                        model_results = trainer.model(batch, return_embeddings=True)
+                        text_embeddings.append(model_results['text_embeddings'])
+                        vib_embeddings.append(model_results['vib_embeddings'])
+                        metadata_list.extend(meta_batch)
+                if text_embeddings:
+                    domain_embeddings[domain] = {
+                        'text': torch.cat(text_embeddings, dim=0),
+                        'vib': torch.cat(vib_embeddings, dim=0),
+                        'metadata': metadata_list
+                    }
+            results['domain_embeddings'] = domain_embeddings
+
+            logger.info("✅ SANITY - 첫 도메인 결과 반환 완료")
+            return results
+
+        # Remaining Domains Training (SANITY가 아니면 진행)
         logger.info("🔄 Remaining Domains Training...")
         trainer.num_epochs = config['remaining_epochs']
         
@@ -337,9 +421,10 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
                         metadata_list.append(sample['metadata'])
                 
                 if text_embeddings:
+                    # 시각화 모듈의 기대 키 이름에 맞춰 저장 ('text', 'vib')
                     domain_embeddings[domain] = {
-                        'text_embeddings': torch.cat(text_embeddings, dim=0),
-                        'vib_embeddings': torch.cat(vib_embeddings, dim=0),
+                        'text': torch.cat(text_embeddings, dim=0),
+                        'vib': torch.cat(vib_embeddings, dim=0),
                         'metadata': metadata_list
                     }
         
@@ -386,7 +471,7 @@ def parse_arguments():
     """명령줄 인수 파싱"""
     parser = argparse.ArgumentParser(description='TextVibCLIP 전체 시나리오 통합 실험')
     
-    parser.add_argument('--output_dir', type=str, default='results_comparison',
+    parser.add_argument('--output_dir', type=str, default='results',
                        help='결과 저장 디렉토리')
     parser.add_argument('--quick_test', action='store_true',
                        help='빠른 테스트 모드 (에포크 수 감소)')
@@ -400,6 +485,10 @@ def parse_arguments():
                        help='UOS 시나리오 건너뛰기')
     parser.add_argument('--skip_cwru', action='store_true',
                        help='CWRU 시나리오 건너뛰기')
+    parser.add_argument('--sanity_check', action='store_true',
+                       help='First domain sanity check만 수행 (학습/정확도/임베딩 정렬 확인)')
+    parser.add_argument('--sanity_samples', type=int, default=100,
+                       help='sanity check에서 수집할 샘플 수(도메인 내)')
     
     return parser.parse_args()
 
@@ -414,10 +503,11 @@ def main():
     # 출력 디렉토리 생성
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # 로깅 설정
-    logger = setup_logging(args.output_dir)
+    # 로깅 설정 및 실험 폴더 생성
+    logger, experiment_dir = setup_logging(args.output_dir)
     logger.info("🎯 TextVibCLIP 전체 시나리오 통합 실험 시작!")
-    logger.info(f"📁 결과 저장 경로: {args.output_dir}")
+    logger.info(f"📁 기본 저장 경로: {args.output_dir}")
+    logger.info(f"📁 실험 결과 폴더: {experiment_dir}")
     
     # 디바이스 설정
     if args.device == 'auto':
@@ -450,6 +540,8 @@ def main():
         for scenario in scenarios:
             scenario['first_domain_epochs'] = test_epochs
             scenario['remaining_epochs'] = test_epochs // 2
+            # 빠른 테스트에서도 메모리 안전한 배치 크기 사용
+            scenario['batch_size'] = min(scenario.get('batch_size', 4), 4)
     
     # 시나리오별 실행
     total_start_time = time.time()
@@ -459,52 +551,116 @@ def main():
         logger.info(f"시나리오 {i}/{len(scenarios)}: {scenario['name']}")
         logger.info(f"{'='*60}")
         
-        scenario_result = run_single_scenario(scenario, logger, device)
+        # Sanity check 모드: 첫 도메인만 빠르게 검증하고 리포트/시각화
+        if args.sanity_check:
+            scenario_result = run_single_scenario({
+                **scenario,
+                'remaining_epochs': 0  # 나머지 도메인 스킵
+            }, logger, device)
+            if scenario_result:
+                # First-domain 전용 리포트
+                domain_names = scenario_result['domain_names']
+                if len(domain_names) > 0 and 'final_accuracies' in scenario_result:
+                    first_acc = scenario_result['final_accuracies'][0] if scenario_result['final_accuracies'] else 0.0
+                    logger.info(f"🧪 Sanity - First domain accuracy: {first_acc:.4f}")
+                # 시각화가 있으면 저장
+                if 'domain_embeddings' in scenario_result and scenario_result['domain_embeddings']:
+                    visualizer = create_visualizer(experiment_dir)
+                    viz_path = visualizer.create_continual_learning_performance_plot(
+                        domain_names=domain_names,
+                        accuracies=scenario_result.get('final_accuracies', [0.0]*len(domain_names)),
+                        forgetting_scores=[0.0]*len(domain_names),
+                        scenario_name=f"SANITY_{scenario['name']}"
+                    )
+                    logger.info(f"🧪 Sanity - 성능 플롯: {os.path.basename(viz_path)}")
+                # 한 시나리오만 검사하고 종료
+                results.add_scenario_result(scenario['name'], scenario_result)
+            else:
+                logger.error(f"❌ {scenario['name']} 실행 실패!")
+            break
+        else:
+            scenario_result = run_single_scenario(scenario, logger, device)
         
         if scenario_result:
             results.add_scenario_result(scenario['name'], scenario_result)
         else:
             logger.error(f"❌ {scenario['name']} 실행 실패!")
     
-    # 결과 저장
+    # 결과 저장 (실험 폴더에)
     logger.info("\n💾 결과 저장 중...")
     try:
-        detailed_path, summary_path, comparison_path = results.save_to_csv(args.output_dir)
+        detailed_path, summary_path, comparison_path = results.save_to_csv(experiment_dir)
         logger.info(f"✅ 상세 결과: {detailed_path}")
         logger.info(f"✅ 요약 결과: {summary_path}")
         logger.info(f"✅ 비교 결과: {comparison_path}")
     except Exception as e:
         logger.error(f"❌ 결과 저장 실패: {str(e)}")
     
-    # 고급 시각화 생성
-    logger.info("\n🎨 논문용 시각화 생성 중...")
+    # 논문용 고품질 시각화 생성 (실험 폴더에)
+    logger.info("\n🎨 논문용 고품질 시각화 생성 중...")
     try:
-        visualizer = create_visualizer(args.output_dir)
+        visualizer = create_visualizer(experiment_dir)
+        figure_count = 0
         
-        # 시나리오별 결과 정리
-        scenario_summary = {}
-        domain_embeddings = {}
-        
-        for scenario_result in results.scenario_results.values():
+        # 각 시나리오별로 개별 시각화 생성
+        for scenario_name, scenario_result in results.scenario_results.items():
+            logger.info(f"📊 {scenario_name} 시각화 생성 중...")
+            
+            # 1. Continual Learning 성능 시각화 (도메인별 정확도 + Forgetting)
+            if 'domain_names' in scenario_result and 'final_accuracies' in scenario_result:
+                domain_names = scenario_result['domain_names']
+                accuracies = scenario_result['final_accuracies']
+                forgetting_scores = scenario_result.get('forgetting_scores', [0.0] * len(domain_names))
+                
+                perf_path = visualizer.create_continual_learning_performance_plot(
+                    domain_names=domain_names,
+                    accuracies=accuracies,
+                    forgetting_scores=forgetting_scores,
+                    scenario_name=scenario_name
+                )
+                if perf_path:
+                    figure_count += 1
+                    logger.info(f"   ✅ 성능 시각화: {os.path.basename(perf_path)}")
+            
+            # 2. Domain Shift Robustness 시각화 (도메인별 임베딩 분포)
             if 'domain_embeddings' in scenario_result:
-                scenario_name = scenario_result.get('shift_type', 'Unknown')
-                scenario_summary[scenario_name] = scenario_result
-                domain_embeddings[scenario_name] = scenario_result['domain_embeddings']
+                domain_embeddings = scenario_result['domain_embeddings']
+                
+                robustness_path = visualizer.create_domain_shift_robustness_plot(
+                    domain_embeddings=domain_embeddings,
+                    scenario_name=scenario_name
+                )
+                if robustness_path:
+                    figure_count += 1
+                    logger.info(f"   ✅ 도메인 시프트 시각화: {os.path.basename(robustness_path)}")
+            
+            # 3. Encoder Alignment 시각화 (첫 번째 도메인만)
+            if 'domain_embeddings' in scenario_result:
+                domain_embeddings = scenario_result['domain_embeddings']
+                first_domain = list(domain_embeddings.keys())[0] if domain_embeddings else None
+                
+                if first_domain and 'text' in domain_embeddings[first_domain] and 'vib' in domain_embeddings[first_domain]:
+                    # 실제 메타데이터에서 라벨 사용
+                    text_emb = domain_embeddings[first_domain]['text'][:100]
+                    vib_emb = domain_embeddings[first_domain]['vib'][:100]
+                    meta = domain_embeddings[first_domain].get('metadata', [])[:len(text_emb)]
+                    labels = [m.get('bearing_condition', 'H') for m in meta]
+                    types = [m.get('bearing_type', '6204') for m in meta]
+                    
+                    alignment_path = visualizer.create_encoder_alignment_plot(
+                        text_embeddings=text_emb,
+                        vib_embeddings=vib_emb,
+                        labels=labels,
+                        bearing_types=types,
+                        domain_name=first_domain,
+                        save_name=f"encoder_alignment_{scenario_name}"
+                    )
+                    if alignment_path:
+                        figure_count += 1
+                        logger.info(f"   ✅ Encoder alignment 시각화: {os.path.basename(alignment_path)}")
         
-        # 논문용 Figure 생성
-        if scenario_summary and domain_embeddings:
-            figure_paths = visualizer.create_paper_figures(
-                scenario_summary, 
-                domain_embeddings,
-                output_prefix="TextVibCLIP"
-            )
-            
-            logger.info(f"✅ 논문용 Figure {len(figure_paths)}개 생성 완료!")
-            for path in figure_paths:
-                logger.info(f"   📊 {Path(path).name}")
-        else:
-            logger.warning("⚠️ 시각화용 데이터가 부족합니다.")
-            
+        logger.info(f"✅ 논문용 Figure {figure_count}개 생성 완료!")
+        
     except Exception as e:
         logger.error(f"❌ 시각화 생성 실패: {str(e)}")
         logger.exception("상세 오류:")

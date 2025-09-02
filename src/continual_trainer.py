@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from typing import Dict, List, Tuple, Optional, Any, Union
 import logging
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, Counter
 import matplotlib.pyplot as plt
 
 from .textvib_model import TextVibCLIP, create_textvib_model
@@ -38,7 +38,10 @@ class ContinualTrainer:
                  save_dir: str = 'checkpoints',
                  use_amp: bool = True,
                  max_grad_norm: float = 0.1,
-                 domain_order: List[Union[int, str]] = None):
+                 domain_order: List[Union[int, str]] = None,
+                 data_dir: Optional[str] = None,
+                 dataset_type: str = DATA_CONFIG.get('dataset_type', 'uos'),
+                 patience: Optional[int] = None):
         """
         Args:
             model (TextVibCLIP, optional): 사전 초기화된 모델
@@ -71,6 +74,9 @@ class ContinualTrainer:
         self.current_domain_idx = 0
         self.completed_domains = []
         self.domain_order = domain_order if domain_order is not None else DATA_CONFIG['domain_order']
+        # 데이터 설정 (평가 시 일관성 유지)
+        self.data_dir = data_dir if data_dir is not None else DATA_CONFIG['data_dir']
+        self.dataset_type = dataset_type
         
         # 성능 추적
         self.performance_history = defaultdict(list)  # {domain: [accuracy_list]}
@@ -83,6 +89,8 @@ class ContinualTrainer:
         self.learning_rate = TRAINING_CONFIG['learning_rate']
         self.weight_decay = TRAINING_CONFIG['weight_decay']
         self.replay_ratio = TRAINING_CONFIG['replay_ratio']
+        self.grad_accum_steps = int(TRAINING_CONFIG.get('grad_accum_steps', 1))
+        self.patience = int(patience) if patience is not None else int(TRAINING_CONFIG.get('patience', 10))
         
         logger.info(f"ContinualTrainer 초기화 완료: device={device}")
     
@@ -116,6 +124,10 @@ class ContinualTrainer:
         optimizer = self._create_optimizer()
         scheduler = self._create_scheduler(optimizer, len(first_domain_dataloader) * num_epochs)
         
+        # 디버그/모니터링용: 그라디언트 노름 기록 버퍼
+        if not hasattr(self, 'debug_grad_norms'):
+            self.debug_grad_norms = []  # 각 항목: {'step': int, 'text_lora': float, 'vib': float}
+
         # 학습 루프
         self.model.train()
         epoch_losses = []
@@ -129,37 +141,101 @@ class ContinualTrainer:
                 batch = self._move_batch_to_device(batch)
                 
                 # Forward pass
-                optimizer.zero_grad()
+                # grad accumulation: 사이클 시작시에만 zero_grad
+                if (batch_idx % self.grad_accum_steps) == 0:
+                    optimizer.zero_grad(set_to_none=True)
                 
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
                         results = self.model(batch)
-                        loss = results['loss']
+                        loss = results['loss'] / self.grad_accum_steps
                     
-                    # Backward pass with AMP
+                    # Backward pass with AMP + grad accumulation
                     self.scaler.scale(loss).backward()
                     
-                    # Gradient clipping
-                    if self.max_grad_norm > 0:
-                        self.scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                    
-                    self.scaler.step(optimizer)
-                    self.scaler.update()
+                    if (batch_idx + 1) % self.grad_accum_steps == 0:
+                        # Gradient clipping 및 grad norm 측정 준비를 위한 unscale (사이클 끝에서만)
+                        if self.max_grad_norm > 0:
+                            self.scaler.unscale_(optimizer)
+                            # 디버그: grad norm 측정 (텍스트 LoRA, 진동 인코더)
+                            try:
+                                text_lora_params = [
+                                    p for n, p in self.model.text_encoder.distilbert.named_parameters()
+                                    if ('lora_' in n) and p.requires_grad and (p.grad is not None)
+                                ]
+                            except Exception:
+                                text_lora_params = []
+                            vib_params = [
+                                p for p in self.model.vibration_encoder.parameters()
+                                if p.requires_grad and (p.grad is not None)
+                            ]
+                            def _global_grad_norm(params):
+                                if not params:
+                                    return 0.0
+                                import math
+                                total = 0.0
+                                for p in params:
+                                    if p.grad is not None:
+                                        param_norm = p.grad.data.float().norm(2).item()
+                                        total += param_norm * param_norm
+                                return math.sqrt(total)
+                            grad_norm_text = _global_grad_norm(text_lora_params)
+                            grad_norm_vib = _global_grad_norm(vib_params)
+                            if batch_idx % 50 == 0:
+                                self.debug_grad_norms.append({
+                                    'epoch': epoch + 1,
+                                    'batch': batch_idx,
+                                    'text_lora': float(grad_norm_text),
+                                    'vib': float(grad_norm_vib)
+                                })
+                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                        self.scaler.step(optimizer)
+                        self.scaler.update()
                 else:
                     results = self.model(batch)
-                    loss = results['loss']
+                    loss = results['loss'] / self.grad_accum_steps
                     
                     # Backward pass
                     loss.backward()
                     
-                    # Gradient clipping
-                    if self.max_grad_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                    
-                    optimizer.step()
+                    if (batch_idx + 1) % self.grad_accum_steps == 0:
+                        # Gradient clipping 및 grad norm 측정 (사이클 끝에서만)
+                        if self.max_grad_norm > 0:
+                            try:
+                                text_lora_params = [
+                                    p for n, p in self.model.text_encoder.distilbert.named_parameters()
+                                    if ('lora_' in n) and p.requires_grad and (p.grad is not None)
+                                ]
+                            except Exception:
+                                text_lora_params = []
+                            vib_params = [
+                                p for p in self.model.vibration_encoder.parameters()
+                                if p.requires_grad and (p.grad is not None)
+                            ]
+                            def _global_grad_norm(params):
+                                if not params:
+                                    return 0.0
+                                import math
+                                total = 0.0
+                                for p in params:
+                                    if p.grad is not None:
+                                        param_norm = p.grad.data.float().norm(2).item()
+                                        total += param_norm * param_norm
+                                return math.sqrt(total)
+                            grad_norm_text = _global_grad_norm(text_lora_params)
+                            grad_norm_vib = _global_grad_norm(vib_params)
+                            if batch_idx % 50 == 0:
+                                self.debug_grad_norms.append({
+                                    'epoch': epoch + 1,
+                                    'batch': batch_idx,
+                                    'text_lora': float(grad_norm_text),
+                                    'vib': float(grad_norm_vib)
+                                })
+                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                        optimizer.step()
                 
-                scheduler.step()
+                if (batch_idx + 1) % self.grad_accum_steps == 0:
+                    scheduler.step()
                 
                 epoch_loss += loss.item()
                 num_batches += 1
@@ -184,7 +260,12 @@ class ContinualTrainer:
         self.model.save_checkpoint(checkpoint_path, num_epochs, optimizer.state_dict())
         
         # 전체 도메인 성능 평가
-        domain_dataloaders = create_domain_dataloaders(batch_size=self.batch_size)
+        domain_dataloaders = create_domain_dataloaders(
+            data_dir=self.data_dir,
+            domain_order=self.domain_order,
+            dataset_type=self.dataset_type,
+            batch_size=self.batch_size
+        )
         first_domain_performance = self._evaluate_all_domains(domain_dataloaders)
         
         # 성능 기록 (모든 메트릭 저장)
@@ -212,10 +293,20 @@ class ContinualTrainer:
         
         logger.info("=== First Domain Training 완료 ===")
         
+        # grad norm 요약
+        grad_text_vals = [d['text_lora'] for d in self.debug_grad_norms] if hasattr(self, 'debug_grad_norms') else []
+        grad_vib_vals = [d['vib'] for d in self.debug_grad_norms] if hasattr(self, 'debug_grad_norms') else []
+        grad_summary = {
+            'text_lora_mean': float(np.mean(grad_text_vals)) if grad_text_vals else 0.0,
+            'vib_mean': float(np.mean(grad_vib_vals)) if grad_vib_vals else 0.0,
+            'samples': len(self.debug_grad_norms) if hasattr(self, 'debug_grad_norms') else 0
+        }
+
         return {
             'final_loss': epoch_losses[-1],
             'avg_loss': np.mean(epoch_losses),
-            'domain_performances': first_domain_performance
+            'domain_performances': first_domain_performance,
+            'grad_norms_summary': grad_summary
         }
     
     def train_remaining_domains(self, domain_dataloaders: Optional[Dict] = None) -> Dict[str, Any]:
@@ -486,14 +577,16 @@ class ContinualTrainer:
         
         all_text_embeddings = []
         all_vib_embeddings = []
+        all_file_idx = []
         
         # DataLoader 안전성 확보를 위한 조치
         try:
             with torch.no_grad():
+                max_batches = int(EVAL_CONFIG.get('max_full_eval_batches', -1))
                 for batch_idx, batch in enumerate(dataloader):
-                    # 과도한 배치 처리 방지 (디버깅용)
-                    if batch_idx >= 50:  # 빠른 테스트를 위해 제한
-                        logger.debug(f"평가 중단: {batch_idx}번째 배치에서 조기 종료")
+                    # 설정 기반 배치 제한 (기본 무제한)
+                    if max_batches >= 0 and batch_idx >= max_batches:
+                        logger.debug(f"평가 중단: 설정된 최대 배치 {max_batches} 도달")
                         break
                         
                     batch = self._move_batch_to_device(batch)
@@ -501,6 +594,9 @@ class ContinualTrainer:
                     
                     all_text_embeddings.append(results['text_embeddings'])
                     all_vib_embeddings.append(results['vib_embeddings'])
+                    if 'file_idx' in batch:
+                        # 디바이스 일치 유지 (GPU 상에서 바로 사용)
+                        all_file_idx.append(batch['file_idx'])
                     
         except Exception as e:
             logger.error(f"평가 중 오류 발생: {e}")
@@ -512,13 +608,13 @@ class ContinualTrainer:
         # 모든 임베딩 결합
         text_emb = torch.cat(all_text_embeddings, dim=0)
         vib_emb = torch.cat(all_vib_embeddings, dim=0)
+        file_idx = torch.cat(all_file_idx, dim=0) if all_file_idx else None
         
         # L2 정규화
         text_emb = F.normalize(text_emb, dim=1)
         vib_emb = F.normalize(vib_emb, dim=1)
         
-        # 1. 실제 Retrieval 정확도 (올바른 방식)
-        # Text → Vibration retrieval: 각 text가 올바른 vibration을 찾는지
+        # 1. Retrieval 정확도 (멀티-포지티브: 같은 파일은 모두 정답 처리)
         similarity_matrix = torch.matmul(text_emb, vib_emb.t())  # (N, N)
         
         # 디버그: 첫 번째 배치에서 유사도 분포 확인
@@ -528,26 +624,77 @@ class ContinualTrainer:
             self._debug_count = 1
             
         if self._debug_count <= 2:  # 처음 2번만 디버그
+            # 임베딩 통계 로그
+            try:
+                t_mean = text_emb.mean().item(); t_std = text_emb.std(unbiased=False).item()
+                v_mean = vib_emb.mean().item(); v_std = vib_emb.std(unbiased=False).item()
+                logger.info(f"🔍 DEBUG - 임베딩 통계 | text mean/std: {t_mean:.4f}/{t_std:.4f}, vib mean/std: {v_mean:.4f}/{v_std:.4f}")
+            except Exception:
+                pass
             logger.info(f"🔍 DEBUG - 배치 크기: {text_emb.size(0)}")
             logger.info(f"🔍 DEBUG - 대각선 유사도 (정답): {torch.diag(similarity_matrix)[:5].tolist()}")
             logger.info(f"🔍 DEBUG - 첫 행 유사도 (전체): {similarity_matrix[0, :5].tolist()}")
-            logger.info(f"🔍 DEBUG - 최대 유사도 인덱스: {torch.argmax(similarity_matrix, dim=1)[:10].tolist()}")
+            predicted_tmp = torch.argmax(similarity_matrix, dim=1)
+            logger.info(f"🔍 DEBUG - 최대 유사도 인덱스: {predicted_tmp[:10].tolist()}")
+
+            # 추가 무결성 체크: 유사도 통계 및 argmax 분포
+            N = similarity_matrix.size(0)
+            diag_vals = torch.diag(similarity_matrix)
+            diag_mean = float(diag_vals.mean().item())
+            diag_std = float(diag_vals.std(unbiased=False).item())
+            diag_min = float(diag_vals.min().item())
+            diag_max = float(diag_vals.max().item())
+            off_mask = ~torch.eye(N, dtype=torch.bool, device=similarity_matrix.device)
+            off_vals = similarity_matrix[off_mask]
+            off_mean = float(off_vals.mean().item())
+            off_std = float(off_vals.std(unbiased=False).item())
+            logger.info(
+                f"🔍 DEBUG - 유사도 통계 | diag mean/std/min/max: "
+                f"{diag_mean:.4f}/{diag_std:.4f}/{diag_min:.4f}/{diag_max:.4f}, "
+                f"off mean/std: {off_mean:.4f}/{off_std:.4f}"
+            )
+
+            binc = torch.bincount(predicted_tmp, minlength=N)
+            topk = min(10, N)
+            top_vals, top_idx = torch.topk(binc, k=topk)
+            top_pairs = [(int(i), int(v)) for i, v in zip(top_idx.tolist(), top_vals.tolist())]
+            logger.info(f"🔍 DEBUG - argmax 상위 {topk} 인덱스/빈도: {top_pairs}")
+
+            # 셔플 베이스라인 (멀티-포지티브 기준)
+            if file_idx is not None and N >= 2:
+                perm = torch.randperm(N, device=text_emb.device)
+                sim_shuf = torch.matmul(text_emb, vib_emb[perm].t())
+                pred_shuf = torch.argmax(sim_shuf, dim=1)
+                top1_shuf = (file_idx[perm][pred_shuf] == file_idx).float().mean().item()
+                k_dbg = min(5, N)
+                _, topk_shuf = torch.topk(sim_shuf, k=k_dbg, dim=1)
+                top5_shuf = (file_idx.unsqueeze(1) == file_idx[perm][topk_shuf]).any(dim=1).float().mean().item()
+                logger.info(f"🔍 DEBUG - 셔플 베이스라인 Top1/Top5: {top1_shuf:.4f}/{top5_shuf:.4f}")
         
-        # 각 text에 대해 가장 유사한 vibration이 자기 자신인지 확인
+        # 각 text에 대해 가장 유사한 vibration이 같은 파일에 속하는지 확인
         _, predicted_indices = torch.max(similarity_matrix, dim=1)
-        correct_indices = torch.arange(text_emb.size(0), device=text_emb.device)
-        retrieval_accuracy = (predicted_indices == correct_indices).float().mean().item()
+        if file_idx is not None:
+            same_file_mask = (file_idx[predicted_indices] == file_idx).float()
+            retrieval_accuracy = same_file_mask.mean().item()
+        else:
+            correct_indices = torch.arange(text_emb.size(0), device=text_emb.device)
+            retrieval_accuracy = (predicted_indices == correct_indices).float().mean().item()
         
         # 2. Top-K Retrieval 정확도 (더 정확한 계산)
         # Top-1은 이미 위에서 계산됨 (retrieval_accuracy와 동일)
         top1_accuracy = retrieval_accuracy
         
-        # Top-5 retrieval accuracy (향상된 계산)
+        # Top-5 retrieval accuracy (멀티-포지티브)
         k = min(5, similarity_matrix.size(1))
         if k > 1:
             _, topk_indices = torch.topk(similarity_matrix, k=k, dim=1)
-            correct_indices_expanded = correct_indices.unsqueeze(1).expand(-1, k)
-            top5_accuracy = (topk_indices == correct_indices_expanded).any(dim=1).float().mean().item()
+            if file_idx is not None:
+                topk_same = (file_idx.unsqueeze(1) == file_idx[topk_indices])
+                top5_accuracy = topk_same.any(dim=1).float().mean().item()
+            else:
+                correct_indices = torch.arange(text_emb.size(0), device=text_emb.device)
+                correct_indices_expanded = correct_indices.unsqueeze(1).expand(-1, k)
+                top5_accuracy = (topk_indices == correct_indices_expanded).any(dim=1).float().mean().item()
         else:
             top5_accuracy = top1_accuracy  # k=1일 때는 top1과 동일
         
@@ -595,11 +742,13 @@ class ContinualTrainer:
         
         all_text_embeddings = []
         all_vib_embeddings = []
+        all_file_idx = []
         
         try:
             with torch.no_grad():
+                max_fast = int(EVAL_CONFIG.get('max_fast_eval_batches', 5))
                 for batch_idx, batch in enumerate(dataloader):
-                    if batch_idx >= 5:  # 첫 5배치만
+                    if batch_idx >= max_fast:
                         break
                         
                     batch = self._move_batch_to_device(batch)
@@ -607,6 +756,8 @@ class ContinualTrainer:
                     
                     all_text_embeddings.append(results['text_embeddings'])
                     all_vib_embeddings.append(results['vib_embeddings'])
+                    if 'file_idx' in batch:
+                        all_file_idx.append(batch['file_idx'])
                     
         except Exception as e:
             logger.error(f"빠른 평가 중 오류: {e}")
@@ -618,19 +769,64 @@ class ContinualTrainer:
         # 임베딩 결합 및 메트릭 계산
         text_emb = torch.cat(all_text_embeddings, dim=0)
         vib_emb = torch.cat(all_vib_embeddings, dim=0)
-        
-        # 유사도 행렬 계산 (빠른 근사)
-        similarity = torch.mm(text_emb, vib_emb.t())
-        
-        # Top-1 정확도
-        pred = torch.argmax(similarity, dim=1)
-        target = torch.arange(len(pred), device=similarity.device)
-        accuracy = (pred == target).float().mean().item()
-        
+        file_idx = torch.cat(all_file_idx, dim=0) if all_file_idx else None
+
+        # L2 정규화 후 유사도 계산
+        text_emb = F.normalize(text_emb, dim=1)
+        vib_emb = F.normalize(vib_emb, dim=1)
+        similarity = torch.matmul(text_emb, vib_emb.t())
+
+        # Top-1 (멀티-포지티브 지원)
+        _, pred = torch.max(similarity, dim=1)
+        if file_idx is not None:
+            same_file = (file_idx[pred] == file_idx).float()
+            top1 = same_file.mean().item()
+        else:
+            target = torch.arange(text_emb.size(0), device=text_emb.device)
+            top1 = (pred == target).float().mean().item()
+
+        # Top-5 (멀티-포지티브 지원)
+        k = min(5, similarity.size(1))
+        if k > 1:
+            _, topk = torch.topk(similarity, k=k, dim=1)
+            if file_idx is not None:
+                topk_same = (file_idx.unsqueeze(1) == file_idx[topk]).any(dim=1).float().mean().item()
+                top5 = topk_same
+            else:
+                target = torch.arange(text_emb.size(0), device=text_emb.device).unsqueeze(1).expand(-1, k)
+                top5 = (topk == target).any(dim=1).float().mean().item()
+        else:
+            top5 = top1
+
+        # 빠른 평가에서도 무결성 디버그(한 번만)
+        if not hasattr(self, '_debug_fast_once'):
+            self._debug_fast_once = True
+            N = similarity.size(0)
+            diag_vals = torch.diag(similarity)
+            diag_mean = float(diag_vals.mean().item())
+            diag_std = float(diag_vals.std(unbiased=False).item())
+            off_mask = ~torch.eye(N, dtype=torch.bool, device=similarity.device)
+            off_vals = similarity[off_mask]
+            off_mean = float(off_vals.mean().item())
+            off_std = float(off_vals.std(unbiased=False).item())
+            logger.info(
+                f"🔍 DEBUG(FAST) - N={N}, diag mean/std={diag_mean:.4f}/{diag_std:.4f}, "
+                f"off mean/std={off_mean:.4f}/{off_std:.4f}, Top1={top1:.4f}, Top5={top5:.4f}"
+            )
+            if file_idx is not None and N >= 2:
+                perm = torch.randperm(N, device=text_emb.device)
+                sim_shuf = torch.matmul(text_emb, vib_emb[perm].t())
+                pred_shuf = torch.argmax(sim_shuf, dim=1)
+                top1_shuf = (file_idx[perm][pred_shuf] == file_idx).float().mean().item()
+                k_dbg = min(5, N)
+                _, topk_shuf = torch.topk(sim_shuf, k=k_dbg, dim=1)
+                top5_shuf = (file_idx.unsqueeze(1) == file_idx[perm][topk_shuf]).any(dim=1).float().mean().item()
+                logger.info(f"🔍 DEBUG(FAST) - 셔플 베이스라인 Top1/Top5: {top1_shuf:.4f}/{top5_shuf:.4f}")
+
         return {
-            'accuracy': accuracy,
-            'top1_retrieval': accuracy,  # 간소화
-            'top5_retrieval': min(1.0, accuracy + 0.1)  # 근사치
+            'accuracy': top1,
+            'top1_retrieval': top1,
+            'top5_retrieval': top5
         }
     
     def _calculate_forgetting(self, before: Dict, after: Dict) -> float:
@@ -693,7 +889,7 @@ class ContinualTrainer:
         )
     
     def _create_scheduler(self, optimizer, total_steps):
-        """학습률 스케줄러 생성"""
+        """학습률 스케줄러 생성 (단일 구현)"""
         from torch.optim.lr_scheduler import CosineAnnealingLR
         return CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
     
@@ -706,8 +902,9 @@ class ContinualTrainer:
         )
     
     def _create_scheduler(self, optimizer: torch.optim.Optimizer, total_steps: int):
-        """Learning rate scheduler 생성"""
-        return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+        """학습률 스케줄러 생성 (단일 구현)"""
+        from torch.optim.lr_scheduler import CosineAnnealingLR
+        return CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
     
     def _move_batch_to_device(self, batch: Dict) -> Dict:
         """배치를 디바이스로 이동"""
@@ -715,6 +912,8 @@ class ContinualTrainer:
             batch['vibration'] = batch['vibration'].to(self.device)
         if 'labels' in batch:
             batch['labels'] = batch['labels'].to(self.device)
+        if 'file_idx' in batch:
+            batch['file_idx'] = batch['file_idx'].to(self.device)
         return batch
     
     def save_training_history(self, path: str):
