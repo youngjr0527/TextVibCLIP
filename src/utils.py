@@ -100,73 +100,137 @@ def generate_text_description(metadata: Dict[str, str]) -> str:
 
 
 def _generate_uos_text_description(metadata: Dict[str, str]) -> str:
-    """UOS 데이터셋용 텍스트 설명 생성"""
-    # 회전체 상태 매핑
-    rotating_component_map = {
-        'H': 'healthy rotating component',
-        'L': 'looseness in rotating component', 
-        'U': 'unbalanced rotating component',
-        'M': 'misaligned rotating component'
+    """UOS 데이터셋용 다양한 텍스트 설명 생성 (CRITICAL FIX: 텍스트 다양성 대폭 개선)"""
+    import random
+    
+    # 회전체 상태 매핑 (다양한 표현)
+    rotating_component_variations = {
+        'H': ['healthy rotating machinery', 'normal rotating component', 'well-balanced rotating system', 'properly aligned rotating shaft'],
+        'L': ['loose rotating component', 'looseness in the rotating machinery', 'mechanical looseness in shaft', 'loose coupling in rotating system'], 
+        'U': ['unbalanced rotating component', 'mass imbalance in rotor', 'unbalanced rotating machinery', 'rotor imbalance condition'],
+        'M': ['misaligned rotating component', 'shaft misalignment', 'angular misalignment in rotating system', 'parallel misalignment condition']
     }
     
-    # 베어링 상태 매핑
-    bearing_condition_map = {
-        'H': 'healthy bearing',
-        'B': 'ball fault',
-        'IR': 'inner race fault', 
-        'OR': 'outer race fault'
+    # 베어링 상태 매핑 (다양한 표현)
+    bearing_condition_variations = {
+        'H': ['healthy bearing condition', 'normal bearing', 'fault-free bearing', 'bearing in good condition', 'undamaged bearing'],
+        'B': ['ball defect', 'rolling element fault', 'ball bearing damage', 'defective ball element', 'ball surface fault'],
+        'IR': ['inner race defect', 'inner ring fault', 'inner raceway damage', 'inner race surface defect', 'inner ring wear'], 
+        'OR': ['outer race defect', 'outer ring fault', 'outer raceway damage', 'outer race surface defect', 'outer ring wear']
     }
     
-    # 베어링 타입 매핑
-    bearing_type_map = {
-        '6204': 'deep groove ball bearing',
-        '30204': 'tapered roller bearing',
-        'N204': 'cylindrical roller bearing',
-        'NJ204': 'cylindrical roller bearing'
+    # 베어링 타입 매핑 (더 상세한 설명)
+    bearing_type_variations = {
+        '6204': ['deep groove ball bearing model 6204', 'single-row deep groove ball bearing', '6204 series ball bearing', 'radial ball bearing 6204'],
+        '30204': ['tapered roller bearing model 30204', 'single-row tapered roller bearing', '30204 series tapered bearing', 'conical roller bearing 30204'],
+        'N204': ['cylindrical roller bearing model N204', 'single-row cylindrical roller bearing', 'N204 series roller bearing', 'radial roller bearing N204'],
+        'NJ204': ['cylindrical roller bearing model NJ204', 'NJ204 series roller bearing with flanges', 'flanged cylindrical roller bearing', 'NJ-type roller bearing']
     }
     
-    rotating_desc = rotating_component_map.get(
+    # 속도 관련 다양한 표현
+    speed_variations = [
+        f"operating at {metadata['rotating_speed']} RPM",
+        f"running at {metadata['rotating_speed']} revolutions per minute",
+        f"rotating at {metadata['rotating_speed']} rpm speed",
+        f"with rotational speed of {metadata['rotating_speed']} rpm"
+    ]
+    
+    # 문장 구조 템플릿들
+    templates = [
+        "A {bearing_type} {speed} with {rotating_desc} and {bearing_desc}.",
+        "Industrial bearing system: {bearing_type} {speed}, showing {bearing_desc} and {rotating_desc}.",
+        "Rotating machinery with {bearing_type} {speed}, characterized by {bearing_desc} and {rotating_desc}.",
+        "Mechanical system featuring {bearing_type} {speed}, exhibiting {rotating_desc} with {bearing_desc}.",
+        "Bearing fault diagnosis case: {bearing_type} {speed}, presenting {bearing_desc} in combination with {rotating_desc}."
+    ]
+    
+    # 랜덤 선택으로 다양성 확보
+    rotating_desc = random.choice(rotating_component_variations.get(
         metadata['rotating_component'], 
-        f"unknown rotating component ({metadata['rotating_component']})"
-    )
+        [f"unknown rotating component ({metadata['rotating_component']})"]
+    ))
     
-    bearing_desc = bearing_condition_map.get(
+    bearing_desc = random.choice(bearing_condition_variations.get(
         metadata['bearing_condition'],
-        f"unknown bearing condition ({metadata['bearing_condition']})" 
-    )
+        [f"unknown bearing condition ({metadata['bearing_condition']})"]
+    ))
     
-    bearing_type_desc = bearing_type_map.get(
+    bearing_type = random.choice(bearing_type_variations.get(
         metadata['bearing_type'],
-        f"unknown bearing type ({metadata['bearing_type']})"
-    )
+        [f"unknown bearing type ({metadata['bearing_type']})"]
+    ))
     
-    # 자연어 문장 생성
-    text = (f"A {bearing_type_desc} operating at {metadata['rotating_speed']} rpm "
-            f"with {rotating_desc} and {bearing_desc}.")
+    speed = random.choice(speed_variations)
+    template = random.choice(templates)
+    
+    # 문장 생성
+    text = template.format(
+        bearing_type=bearing_type,
+        speed=speed,
+        rotating_desc=rotating_desc,
+        bearing_desc=bearing_desc
+    )
     
     return text
 
 
 def _generate_cwru_text_description(metadata: Dict[str, str]) -> str:
-    """CWRU 데이터셋용 텍스트 설명 생성"""
-    # 베어링 상태 매핑
-    bearing_condition_map = {
-        'Normal': 'healthy bearing',
-        'B': 'ball fault',
-        'IR': 'inner race fault', 
-        'OR': 'outer race fault'
+    """CWRU 데이터셋용 다양한 텍스트 설명 생성 (CRITICAL FIX: 텍스트 다양성 대폭 개선)"""
+    import random
+    
+    # 베어링 상태 매핑 (다양한 표현)
+    bearing_condition_variations = {
+        'Normal': ['healthy bearing condition', 'normal bearing operation', 'fault-free bearing', 'bearing in perfect condition', 'undamaged bearing state'],
+        'B': ['ball defect', 'rolling element fault', 'ball bearing damage', 'defective ball element', 'ball surface deterioration'],
+        'IR': ['inner race defect', 'inner ring fault', 'inner raceway damage', 'inner race surface wear', 'inner ring deterioration'], 
+        'OR': ['outer race defect', 'outer ring fault', 'outer raceway damage', 'outer race surface wear', 'outer ring deterioration']
     }
     
-    bearing_desc = bearing_condition_map.get(
-        metadata['bearing_condition'],
-        f"unknown bearing condition ({metadata['bearing_condition']})" 
-    )
-    
+    # 부하 관련 다양한 표현
     load = metadata.get('load', 0)
+    load_variations = [
+        f"operating under {load} horsepower load",
+        f"subjected to {load} HP mechanical load",
+        f"running with {load} horsepower loading condition",
+        f"under {load} HP operational load",
+        f"experiencing {load} horsepower load stress"
+    ]
     
-    # 자연어 문장 생성
-    text = (f"A deep groove ball bearing operating under {load} horsepower load "
-            f"with {bearing_desc}.")
+    # 베어링 타입 다양한 표현
+    bearing_type_variations = [
+        'deep groove ball bearing',
+        'single-row deep groove ball bearing',
+        'radial ball bearing',
+        'deep groove radial ball bearing',
+        'standard deep groove bearing'
+    ]
+    
+    # 문장 구조 템플릿들
+    templates = [
+        "A {bearing_type} {load} with {bearing_desc}.",
+        "Industrial bearing system: {bearing_type} {load}, showing {bearing_desc}.",
+        "Mechanical test setup with {bearing_type} {load}, characterized by {bearing_desc}.",
+        "Laboratory bearing specimen: {bearing_type} {load}, exhibiting {bearing_desc}.",
+        "Bearing fault diagnosis case: {bearing_type} {load}, presenting {bearing_desc}.",
+        "Motor drive end bearing: {bearing_type} {load}, demonstrating {bearing_desc}."
+    ]
+    
+    # 랜덤 선택으로 다양성 확보
+    bearing_desc = random.choice(bearing_condition_variations.get(
+        metadata['bearing_condition'],
+        [f"unknown bearing condition ({metadata['bearing_condition']})"]
+    ))
+    
+    bearing_type = random.choice(bearing_type_variations)
+    load_desc = random.choice(load_variations)
+    template = random.choice(templates)
+    
+    # 문장 생성
+    text = template.format(
+        bearing_type=bearing_type,
+        load=load_desc,
+        bearing_desc=bearing_desc
+    )
     
     return text
 

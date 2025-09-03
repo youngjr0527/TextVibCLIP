@@ -34,21 +34,28 @@ MODEL_CONFIG = {
         'activation': 'gelu',
         'normalization_layer': 'LayerNorm',
         # 메모리 절감을 위한 토큰 다운샘플링(패칭)
+        # CRITICAL FIX: 더 세밀한 특징 추출을 위해 패치 크기 감소 (8→4)
         # 입력 길이는 유지(4096)하되, 내부 Transformer에 투입되는 토큰 수를
-        # patch_size 배로 줄여 OOM 위험을 낮춤. 예: 4096 -> 512 (patch_size=8)
+        # patch_size 배로 줄여 OOM 위험을 낮춤. 예: 4096 -> 1024 (patch_size=4)
         'use_token_downsampling': True,
-        'patch_size': 8
+        'patch_size': 4
     },
     
     # InfoNCE Loss
     'infonce': {
-        # First Domain Training (Domain 1) - 더 안정적인 학습
-        'first_domain_temperature_text': 0.1,   # 0.07 → 0.1로 증가
-        'first_domain_temperature_vib': 0.1,    # 0.07 → 0.1로 증가
+        # First Domain Training (Domain 1) - CRITICAL FIX: 온도 파라미터 최적화
+        'first_domain_temperature_text': 0.05,   # 0.1 → 0.05로 감소 (contrastive learning 강화)
+        'first_domain_temperature_vib': 0.05,    # 0.1 → 0.05로 감소 (더 sharp한 유사도 분포)
         
         # Continual Learning (Domain 2+) - 최적화된 비대칭 설정  
         'continual_temperature_text': 0.15,  # 0.12 → 0.15: text 안정성 더 강화
         'continual_temperature_vib': 0.05,   # 0.04 → 0.05: vib 학습을 조금 완화
+
+        # First domain 온도 스케줄(선형): init → final (없으면 고정 온도 사용)
+        'first_domain_temperature_text_init': 0.07,
+        'first_domain_temperature_text_final': 0.05,
+        'first_domain_temperature_vib_init': 0.07,
+        'first_domain_temperature_vib_final': 0.05,
     },
     
     # Projection layers
@@ -61,7 +68,7 @@ MODEL_CONFIG = {
     'aux_classification': {
         'enabled': True,
         'num_classes': 4,
-        'loss_weight': 1.0,
+        'loss_weight': 2.0,  # CRITICAL FIX: Auxiliary loss 가중치 증가 (1.0→2.0)
         'dropout': 0.1
     }
 }
@@ -69,9 +76,9 @@ MODEL_CONFIG = {
 # 학습 파라미터
 TRAINING_CONFIG = {
     # 기본 학습 설정
-    'batch_size': 8,  # 메모리 안전성을 위해 축소 (Quadro RTX 5000 16GB 고려)
+    'batch_size': 32,  # CRITICAL FIX: InfoNCE에 충분한 negative samples 제공 (8→32)
     'num_epochs': 100,  # 50 → 100: 더 충분한 학습
-    'learning_rate': 1e-5,  # NaN 방지를 위해 더욱 감소 (5e-5 → 1e-5)
+    'learning_rate': 3e-4,  # CRITICAL FIX: Contrastive learning에 적합한 학습률 (1e-5→3e-4)
     'weight_decay': 1e-5,
     'warmup_steps': 1000,
     
@@ -88,6 +95,11 @@ TRAINING_CONFIG = {
     'checkpoint_dir': 'checkpoints',
     # Gradient accumulation to reduce memory footprint
     'grad_accum_steps': 1,
+
+    # 파라미터 그룹 LR 멀티플라이어 (텍스트 LoRA/프로젝션 가속)
+    'lora_lr_mult': 3.0,
+    'proj_lr_mult': 3.0,
+    'vib_lr_mult': 1.0,
 }
 
 # 데이터 설정

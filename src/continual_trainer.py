@@ -20,7 +20,7 @@ from .textvib_model import TextVibCLIP, create_textvib_model
 from .replay_buffer import ReplayBuffer
 from .data_loader import create_domain_dataloaders, create_combined_dataloader, create_first_domain_dataloader
 from .utils import setup_amp_and_scaler
-from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG
+from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +133,26 @@ class ContinualTrainer:
         epoch_losses = []
         
         for epoch in range(num_epochs):
+            # 첫 도메인 온도 스케줄(선형): init -> final
+            inf_cfg = MODEL_CONFIG.get('infonce', {})
+            t_text_init = float(inf_cfg.get('first_domain_temperature_text_init',
+                                            inf_cfg.get('first_domain_temperature_text', 0.10)))
+            t_text_final = float(inf_cfg.get('first_domain_temperature_text_final',
+                                             inf_cfg.get('first_domain_temperature_text', 0.10)))
+            t_vib_init  = float(inf_cfg.get('first_domain_temperature_vib_init',
+                                            inf_cfg.get('first_domain_temperature_vib', 0.10)))
+            t_vib_final = float(inf_cfg.get('first_domain_temperature_vib_final',
+                                            inf_cfg.get('first_domain_temperature_vib', 0.10)))
+            if num_epochs > 1:
+                ratio = epoch / (num_epochs - 1)
+            else:
+                ratio = 1.0
+            t_text = t_text_init + (t_text_final - t_text_init) * ratio
+            t_vib  = t_vib_init  + (t_vib_final  - t_vib_init)  * ratio
+            self.model.infonce_loss.update_temperatures(t_text, t_vib)
+            if epoch % 5 == 0 or epoch == 0:
+                logger.info(f"[TempSchedule] epoch {epoch+1}/{num_epochs}: τ_text={t_text:.3f}, τ_vib={t_vib:.3f}")
+
             epoch_loss = 0.0
             num_batches = 0
             
@@ -881,12 +901,48 @@ class ContinualTrainer:
         }
     
     def _create_optimizer(self) -> torch.optim.Optimizer:
-        """First domain training용 optimizer 생성"""
-        return optim.AdamW(
-            self.model.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay
-        )
+        """First domain training용 optimizer 생성 (파라미터 그룹 분리)"""
+        base_lr = self.learning_rate
+        lora_mult = float(TRAINING_CONFIG.get('lora_lr_mult', 3.0))
+        proj_mult = float(TRAINING_CONFIG.get('proj_lr_mult', 3.0))
+        vib_mult  = float(TRAINING_CONFIG.get('vib_lr_mult', 1.0))
+
+        params = []
+        seen = set()
+
+        # Text LoRA 파라미터 그룹
+        try:
+            lora_params = [p for n, p in self.model.text_encoder.distilbert.named_parameters()
+                           if ('lora_' in n) and p.requires_grad]
+            if lora_params:
+                params.append({'params': lora_params, 'lr': base_lr * lora_mult, 'weight_decay': self.weight_decay})
+                for p in lora_params:
+                    seen.add(id(p))
+        except Exception:
+            pass
+
+        # Text projection 파라미터 그룹
+        if hasattr(self.model.text_encoder, 'projection'):
+            proj_params = [p for p in self.model.text_encoder.projection.parameters() if p.requires_grad]
+            if proj_params:
+                params.append({'params': proj_params, 'lr': base_lr * proj_mult, 'weight_decay': self.weight_decay})
+                for p in proj_params:
+                    seen.add(id(p))
+
+        # Vibration encoder 파라미터 그룹
+        vib_params = [p for p in self.model.vibration_encoder.parameters() if p.requires_grad]
+        vib_params = [p for p in vib_params if id(p) not in seen]
+        if vib_params:
+            params.append({'params': vib_params, 'lr': base_lr * vib_mult, 'weight_decay': self.weight_decay})
+            for p in vib_params:
+                seen.add(id(p))
+
+        # 누락 파라미터 보완
+        remain = [p for p in self.model.parameters() if p.requires_grad and id(p) not in seen]
+        if remain:
+            params.append({'params': remain, 'lr': base_lr, 'weight_decay': self.weight_decay})
+
+        return optim.AdamW(params)
     
     def _create_scheduler(self, optimizer, total_steps):
         """학습률 스케줄러 생성 (단일 구현)"""

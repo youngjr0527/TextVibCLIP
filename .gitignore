@@ -68,9 +68,6 @@ old_files/
 # 외부 라이브러리
 TST/
 
-# Jupyter Notebook
-.ipynb_checkpoints/
-*.ipynb
 
 # 실험 관련 임시 파일들
 *.pth
