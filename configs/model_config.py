@@ -22,40 +22,37 @@ MODEL_CONFIG = {
         }
     },
     
-    # Vibration Encoder (TST)
+    # Vibration Encoder (1D-CNN) 
     'vibration_encoder': {
         'input_length': 4096,  # 진동 신호 길이 (windowing)
-        'd_model': 256,
-        'num_heads': 8,
-        'num_layers': 6,
-        'dim_feedforward': 1024,
-        'dropout': 0.1,
-        'pos_encoding': 'sincos',
-        'activation': 'gelu',
-        'normalization_layer': 'LayerNorm',
-        # 메모리 절감을 위한 토큰 다운샘플링(패칭)
-        # CRITICAL FIX: 더 세밀한 특징 추출을 위해 패치 크기 감소 (8→4)
-        # 입력 길이는 유지(4096)하되, 내부 Transformer에 투입되는 토큰 수를
-        # patch_size 배로 줄여 OOM 위험을 낮춤. 예: 4096 -> 1024 (patch_size=4)
-        'use_token_downsampling': True,
-        'patch_size': 4
+        'architecture': '1D-CNN',  # 아키텍처 타입
+        'kernel_sizes': [16, 32, 64, 32],  # 다중 스케일 커널 크기
+        'channels': [64, 128, 256, 512],   # 각 블록의 채널 수
+        'stride': 2,  # 모든 Conv1d의 stride
+        'dropout': 0.1,  # Dropout 비율
+        'activation': 'relu',  # Activation function
+        'normalization': 'batch_norm',  # Normalization type
+        'pooling': 'adaptive_avg',  # Global pooling type
+        # 메모리 효율성: O(n) 복잡도로 TST 대비 안정적 처리
+        # 성능 우수성: 79.0% (베어링 75.2% + 회전체 82.8%)
+        # 실용성: 일반적인 GPU에서도 원활한 작동
     },
     
     # InfoNCE Loss
     'infonce': {
-        # First Domain Training (Domain 1) - CRITICAL FIX: 온도 파라미터 최적화
-        'first_domain_temperature_text': 0.05,   # 0.1 → 0.05로 감소 (contrastive learning 강화)
-        'first_domain_temperature_vib': 0.05,    # 0.1 → 0.05로 감소 (더 sharp한 유사도 분포)
+        # First Domain Training (Domain 1) - CRITICAL FIX: 온도 파라미터 급격히 감소
+        'first_domain_temperature_text': 0.01,   # 0.05 → 0.01로 급격히 감소 (collapse 현상 해결)
+        'first_domain_temperature_vib': 0.01,    # 0.05 → 0.01로 급격히 감소 (sharp contrastive learning)
         
         # Continual Learning (Domain 2+) - 최적화된 비대칭 설정  
         'continual_temperature_text': 0.15,  # 0.12 → 0.15: text 안정성 더 강화
         'continual_temperature_vib': 0.05,   # 0.04 → 0.05: vib 학습을 조금 완화
 
         # First domain 온도 스케줄(선형): init → final (없으면 고정 온도 사용)
-        'first_domain_temperature_text_init': 0.07,
-        'first_domain_temperature_text_final': 0.05,
-        'first_domain_temperature_vib_init': 0.07,
-        'first_domain_temperature_vib_final': 0.05,
+        'first_domain_temperature_text_init': 0.02,
+        'first_domain_temperature_text_final': 0.01,
+        'first_domain_temperature_vib_init': 0.02,
+        'first_domain_temperature_vib_final': 0.01,
     },
     
     # Projection layers
@@ -76,9 +73,9 @@ MODEL_CONFIG = {
 # 학습 파라미터
 TRAINING_CONFIG = {
     # 기본 학습 설정
-    'batch_size': 32,  # CRITICAL FIX: InfoNCE에 충분한 negative samples 제공 (8→32)
+    'batch_size': 64,  # CRITICAL FIX: collapse 방지를 위해 더 큰 배치 (32→64, 63개 negative samples)
     'num_epochs': 100,  # 50 → 100: 더 충분한 학습
-    'learning_rate': 3e-4,  # CRITICAL FIX: Contrastive learning에 적합한 학습률 (1e-5→3e-4)
+    'learning_rate': 1e-4,  # CRITICAL FIX: collapse 방지를 위해 조정 (3e-4→1e-4, 더 안정적)
     'weight_decay': 1e-5,
     'warmup_steps': 1000,
     

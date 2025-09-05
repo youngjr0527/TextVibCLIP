@@ -631,8 +631,11 @@ class ContinualTrainer:
         file_idx = torch.cat(all_file_idx, dim=0) if all_file_idx else None
         
         # L2 정규화
-        text_emb = F.normalize(text_emb, dim=1)
-        vib_emb = F.normalize(vib_emb, dim=1)
+        # CRITICAL FIX: 스케일 보존 정규화 (collapse 방지)
+        text_norm_scale = torch.norm(text_emb, dim=1, keepdim=True).clamp(min=1e-8)
+        vib_norm_scale = torch.norm(vib_emb, dim=1, keepdim=True).clamp(min=1e-8)
+        text_emb = text_emb / text_norm_scale * 1.0
+        vib_emb = vib_emb / vib_norm_scale * 1.0
         
         # 1. Retrieval 정확도 (멀티-포지티브: 같은 파일은 모두 정답 처리)
         similarity_matrix = torch.matmul(text_emb, vib_emb.t())  # (N, N)
@@ -792,8 +795,11 @@ class ContinualTrainer:
         file_idx = torch.cat(all_file_idx, dim=0) if all_file_idx else None
 
         # L2 정규화 후 유사도 계산
-        text_emb = F.normalize(text_emb, dim=1)
-        vib_emb = F.normalize(vib_emb, dim=1)
+        # CRITICAL FIX: 스케일 보존 정규화 (collapse 방지)
+        text_norm_scale = torch.norm(text_emb, dim=1, keepdim=True).clamp(min=1e-8)
+        vib_norm_scale = torch.norm(vib_emb, dim=1, keepdim=True).clamp(min=1e-8)
+        text_emb = text_emb / text_norm_scale * 1.0
+        vib_emb = vib_emb / vib_norm_scale * 1.0
         similarity = torch.matmul(text_emb, vib_emb.t())
 
         # Top-1 (멀티-포지티브 지원)

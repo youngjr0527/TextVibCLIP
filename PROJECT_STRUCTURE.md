@@ -4,7 +4,7 @@
 - **Multimodal Continual Learning**: 진동 신호 + 텍스트 메타데이터
 - **Domain Shift**: 회전 속도 변화 (600→800→1000→1200→1400→1600 RPM)
 - **Text Encoder**: DistilBERT + LoRA (Domain 1에서만 학습, 이후 freeze)
-- **Vibration Encoder**: TST + Full training + Replay
+- **Vibration Encoder**: 1D-CNN + Full training + Replay
 - **Loss**: Bidirectional InfoNCE with asymmetric temperature
 
 ## 📁 제안하는 모듈 구조
@@ -15,7 +15,7 @@ TextVibCLIP/
 │   ├── 📄 __init__.py               
 │   ├── 📄 data_loader.py            # UOS data_scenario1 로더
 │   ├── 📄 text_encoder.py           # DistilBERT + LoRA 구현
-│   ├── 📄 vibration_encoder.py      # TST 기반 인코더
+│   ├── 📄 vibration_encoder.py      # 1D-CNN 기반 인코더
 │   ├── 📄 textvib_model.py          # 메인 TextVibCLIP 모델
 │   ├── 📄 continual_trainer.py      # Continual Learning 파이프라인
 │   ├── 📄 replay_buffer.py          # Replay mechanism
@@ -47,8 +47,9 @@ TextVibCLIP/
 - Domain 2+: Freeze
 
 ### 3. `src/vibration_encoder.py`
-- TST (Time Series Transformer) 기반
+- 1D-CNN (다중 스케일 컨볼루션) 기반
 - 진동 신호 → 임베딩 (512차원)
+- 베어링 결함의 다양한 주파수 패턴 감지
 - 모든 도메인에서 Full training
 
 ### 4. `src/textvib_model.py`

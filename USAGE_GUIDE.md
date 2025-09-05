@@ -100,7 +100,7 @@ python main.py \
 
 ### TextVibCLIP 아키텍처
 - **Text Encoder**: DistilBERT + LoRA (parameter-efficient adaptation)
-- **Vibration Encoder**: Time Series Transformer (TST) 기반
+- **Vibration Encoder**: 1D-CNN (다중 스케일 컨볼루션) 기반
 - **Loss Function**: Bidirectional InfoNCE with asymmetric temperature
 
 ### Continual Learning 전략

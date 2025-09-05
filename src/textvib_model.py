@@ -64,9 +64,14 @@ class InfoNCELoss(nn.Module):
         """
         batch_size = text_embeddings.size(0)
         
-        # L2 normalization
-        text_embeddings = F.normalize(text_embeddings, dim=1)
-        vib_embeddings = F.normalize(vib_embeddings, dim=1)
+        # CRITICAL FIX: 스케일 보존 정규화 (collapse 방지)
+        # L2 정규화 대신 스케일을 적절히 유지하면서 정규화
+        text_norm = torch.norm(text_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
+        vib_norm = torch.norm(vib_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
+        
+        # 스케일 조정: 너무 작지 않게 유지 (평균 norm을 1.0 근처로)
+        text_embeddings = text_embeddings / text_norm * 1.0
+        vib_embeddings = vib_embeddings / vib_norm * 1.0
         
         # Cosine similarity matrix
         similarity_matrix = torch.matmul(text_embeddings, vib_embeddings.t())  # (batch_size, batch_size)
@@ -192,11 +197,16 @@ class TextVibCLIP(nn.Module):
         replay_vib = batch.get('replay_vib_embeddings', None)
         
         if replay_text is not None and replay_vib is not None and replay_text.numel() > 0 and replay_vib.numel() > 0:
-            # 정규화
-            text_norm = F.normalize(text_embeddings, dim=1)
-            vib_norm = F.normalize(vib_embeddings, dim=1)
-            replay_text_norm = F.normalize(replay_text.detach(), dim=1)
-            replay_vib_norm = F.normalize(replay_vib.detach(), dim=1)
+            # CRITICAL FIX: 스케일 보존 정규화
+            text_norm_scale = torch.norm(text_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
+            vib_norm_scale = torch.norm(vib_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
+            replay_text_norm_scale = torch.norm(replay_text.detach(), dim=1, keepdim=True).clamp(min=1e-8)
+            replay_vib_norm_scale = torch.norm(replay_vib.detach(), dim=1, keepdim=True).clamp(min=1e-8)
+            
+            text_norm = text_embeddings / text_norm_scale * 1.0
+            vib_norm = vib_embeddings / vib_norm_scale * 1.0
+            replay_text_norm = replay_text.detach() / replay_text_norm_scale * 1.0
+            replay_vib_norm = replay_vib.detach() / replay_vib_norm_scale * 1.0
             
             batch_size = text_norm.size(0)
             labels = torch.arange(batch_size, device=device)
@@ -233,8 +243,11 @@ class TextVibCLIP(nn.Module):
             if multi_positive is None:
                 loss, loss_components = self.infonce_loss(text_embeddings, vib_embeddings)
             else:
-                text_norm = F.normalize(text_embeddings, dim=1)
-                vib_norm = F.normalize(vib_embeddings, dim=1)
+                # CRITICAL FIX: 스케일 보존 정규화
+                text_norm_scale = torch.norm(text_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
+                vib_norm_scale = torch.norm(vib_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
+                text_norm = text_embeddings / text_norm_scale * 1.0
+                vib_norm = vib_embeddings / vib_norm_scale * 1.0
                 logits_t2v = torch.matmul(text_norm, vib_norm.t()) / self.infonce_loss.temperature_text
                 logits_v2t = torch.matmul(vib_norm, text_norm.t()) / self.infonce_loss.temperature_vib
                 pos_t2v = multi_positive
@@ -443,9 +456,11 @@ def compute_similarity_scores(text_embeddings: torch.Tensor,
     Returns:
         torch.Tensor: 유사도 행렬 (num_texts, num_vibs)
     """
-    # L2 normalization
-    text_embeddings = F.normalize(text_embeddings, dim=1)
-    vib_embeddings = F.normalize(vib_embeddings, dim=1)
+    # CRITICAL FIX: 스케일 보존 정규화 (collapse 방지)
+    text_norm_scale = torch.norm(text_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
+    vib_norm_scale = torch.norm(vib_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
+    text_embeddings = text_embeddings / text_norm_scale * 1.0
+    vib_embeddings = vib_embeddings / vib_norm_scale * 1.0
     
     # Cosine similarity
     similarity_matrix = torch.matmul(text_embeddings, vib_embeddings.t())

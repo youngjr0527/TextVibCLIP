@@ -10,7 +10,7 @@
 - **진동 신호** + **텍스트 metadata** → **multimodal contrastive training** via bidirectional InfoNCE
 - **Contrastive learning**으로 unified embedding space 형성
 - **Continual learning** with asymmetric temperature (text minimal update, vibration focused adaptation)
-- **Vibration encoder**: Time Series Transformer (TST) 사용 – vibration signals의 temporal patterns capture
+- **Vibration encoder**: 1D-CNN 사용 – 베어링 결함의 다중 주파수 패턴을 효과적으로 감지
 
 ### 🎯 실험 시나리오
 - **시나리오 1 (UOS)**: Varying Speed - RPM 변화에 따른 continual learning (600→800→1000→1200→1400→1600 RPM)
@@ -18,7 +18,7 @@
 
 ```
 진동 신호: [복잡한 파형 데이터] 
-    ↓ VibrationEncoder (TST)
+    ↓ VibrationEncoder (1D-CNN)
 [512차원 벡터]
     ↓ TextVibCLIP (bidirectional InfoNCE)
 [공통 임베딩 공간] ← 같은 공간!
@@ -63,7 +63,7 @@ Input:
          ▼                        ▼
 ┌─────────────────┐    ┌─────────────────┐
 │ VibrationEncoder│    │   TextEncoder   │
-│   (TST-based)    │    │  (DistilBERT)   │
+│  (1D-CNN based)  │    │  (DistilBERT)   │
 └─────────────────┘    └─────────────────┘
          │                        │
          ▼                        ▼
@@ -99,7 +99,7 @@ TextVibCLIP/
 │   ├── continual_trainer.py            # Continual Learning 트레이너
 │   ├── data_loader.py                   # 데이터 로더 (UOS/CWRU 지원)
 │   ├── text_encoder.py                  # DistilBERT + LoRA 텍스트 인코더
-│   ├── vibration_encoder.py             # TST 기반 진동 인코더
+│   ├── vibration_encoder.py             # 1D-CNN 기반 진동 인코더
 │   └── utils.py                         # 유틸리티 함수들
 ├── 📁 configs/                          # 설정 파일들
 │   └── model_config.py                  # 모델 및 데이터 설정
