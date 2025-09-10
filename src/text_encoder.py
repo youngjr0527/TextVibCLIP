@@ -63,8 +63,8 @@ class TextEncoder(nn.Module):
             nn.Linear(bert_hidden_size, MODEL_CONFIG['projection']['hidden_dim']),
             nn.ReLU(),
             nn.Dropout(MODEL_CONFIG['projection']['dropout']),
-            nn.Linear(MODEL_CONFIG['projection']['hidden_dim'], embedding_dim),
-            nn.LayerNorm(embedding_dim)
+            nn.Linear(MODEL_CONFIG['projection']['hidden_dim'], embedding_dim)
+            # 🎯 FIXED: LayerNorm 제거 (gradient vanishing 방지)
         )
         
         logger.info(f"TextEncoder 초기화 완료: LoRA={enable_lora}, Freeze={freeze_base}")

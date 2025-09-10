@@ -54,32 +54,40 @@ class VibrationEncoder(nn.Module):
         self.input_length = input_length
         self.embedding_dim = embedding_dim
         
-        # 다중 스케일 1D Convolution Layers
+        # UPGRADED: 더 깊고 넓은 다중 스케일 1D Convolution Layers
         # 베어링 결함의 다양한 주파수 특성을 캡처하기 위해 서로 다른 커널 크기 사용
+        dropout_rate = MODEL_CONFIG['vibration_encoder']['dropout']
+        
         self.conv_layers = nn.Sequential(
-            # Block 1: 고주파 충격 패턴 감지 (베어링 결함 특유의 충격파)
-            nn.Conv1d(1, 64, kernel_size=16, stride=2, padding=8),  # 4096 -> 2048
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            
-            # Block 2: 중간 주파수 패턴 (회전 주기, 조화파)
-            nn.Conv1d(64, 128, kernel_size=32, stride=2, padding=16),  # 2048 -> 1024
+            # Block 1: 고주파 충격 패턴 감지 (베어링 결함 특유의 충격파) - ENHANCED
+            nn.Conv1d(1, 128, kernel_size=16, stride=2, padding=8),  # 4096 -> 2048
             nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout_rate),
             
-            # Block 3: 저주파 구조적 진동 패턴
-            nn.Conv1d(128, 256, kernel_size=64, stride=2, padding=32),  # 1024 -> 512
+            # Block 2: 중간 주파수 패턴 (회전 주기, 조화파) - ENHANCED
+            nn.Conv1d(128, 256, kernel_size=32, stride=2, padding=16),  # 2048 -> 1024
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout_rate),
             
-            # Block 4: 특징 집약
-            nn.Conv1d(256, 512, kernel_size=32, stride=2, padding=16),  # 512 -> 256
+            # Block 3: 저주파 구조적 진동 패턴 - ENHANCED
+            nn.Conv1d(256, 512, kernel_size=64, stride=2, padding=32),  # 1024 -> 512
             nn.BatchNorm1d(512),
             nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout_rate),
+            
+            # Block 4: 고급 특징 추출 - NEW LAYER
+            nn.Conv1d(512, 1024, kernel_size=32, stride=2, padding=16),  # 512 -> 256
+            nn.BatchNorm1d(1024),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            
+            # Block 5: 특징 집약 및 차원 조정 - NEW LAYER
+            nn.Conv1d(1024, 512, kernel_size=16, stride=2, padding=8),  # 256 -> 128
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
         )
         
         # Global Average Pooling (시간축 정보 집약)
@@ -90,8 +98,8 @@ class VibrationEncoder(nn.Module):
             nn.Linear(512, MODEL_CONFIG['projection']['hidden_dim']),
             nn.ReLU(),
             nn.Dropout(MODEL_CONFIG['projection']['dropout']),
-            nn.Linear(MODEL_CONFIG['projection']['hidden_dim'], embedding_dim),
-            nn.LayerNorm(embedding_dim)
+            nn.Linear(MODEL_CONFIG['projection']['hidden_dim'], embedding_dim)
+            # 🎯 FIXED: LayerNorm 제거 (gradient vanishing 방지)
         )
 
         # Auxiliary classification head (bearing condition 4-class)
@@ -112,20 +120,28 @@ class VibrationEncoder(nn.Module):
         
         logger.info(f"1D-CNN VibrationEncoder 초기화: input_length={input_length}, "
                    f"embedding_dim={embedding_dim}")
-        logger.info(f"   커널 크기: [16, 32, 64, 32] - 다중 주파수 대역 커버")
+        logger.info(f"   UPGRADED: 커널 크기: [16, 32, 64, 32, 16] - 5-layer 다중 주파수 대역 커버")
+        logger.info(f"   UPGRADED: 채널 수: [128, 256, 512, 1024, 512] - 더 큰 표현력")
         logger.info(f"   총 파라미터: {self.get_trainable_parameters():,}")
     
     def _init_parameters(self):
-        """파라미터 초기화 (Xavier uniform)"""
+        """파라미터 초기화 (개선된 초기화)"""
         for module in self.modules():
             if isinstance(module, nn.Conv1d):
-                nn.init.xavier_uniform_(module.weight)
+                # He initialization (ReLU에 적합)
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
             elif isinstance(module, nn.Linear):
-                nn.init.xavier_uniform_(module.weight)
-                if module.bias is not None:
-                    nn.init.zeros_(module.bias)
+                # 마지막 projection layer는 더 작은 초기화
+                if module == self.projection[-1]:  # 마지막 Linear layer
+                    nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                    if module.bias is not None:
+                        nn.init.zeros_(module.bias)
+                else:
+                    nn.init.xavier_uniform_(module.weight)
+                    if module.bias is not None:
+                        nn.init.zeros_(module.bias)
     
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """

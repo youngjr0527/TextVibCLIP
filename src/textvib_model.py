@@ -49,6 +49,33 @@ class InfoNCELoss(nn.Module):
         
         logger.info(f"InfoNCE Loss 초기화: τ_text={temperature_text:.3f}, τ_vib={temperature_vib:.3f}")
     
+    def _class_based_infonce_loss(self, logits: torch.Tensor, positive_mask: torch.Tensor, temperature: float) -> torch.Tensor:
+        """
+        클래스 기반 InfoNCE loss
+        
+        Args:
+            logits: 유사도 매트릭 (N, N)
+            positive_mask: 같은 클래스는 True, 다른 클래스는 False (N, N)
+            temperature: 온도 파라미터
+            
+        Returns:
+            torch.Tensor: InfoNCE loss
+        """
+        # Temperature scaling
+        logits_scaled = logits / temperature
+        
+        # Log-sum-exp for numerical stability
+        log_denominator = torch.logsumexp(logits_scaled, dim=1)  # (N,)
+        
+        # Positive pairs only
+        masked_logits = logits_scaled.masked_fill(~positive_mask, -1e9)
+        log_numerator = torch.logsumexp(masked_logits, dim=1)  # (N,)
+        
+        # InfoNCE: -log(exp(pos_sum) / exp(all_sum))
+        loss_per_sample = -(log_numerator - log_denominator)
+        
+        return loss_per_sample.mean()
+    
     def forward(self, 
                 text_embeddings: torch.Tensor, 
                 vib_embeddings: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -64,30 +91,40 @@ class InfoNCELoss(nn.Module):
         """
         batch_size = text_embeddings.size(0)
         
-        # CRITICAL FIX: 스케일 보존 정규화 (collapse 방지)
-        # L2 정규화 대신 스케일을 적절히 유지하면서 정규화
-        text_norm = torch.norm(text_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
-        vib_norm = torch.norm(vib_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
+        # 🎯 FIXED: 표준 L2 정규화 (gradient 보존)
+        # 단순한 L2 정규화로 cosine similarity 계산
+        text_embeddings = F.normalize(text_embeddings, p=2, dim=1)
+        vib_embeddings = F.normalize(vib_embeddings, p=2, dim=1)
         
-        # 스케일 조정: 너무 작지 않게 유지 (평균 norm을 1.0 근처로)
-        text_embeddings = text_embeddings / text_norm * 1.0
-        vib_embeddings = vib_embeddings / vib_norm * 1.0
+        # 🎯 FIXED: 클래스 기반 Contrastive Learning
+        # 같은 고장 유형끼리 positive pairs, 다른 고장 유형은 negative pairs
+        
+        # 배치에서 라벨 정보 추출
+        batch_labels = batch.get('labels', None)
+        if batch_labels is not None and batch_labels.dim() == 2:
+            # UOS: 첫 번째 차원이 주 분류 (7-클래스)
+            class_labels = batch_labels[:, 0]  # [0,1,2,3,4,5,6] for H/B/IR/OR/L/U/M
+        elif batch_labels is not None and batch_labels.dim() == 1:
+            # CWRU: 1차원 라벨 (4-클래스)
+            class_labels = batch_labels  # [0,1,2,3] for Normal/B/IR/OR
+        else:
+            # Fallback: diagonal matching (기존 방식)
+            class_labels = torch.arange(batch_size).to(text_embeddings.device)
         
         # Cosine similarity matrix
-        similarity_matrix = torch.matmul(text_embeddings, vib_embeddings.t())  # (batch_size, batch_size)
+        similarity_matrix = torch.matmul(text_embeddings, vib_embeddings.t())  # (N, N)
         
-        # Positive pairs are on the diagonal
-        labels = torch.arange(batch_size).to(text_embeddings.device) 
- 
-        # Text-to-vibration direction
-        # 의미: "텍스트가 쿼리, 진동이 답변"
-        logits_text_to_vib = similarity_matrix / self.temperature_text
-        loss_text_to_vib = F.cross_entropy(logits_text_to_vib, labels, reduction=self.reduction)
+        # 클래스 기반 positive/negative mask 생성
+        class_labels = class_labels.to(text_embeddings.device)
+        positive_mask = (class_labels.unsqueeze(1) == class_labels.unsqueeze(0))  # (N, N)
         
-        # Vibration-to-text direction  
-        # 의미: "진동이 쿼리, 텍스트가 답변"
-        logits_vib_to_text = similarity_matrix.t() / self.temperature_vib
-        loss_vib_to_text = F.cross_entropy(logits_vib_to_text, labels, reduction=self.reduction)
+        # 클래스 기반 InfoNCE loss 계산
+        loss_text_to_vib = self._class_based_infonce_loss(
+            similarity_matrix, positive_mask, self.temperature_text
+        )
+        loss_vib_to_text = self._class_based_infonce_loss(
+            similarity_matrix.t(), positive_mask.t(), self.temperature_vib
+        )
         
         # Total bidirectional loss
         total_loss = (loss_text_to_vib + loss_vib_to_text) / 2.0
@@ -183,71 +220,91 @@ class TextVibCLIP(nn.Module):
             # 텍스트 리스트 직접 토크나이징 (하위 호환성)
             text_embeddings = self.text_encoder.encode_texts(texts, device, max_length=128)
         
-        # 멀티-포지티브(같은 파일의 다른 윈도우들) 대응을 위한 라벨 구성
-        # file_idx가 있으면 같은 file_idx는 모두 양성으로 취급
-        file_idx = batch.get('file_idx', None)
-        multi_positive = None
-        if file_idx is not None:
-            # (N, N) 마스크: 동일 파일이면 True
-            same_file = (file_idx.unsqueeze(1) == file_idx.unsqueeze(0))
-            multi_positive = same_file
+        # 🎯 FIXED: 표준 contrastive learning (diagonal pairs only)
+        # 각 text-vibration 쌍은 배치 내에서 대각선 위치에서만 매칭
+        # 멀티-포지티브 로직 제거 (연구 의도에 맞지 않음)
+        multi_positive = None  # 항상 None으로 설정
 
         # Replay 임베딩이 제공되면 분모(negative pool)를 확장하여 InfoNCE 계산
         replay_text = batch.get('replay_text_embeddings', None)
         replay_vib = batch.get('replay_vib_embeddings', None)
         
         if replay_text is not None and replay_vib is not None and replay_text.numel() > 0 and replay_vib.numel() > 0:
-            # CRITICAL FIX: 스케일 보존 정규화
-            text_norm_scale = torch.norm(text_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
-            vib_norm_scale = torch.norm(vib_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
-            replay_text_norm_scale = torch.norm(replay_text.detach(), dim=1, keepdim=True).clamp(min=1e-8)
-            replay_vib_norm_scale = torch.norm(replay_vib.detach(), dim=1, keepdim=True).clamp(min=1e-8)
+            # 🎯 FIXED: 클래스 기반 Replay InfoNCE
+            text_norm = F.normalize(text_embeddings, p=2, dim=1)
+            vib_norm = F.normalize(vib_embeddings, p=2, dim=1)
+            replay_text_norm = F.normalize(replay_text.detach(), p=2, dim=1)
+            replay_vib_norm = F.normalize(replay_vib.detach(), p=2, dim=1)
             
-            text_norm = text_embeddings / text_norm_scale * 1.0
-            vib_norm = vib_embeddings / vib_norm_scale * 1.0
-            replay_text_norm = replay_text.detach() / replay_text_norm_scale * 1.0
-            replay_vib_norm = replay_vib.detach() / replay_vib_norm_scale * 1.0
-            
-            batch_size = text_norm.size(0)
-            labels = torch.arange(batch_size, device=device)
-            
-            # Text->Vib
-            all_vib = torch.cat([vib_norm, replay_vib_norm], dim=0)  # (N+R, d)
-            logits_t2v = torch.matmul(text_norm, all_vib.t()) / self.infonce_loss.temperature_text  # (N, N+R)
-            if multi_positive is not None:
-                # 멀티-포지티브 InfoNCE: -log( sum_{pos} exp / sum_{all} exp )
-                pos_mask_t2v = torch.zeros_like(logits_t2v, dtype=torch.bool)
-                pos_mask_t2v[:, :vib_norm.size(0)] = multi_positive
-                loss_t2v = self._multi_positive_infonce_loss(logits_t2v, pos_mask_t2v)
-            else:
-                loss_t2v = F.cross_entropy(logits_t2v, labels, reduction=self.infonce_loss.reduction)
-            
-            # Vib->Text
+            # 현재 배치 + Replay 배치 결합
             all_text = torch.cat([text_norm, replay_text_norm], dim=0)  # (N+R, d)
-            logits_v2t = torch.matmul(vib_norm, all_text.t()) / self.infonce_loss.temperature_vib  # (N, N+R)
-            if multi_positive is not None:
-                pos_mask_v2t = torch.zeros_like(logits_v2t, dtype=torch.bool)
-                pos_mask_v2t[:, :text_norm.size(0)] = multi_positive
-                loss_v2t = self._multi_positive_infonce_loss(logits_v2t, pos_mask_v2t)
-            else:
-                loss_v2t = F.cross_entropy(logits_v2t, labels, reduction=self.infonce_loss.reduction)
+            all_vib = torch.cat([vib_norm, replay_vib_norm], dim=0)  # (N+R, d)
             
-            loss = (loss_t2v + loss_v2t) / 2.0
-            loss_components = {
-                'text_to_vib': loss_t2v,
-                'vib_to_text': loss_v2t,
-                'total': loss
-            }
+            # 클래스 라벨 결합 (현재 + replay)
+            batch_labels = batch.get('labels', None)
+            replay_labels = batch.get('replay_labels', None)
+            
+            if batch_labels is not None and replay_labels is not None:
+                if batch_labels.dim() == 2:
+                    current_classes = batch_labels[:, 0]  # UOS 주 분류
+                else:
+                    current_classes = batch_labels  # CWRU
+                
+                if replay_labels.dim() == 2:
+                    replay_classes = replay_labels[:, 0]
+                else:
+                    replay_classes = replay_labels
+                
+                all_classes = torch.cat([current_classes, replay_classes], dim=0)
+                
+                # 클래스 기반 positive mask
+                positive_mask = (all_classes.unsqueeze(1) == all_classes.unsqueeze(0))
+                
+                # Text->Vib with replay
+                sim_t2v = torch.matmul(text_norm, all_vib.t())
+                loss_t2v = self.infonce_loss._class_based_infonce_loss(
+                    sim_t2v, positive_mask[:text_norm.size(0)], self.infonce_loss.temperature_text
+                )
+                
+                # Vib->Text with replay  
+                sim_v2t = torch.matmul(vib_norm, all_text.t())
+                loss_v2t = self.infonce_loss._class_based_infonce_loss(
+                    sim_v2t, positive_mask[:vib_norm.size(0)], self.infonce_loss.temperature_vib
+                )
+                
+                loss = (loss_t2v + loss_v2t) / 2.0
+                loss_components = {
+                    'text_to_vib': loss_t2v,
+                    'vib_to_text': loss_v2t,
+                    'total': loss
+                }
+            else:
+                # 라벨 정보 없으면 기존 diagonal 방식
+                batch_size = text_norm.size(0)
+                labels = torch.arange(batch_size, device=device)
+                all_vib = torch.cat([vib_norm, replay_vib_norm], dim=0)
+                all_text = torch.cat([text_norm, replay_text_norm], dim=0)
+                
+                logits_t2v = torch.matmul(text_norm, all_vib.t()) / self.infonce_loss.temperature_text
+                logits_v2t = torch.matmul(vib_norm, all_text.t()) / self.infonce_loss.temperature_vib
+                
+                loss_t2v = F.cross_entropy(logits_t2v, labels, reduction=self.infonce_loss.reduction)
+                loss_v2t = F.cross_entropy(logits_v2t, labels, reduction=self.infonce_loss.reduction)
+                
+                loss = (loss_t2v + loss_v2t) / 2.0
+                loss_components = {
+                    'text_to_vib': loss_t2v,
+                    'vib_to_text': loss_v2t,
+                    'total': loss
+                }
         else:
             # 표준 또는 멀티-포지티브 InfoNCE
             if multi_positive is None:
                 loss, loss_components = self.infonce_loss(text_embeddings, vib_embeddings)
             else:
-                # CRITICAL FIX: 스케일 보존 정규화
-                text_norm_scale = torch.norm(text_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
-                vib_norm_scale = torch.norm(vib_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
-                text_norm = text_embeddings / text_norm_scale * 1.0
-                vib_norm = vib_embeddings / vib_norm_scale * 1.0
+                # 🎯 FIXED: 표준 L2 정규화 (gradient 보존)
+                text_norm = F.normalize(text_embeddings, p=2, dim=1)
+                vib_norm = F.normalize(vib_embeddings, p=2, dim=1)
                 logits_t2v = torch.matmul(text_norm, vib_norm.t()) / self.infonce_loss.temperature_text
                 logits_v2t = torch.matmul(vib_norm, text_norm.t()) / self.infonce_loss.temperature_vib
                 pos_t2v = multi_positive
@@ -456,11 +513,9 @@ def compute_similarity_scores(text_embeddings: torch.Tensor,
     Returns:
         torch.Tensor: 유사도 행렬 (num_texts, num_vibs)
     """
-    # CRITICAL FIX: 스케일 보존 정규화 (collapse 방지)
-    text_norm_scale = torch.norm(text_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
-    vib_norm_scale = torch.norm(vib_embeddings, dim=1, keepdim=True).clamp(min=1e-8)
-    text_embeddings = text_embeddings / text_norm_scale * 1.0
-    vib_embeddings = vib_embeddings / vib_norm_scale * 1.0
+    # 🎯 FIXED: 표준 L2 정규화 (gradient 보존)
+    text_embeddings = F.normalize(text_embeddings, p=2, dim=1)
+    vib_embeddings = F.normalize(vib_embeddings, p=2, dim=1)
     
     # Cosine similarity
     similarity_matrix = torch.matmul(text_embeddings, vib_embeddings.t())

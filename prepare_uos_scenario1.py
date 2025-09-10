@@ -45,9 +45,20 @@ def main():
     os.makedirs(target_dir, exist_ok=True)
     print(f"✅ {target_dir} 폴더를 생성했습니다.")
     
-    # 16kHz 파일들 중에서 단일 결함만 선별
-    # 포함할 패턴: H_H, H_B, H_IR, H_OR, L_H, U3_H, M3_H
+    # 16kHz 파일들 중에서 단일 결함만 선별 (올바른 7-클래스 분류)
+    # H: 완전 정상, B/IR/OR: 베어링 결함, L/U/M: 회전체 결함
     include_patterns = ['H_H', 'H_B', 'H_IR', 'H_OR', 'L_H', 'U3_H', 'M3_H']
+    
+    # 라벨 매핑 정의 (올바른 분류)
+    label_mapping = {
+        'H_H': 'H',   # Healthy (완전 정상)
+        'H_B': 'B',   # Ball fault (베어링 볼 결함)
+        'H_IR': 'IR', # Inner race fault (베어링 내륜 결함) 
+        'H_OR': 'OR', # Outer race fault (베어링 외륜 결함)
+        'L_H': 'L',   # Looseness (회전체 느슨함)
+        'U3_H': 'U',  # Unbalance (회전체 불균형)
+        'M3_H': 'M'   # Misalignment (회전체 정렬불량)
+    }
     
     print("\n📁 파일 검색 및 복사 중...")
     
@@ -124,15 +135,15 @@ def main():
 
 
 def get_condition_description(condition):
-    """조건 코드를 설명으로 변환"""
+    """조건 코드를 설명으로 변환 (올바른 7-클래스)"""
     descriptions = {
-        'H_H': '정상 회전체 + 정상 베어링',
-        'H_B': '정상 회전체 + 볼 결함',
-        'H_IR': '정상 회전체 + 내륜 결함',
-        'H_OR': '정상 회전체 + 외륜 결함',
-        'L_H': '느슨함 회전체 + 정상 베어링',
-        'U_H': '불균형 회전체 + 정상 베어링',
-        'M_H': '정렬불량 회전체 + 정상 베어링'
+        'H_H': 'H (Healthy): 정상 회전체 + 정상 베어링',
+        'H_B': 'B (Ball Fault): 정상 회전체 + 볼 결함',
+        'H_IR': 'IR (Inner Race): 정상 회전체 + 내륜 결함',
+        'H_OR': 'OR (Outer Race): 정상 회전체 + 외륜 결함',
+        'L_H': 'L (Looseness): 느슨함 회전체 + 정상 베어링',
+        'U3_H': 'U (Unbalance): 불균형 회전체 + 정상 베어링',
+        'M3_H': 'M (Misalignment): 정렬불량 회전체 + 정상 베어링'
     }
     return descriptions.get(condition, '알 수 없는 조건')
 

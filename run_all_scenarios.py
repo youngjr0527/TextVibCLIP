@@ -98,8 +98,8 @@ class ScenarioConfig:
         'domain_order': [600, 800, 1000, 1200, 1400, 1600],
         'domain_names': ['600RPM', '800RPM', '1000RPM', '1200RPM', '1400RPM', '1600RPM'],
         'shift_type': 'Varying Speed',
-        'first_domain_epochs': 30,  # 데이터 많음
-        'remaining_epochs': 20,
+        'first_domain_epochs': 15,  # 현실적 에포크 수
+        'remaining_epochs': 10,
         'batch_size': 4,  # 메모리 안전성 강화
         'replay_buffer_size': 1000,
         'patience': 5
@@ -112,8 +112,8 @@ class ScenarioConfig:
         'domain_order': [0, 1, 2, 3],
         'domain_names': ['0HP', '1HP', '2HP', '3HP'],
         'shift_type': 'Varying Load',
-        'first_domain_epochs': 80,  # 데이터 적음
-        'remaining_epochs': 50,
+        'first_domain_epochs': 20,  # 현실적 에포크 수
+        'remaining_epochs': 10,
         'batch_size': 8,
         'replay_buffer_size': 200,
         'patience': 15
@@ -231,7 +231,7 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         
         # 하이퍼파라미터 설정
         trainer.batch_size = config['batch_size']
-        trainer.learning_rate = 1e-5  # config와 일치
+        trainer.learning_rate = 3e-4  # config와 일치하도록 수정
         trainer.replay_buffer.buffer_size_per_domain = config['replay_buffer_size']
         
         # 데이터셋 정보 수집
@@ -258,17 +258,11 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
             batch_size=config['batch_size']
         )
         
-        try:
-            first_results = trainer.train_first_domain(
-                first_domain_dataloader=first_loader,
-                num_epochs=config['first_domain_epochs']
-            )
-        except RuntimeError as e:
-            if "First domain accuracy too low" in str(e):
-                logger.error(f"🛑 {config['name']} 조기 종료: {e}")
-                return None  # 실험 실패로 None 반환
-            else:
-                raise  # 다른 RuntimeError는 다시 발생
+        # 🎯 FIXED: 조기 종료 예외 처리 제거 (전체 파이프라인 테스트)
+        first_results = trainer.train_first_domain(
+            first_domain_dataloader=first_loader,
+            num_epochs=config['first_domain_epochs']
+        )
         
         # SANITY 모드: Remaining domains 완전 스킵하고 첫 도메인만 결과 반환
         if config.get('remaining_epochs', 0) == 0:

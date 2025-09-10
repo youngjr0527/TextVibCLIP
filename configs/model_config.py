@@ -6,7 +6,7 @@ TextVibCLIP 모델 설정 파일
 # 기본 모델 파라미터
 MODEL_CONFIG = {
     # 임베딩 차원
-    'embedding_dim': 512,
+    'embedding_dim': 256,  # 512 → 256로 축소
     'text_dim': 768,  # DistilBERT hidden size
     'vibration_input_dim': 1,  # UOS/CWRU: 단일 채널 진동 신호 (CWRU는 Drive End만)
     
@@ -22,50 +22,49 @@ MODEL_CONFIG = {
         }
     },
     
-    # Vibration Encoder (1D-CNN) 
+    # Vibration Encoder (1D-CNN) - UPGRADED ARCHITECTURE
     'vibration_encoder': {
         'input_length': 4096,  # 진동 신호 길이 (windowing)
         'architecture': '1D-CNN',  # 아키텍처 타입
-        'kernel_sizes': [16, 32, 64, 32],  # 다중 스케일 커널 크기
-        'channels': [64, 128, 256, 512],   # 각 블록의 채널 수
+        'kernel_sizes': [16, 32, 64, 32, 16],  # 더 깊은 5-layer 구조
+        'channels': [128, 256, 512, 1024, 512],   # 더 큰 채널 수 (64→128 시작, 최대 1024)
         'stride': 2,  # 모든 Conv1d의 stride
-        'dropout': 0.1,  # Dropout 비율
+        'dropout': 0.15,  # 0.1 → 0.15: 큰 모델에 맞춰 드롭아웃 증가
         'activation': 'relu',  # Activation function
         'normalization': 'batch_norm',  # Normalization type
         'pooling': 'adaptive_avg',  # Global pooling type
-        # 메모리 효율성: O(n) 복잡도로 TST 대비 안정적 처리
-        # 성능 우수성: 79.0% (베어링 75.2% + 회전체 82.8%)
-        # 실용성: 일반적인 GPU에서도 원활한 작동
+        # 업그레이드된 아키텍처: 더 깊고 넓은 네트워크로 표현력 증가
+        # 5-layer deep CNN으로 복잡한 진동 패턴 학습 능력 향상
     },
     
-    # InfoNCE Loss
+    # InfoNCE Loss - FIXED: 정상 온도 범위로 복원
     'infonce': {
-        # First Domain Training (Domain 1) - CRITICAL FIX: 온도 파라미터 급격히 감소
-        'first_domain_temperature_text': 0.01,   # 0.05 → 0.01로 급격히 감소 (collapse 현상 해결)
-        'first_domain_temperature_vib': 0.01,    # 0.05 → 0.01로 급격히 감소 (sharp contrastive learning)
+        # First Domain Training (Domain 1) - CLIP 표준 온도
+        'first_domain_temperature_text': 0.07,   # 표준 contrastive learning 온도
+        'first_domain_temperature_vib': 0.07,    # 균등 학습
         
-        # Continual Learning (Domain 2+) - 최적화된 비대칭 설정  
-        'continual_temperature_text': 0.15,  # 0.12 → 0.15: text 안정성 더 강화
-        'continual_temperature_vib': 0.05,   # 0.04 → 0.05: vib 학습을 조금 완화
+        # Continual Learning (Domain 2+) - 검증된 비대칭 설정  
+        'continual_temperature_text': 0.10,  # text 안정성 (freeze되므로 높은 온도)
+        'continual_temperature_vib': 0.05,   # vibration 적극 학습 (낮은 온도)
 
         # First domain 온도 스케줄(선형): init → final (없으면 고정 온도 사용)
-        'first_domain_temperature_text_init': 0.02,
-        'first_domain_temperature_text_final': 0.01,
-        'first_domain_temperature_vib_init': 0.02,
-        'first_domain_temperature_vib_final': 0.01,
+        'first_domain_temperature_text_init': 0.10,
+        'first_domain_temperature_text_final': 0.07,
+        'first_domain_temperature_vib_init': 0.10,
+        'first_domain_temperature_vib_final': 0.07,
     },
     
     # Projection layers
     'projection': {
-        'hidden_dim': 1024,
-        'output_dim': 512,
+        'hidden_dim': 512,  # 1024 → 512: 임베딩 차원 축소에 맞춤
+        'output_dim': 256,  # 512 → 256: 최종 임베딩 차원
         'dropout': 0.1
     },
     # Auxiliary classification for first domain bootstrapping
     'aux_classification': {
-        'enabled': True,
-        'num_classes': 4,
-        'loss_weight': 2.0,  # CRITICAL FIX: Auxiliary loss 가중치 증가 (1.0→2.0)
+        'enabled': False,  # 🎯 FIXED: Auxiliary loss 비활성화 (contrastive learning 집중)
+        'num_classes': 7,  # UOS 7-클래스 지원 (H/B/IR/OR/L/U/M)
+        'loss_weight': 0.5,  # 가중치 감소
         'dropout': 0.1
     }
 }
@@ -73,9 +72,9 @@ MODEL_CONFIG = {
 # 학습 파라미터
 TRAINING_CONFIG = {
     # 기본 학습 설정
-    'batch_size': 64,  # CRITICAL FIX: collapse 방지를 위해 더 큰 배치 (32→64, 63개 negative samples)
+    'batch_size': 32,  # 실용적 배치 크기 (31개 negative samples)
     'num_epochs': 100,  # 50 → 100: 더 충분한 학습
-    'learning_rate': 1e-4,  # CRITICAL FIX: collapse 방지를 위해 조정 (3e-4→1e-4, 더 안정적)
+    'learning_rate': 3e-4,  # 표준 contrastive learning 학습률
     'weight_decay': 1e-5,
     'warmup_steps': 1000,
     
@@ -152,8 +151,8 @@ EVAL_CONFIG = {
         'backward_transfer'      # 이전 도메인 성능 향상
     ],
 
-    # 평가 배치 제한 (전체 평가에서 하드 캡 제거; -1이면 무제한)
-    'max_full_eval_batches': -1,
+    # 평가 배치 제한 (메모리 안전성 및 정확한 평가)
+    'max_full_eval_batches': 20,  # 최대 20배치로 제한 (메모리 안전)
     # 빠른 평가 배치 제한 (FAST 경로)
     'max_fast_eval_batches': 5
 }

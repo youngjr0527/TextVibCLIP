@@ -136,7 +136,7 @@ class BearingDataset(Dataset):
         # 데이터셋 분할 (train/val/test)
         self.file_paths, self.metadata_list = self._split_dataset()
         
-        # 각 파일의 윈도우 수 계산 (첫 번째 파일로 추정)
+        # 각 파일의 윈도우 수 계산 (분할 정보 고려)
         self.windows_per_file = self._calculate_windows_per_file()
         self.total_windows = len(self.file_paths) * self.windows_per_file
         
@@ -216,15 +216,35 @@ class BearingDataset(Dataset):
             raise ValueError(f"지원하지 않는 데이터셋 타입: {self.dataset_type}")
     
     def _generate_uos_labels(self, metadata: Dict[str, Union[str, int]]) -> torch.Tensor:
-        """UOS 라벨 생성 (3차원: rotating_component, bearing_condition, bearing_type)"""
-        rotating_component_map = {'H': 0, 'L': 1, 'U': 2, 'M': 3}
-        bearing_condition_map = {'H': 0, 'B': 1, 'IR': 2, 'OR': 3}
+        """🎯 UOS 라벨 생성 (7-클래스 결합 분류)"""
+        # 올바른 7-클래스 분류: 회전체+베어링 상태 조합
+        rotating_comp = metadata['rotating_component']
+        bearing_cond = metadata['bearing_condition']
+        
+        # 결합 라벨 생성
+        combined_condition = f"{rotating_comp}_{bearing_cond}"
+        
+        # 7-클래스 매핑
+        condition_map = {
+            'H_H': 0,   # Healthy (완전 정상)
+            'H_B': 1,   # Ball fault (베어링 볼 결함)
+            'H_IR': 2,  # Inner race fault (베어링 내륜 결함)
+            'H_OR': 3,  # Outer race fault (베어링 외륜 결함)
+            'L_H': 4,   # Looseness (회전체 느슨함)
+            'U_H': 5,   # Unbalance (회전체 불균형)
+            'M_H': 6    # Misalignment (회전체 정렬불량)
+        }
+        
+        # 추가 정보: 베어링 타입도 유지
         bearing_type_map = {'6204': 0, '30204': 1, 'N204': 2, 'NJ204': 3}
         
+        # 단일 라벨 (주 분류) + 베어링 타입 정보
+        main_label = condition_map.get(combined_condition, 0)
+        bearing_type_label = bearing_type_map.get(metadata['bearing_type'], 0)
+        
         labels = torch.tensor([
-            rotating_component_map[metadata['rotating_component']],
-            bearing_condition_map[metadata['bearing_condition']], 
-            bearing_type_map[metadata['bearing_type']]
+            main_label,         # 주 분류 (7-클래스)
+            bearing_type_label  # 베어링 타입 (4-클래스)
         ], dtype=torch.long)
         
         return labels
@@ -266,7 +286,16 @@ class BearingDataset(Dataset):
             windowed_signals = create_windowed_signal(
                 signal, window_size, overlap_ratio
             )
-            return len(windowed_signals)
+            
+            total_windows = len(windowed_signals)
+            
+            # 🎯 CWRU 윈도우 분할 고려
+            if self.dataset_type == 'cwru' and hasattr(self, '_window_split_range'):
+                start_ratio, end_ratio = self._window_split_range
+                split_windows = int(total_windows * (end_ratio - start_ratio))
+                return max(1, split_windows)  # 최소 1개 윈도우
+            
+            return total_windows
         except Exception as e:
             logger.warning(f"윈도우 수 계산 실패: {e}, 기본값 1 사용")
             return 1
@@ -301,15 +330,20 @@ class BearingDataset(Dataset):
             # 도메인당 4개 파일인 경우 - 연구 목적에 맞게 분할
             # 파일 순서: [Normal, B, IR, OR] (알파벳순)
             
+            # 🎯 FIXED: 모든 클래스 포함 + 윈도우 레벨 분할
+            # CWRU: 4개 파일 [Normal, B, IR, OR] 모든 클래스 필수 포함
+            # 파일 단위가 아닌 각 파일 내 윈도우 단위로 train/val/test 분할
+            
+            # 모든 subset에서 모든 파일 사용 (모든 클래스 포함)
+            selected_indices = list(range(total_files))
+            
+            # 윈도우 레벨 분할 정보 저장 (나중에 __getitem__에서 사용)
             if self.subset == 'train':
-                # Train: Normal + 2개 결함 타입 사용
-                selected_indices = [0, 1, 2]  # Normal, B, IR
+                self._window_split_range = (0.0, 0.7)  # 각 파일의 처음 70%
             elif self.subset == 'val':
-                # Validation: 1개 결함 타입 사용 (OR)
-                selected_indices = [3] if total_files > 3 else [0]
+                self._window_split_range = (0.7, 0.85)  # 각 파일의 70-85%
             elif self.subset == 'test':
-                # Test: 모든 결함 타입 사용 (완전한 성능 평가)
-                selected_indices = list(range(total_files))
+                self._window_split_range = (0.85, 1.0)  # 각 파일의 85-100%
             else:
                 raise ValueError(f"알 수 없는 subset: {self.subset}")
             
@@ -398,8 +432,25 @@ class BearingDataset(Dataset):
         logger.info(f"UOS 데이터 라벨 분포: {dict(label_counts)}")
         logger.info(f"최소 샘플 수: {min_samples}")
         
-        # Stratified split 시도
-        try:
+        # 🎯 UOS도 윈도우 레벨 분할로 변경 (클래스 균형 보장)
+        # 파일 단위 분할은 클래스 불균형을 야기할 수 있음
+        
+        # 모든 파일 사용하여 윈도우 레벨에서 분할
+        files_train = self.file_paths
+        files_test = self.file_paths  
+        meta_train = self.metadata_list
+        meta_test = self.metadata_list
+        
+        # 윈도우 분할 정보 설정
+        if self.subset == 'train':
+            self._window_split_range = (0.0, 0.6)  # 60%
+        elif self.subset == 'val':
+            self._window_split_range = (0.6, 0.8)  # 20%
+        elif self.subset == 'test':
+            self._window_split_range = (0.8, 1.0)  # 20%
+        
+        # 기존 stratified 로직 주석 처리
+        if False:  # 기존 로직 비활성화
             if min_samples >= 2:
                 # 복합 라벨로 stratified split
                 files_train, files_test, meta_train, meta_test = train_test_split(
@@ -408,77 +459,21 @@ class BearingDataset(Dataset):
                     stratify=combined_labels, 
                     random_state=42
                 )
-                logger.info("복합 라벨 기반 stratified split 성공")
-                stratify_success = True
-            else:
-                raise ValueError("샘플 수 부족")
-                
-        except (ValueError, Exception) as e:
-            # Fallback 1: 베어링 상태만으로 stratify 시도
-            try:
-                primary_counts = Counter(primary_labels)
-                if min(primary_counts.values()) >= 2:
-                    files_train, files_test, meta_train, meta_test = train_test_split(
-                        self.file_paths, self.metadata_list, 
-                        test_size=DATA_CONFIG['test_split'],
-                        stratify=primary_labels, 
-                        random_state=42
-                    )
-                    logger.info("베어링 상태 기반 stratified split 사용")
-                    combined_labels = primary_labels  # validation split용
-                    stratify_success = True
-                else:
-                    raise ValueError("베어링 상태 샘플 수도 부족")
-                    
-            except (ValueError, Exception):
-                # Fallback 2: 완전 랜덤 분할
-                logger.warning(f"Stratified split 불가능 (최소 샘플: {min_samples}) - 랜덤 분할 사용")
-                files_train, files_test, meta_train, meta_test = train_test_split(
-                    self.file_paths, self.metadata_list, 
-                    test_size=DATA_CONFIG['test_split'],
-                    random_state=42
-                )
-                stratify_success = False
+                pass  # 기존 stratified 로직 비활성화
         
-        # Train에서 Validation 분할
-        if len(files_train) > 1:
-            try:
-                if stratify_success:
-                    # Train 데이터의 라벨 재생성
-                    if min_samples >= 2:
-                        train_combined_labels = [f"{m['bearing_condition']}_{m['bearing_type']}" for m in meta_train]
-                    else:
-                        train_combined_labels = [m['bearing_condition'] for m in meta_train]
-                    
-                    files_train_final, files_val, meta_train_final, meta_val = train_test_split(
-                        files_train, meta_train,
-                        test_size=DATA_CONFIG['validation_split'] / (1 - DATA_CONFIG['test_split']),
-                        stratify=train_combined_labels,
-                        random_state=42
-                    )
-                    logger.info("Validation split도 stratified로 성공")
-                else:
-                    raise ValueError("Stratify 실패")
-                    
-            except (ValueError, Exception):
-                # Validation도 랜덤 분할
-                files_train_final, files_val, meta_train_final, meta_val = train_test_split(
-                    files_train, meta_train,
-                    test_size=DATA_CONFIG['validation_split'] / (1 - DATA_CONFIG['test_split']),
-                    random_state=42
-                )
-                logger.info("Validation split은 랜덤 분할 사용")
-        else:
-            files_train_final, files_val = files_train, []
-            meta_train_final, meta_val = meta_train, []
+        # 모든 subset에서 동일한 파일 사용 (윈도우 분할로 처리)
+        files_train_final = self.file_paths
+        files_val = self.file_paths
+        files_test = self.file_paths
+        meta_train_final = self.metadata_list
+        meta_val = self.metadata_list
+        meta_test = self.metadata_list
         
         # 분할 결과 로깅 (디버깅용)
         logger.info(f"UOS {self.subset} 분할 결과:")
-        logger.info(f"  Train: {len(files_train_final)}개 파일")
-        logger.info(f"  Val: {len(files_val)}개 파일") 
-        logger.info(f"  Test: {len(files_test)}개 파일")
+        logger.info(f"  모든 subset에서 전체 {len(self.file_paths)}개 파일 사용 (윈도우 레벨 분할)")
         
-        # 요청된 subset 반환
+        # 요청된 subset 반환 (윈도우 분할 정보 포함)
         if self.subset == 'train':
             return files_train_final, meta_train_final
         elif self.subset == 'val':
@@ -530,12 +525,30 @@ class BearingDataset(Dataset):
                 signal, self.window_size, self.overlap_ratio
             )
             
-            # 지정된 윈도우 선택
-            if window_idx < len(windowed_signals):
-                selected_signal = windowed_signals[window_idx]
+            # 🎯 윈도우 레벨 분할 적용 (모든 데이터셋)
+            if hasattr(self, '_window_split_range'):
+                total_windows = len(windowed_signals)
+                start_ratio, end_ratio = self._window_split_range
+                start_idx = int(total_windows * start_ratio)
+                end_idx = int(total_windows * end_ratio)
+                
+                # 범위 내에서 윈도우 선택
+                valid_range = end_idx - start_idx
+                if valid_range > 0:
+                    adjusted_window_idx = start_idx + (window_idx % valid_range)
+                else:
+                    adjusted_window_idx = start_idx
+                
+                if adjusted_window_idx < len(windowed_signals):
+                    selected_signal = windowed_signals[adjusted_window_idx]
+                else:
+                    selected_signal = windowed_signals[-1]
             else:
-                # 윈도우 인덱스가 범위를 벗어나면 마지막 윈도우 사용
-                selected_signal = windowed_signals[-1]
+                # 기본 로직 (fallback)
+                if window_idx < len(windowed_signals):
+                    selected_signal = windowed_signals[window_idx]
+                else:
+                    selected_signal = windowed_signals[-1]
             
             # 텍스트 설명 생성
             text_description = generate_text_description(metadata)

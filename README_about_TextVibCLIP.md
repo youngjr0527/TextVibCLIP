@@ -139,13 +139,22 @@ InfoNCE = 1/(2N) * Σ[i=1 to N] [
 ### 데이터 구조
 
 #### 시나리오 1: UOS 데이터셋 (Varying Speed)
-**파일명 규칙:**
+**파일명 규칙 (🎯 7-클래스 시스템):**
 ```
 예시: H_B_30204_600.mat
 ├── H: 회전체 상태 (H=Healthy, L=Looseness, U=Unbalance, M=Misalignment)
 ├── B: 베어링 상태 (H=Healthy, B=Ball fault, IR=Inner race, OR=Outer race)  
 ├── 30204: 베어링 타입 (6204=Deep Groove Ball, 30204=Tapered Roller, N204/NJ204=Cylindrical Roller)
 └── 600: 회전 속도 (600 RPM)
+
+🎯 올바른 7-클래스 매핑:
+H_H → H (Healthy): 완전 정상
+H_B → B (Ball): 베어링 볼 결함
+H_IR → IR (Inner): 베어링 내륜 결함  
+H_OR → OR (Outer): 베어링 외륜 결함
+L_H → L (Loose): 회전체 느슨함
+U_H → U (Unbalance): 회전체 불균형
+M_H → M (Misalign): 회전체 정렬불량
 ```
 
 **텍스트 생성 예시:**

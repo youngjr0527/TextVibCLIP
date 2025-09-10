@@ -25,7 +25,7 @@ class ReplayBuffer:
     
     def __init__(self, 
                  buffer_size_per_domain: int = TRAINING_CONFIG['replay_buffer_size'],
-                 embedding_dim: int = 512,
+                 embedding_dim: int = 256,  # 512 → 256: 임베딩 차원 변경에 맞춤
                  sampling_strategy: str = 'random'):
         """
         Args:
@@ -56,6 +56,7 @@ class ReplayBuffer:
                        text_embeddings: torch.Tensor,
                        vib_embeddings: torch.Tensor,
                        metadata_list: List[Dict],
+                       labels: torch.Tensor = None,
                        selection_strategy: str = 'random') -> None:
         """
         새 도메인 데이터를 버퍼에 추가
@@ -87,6 +88,13 @@ class ReplayBuffer:
         selected_text = text_embeddings[selected_indices]
         selected_vib = vib_embeddings[selected_indices]
         selected_metadata = [metadata_list[i] for i in selected_indices]
+        
+        # 🎯 라벨 정보도 저장 (클래스 기반 contrastive learning용)
+        if labels is not None:
+            selected_labels = labels[selected_indices]
+            if not hasattr(self, 'labels'):
+                self.labels = {}
+            self.labels[domain_id] = selected_labels.detach().cpu()
         
         self.text_embeddings[domain_id] = selected_text.detach().cpu()
         self.vib_embeddings[domain_id] = selected_vib.detach().cpu()
@@ -255,6 +263,7 @@ class ReplayBuffer:
         sampled_text = []
         sampled_vib = []
         sampled_metadata = []
+        sampled_labels = []  # 🎯 라벨 정보 추가
         
         for domain, num_domain_samples in domain_samples.items():
             if domain not in self.text_embeddings:
@@ -263,6 +272,7 @@ class ReplayBuffer:
             domain_text = self.text_embeddings[domain]
             domain_vib = self.vib_embeddings[domain]
             domain_metadata = self.metadata_list[domain]
+            domain_labels = getattr(self, 'labels', {}).get(domain, None)
             
             # 해당 도메인에서 랜덤 샘플링
             available_count = domain_text.size(0)
@@ -274,6 +284,10 @@ class ReplayBuffer:
                 sampled_text.append(domain_text[indices])
                 sampled_vib.append(domain_vib[indices])
                 sampled_metadata.extend([domain_metadata[i] for i in indices])
+                
+                # 🎯 라벨 정보도 샘플링
+                if domain_labels is not None:
+                    sampled_labels.append(domain_labels[indices])
         
         if not sampled_text:
             logger.warning("샘플링된 데이터가 없음")
@@ -283,11 +297,18 @@ class ReplayBuffer:
         combined_text = torch.cat(sampled_text, dim=0).to(device)
         combined_vib = torch.cat(sampled_vib, dim=0).to(device)
         
-        return {
+        result = {
             'text_embeddings': combined_text,
             'vib_embeddings': combined_vib,
             'metadata': sampled_metadata
         }
+        
+        # 🎯 라벨 정보 추가 (있는 경우만)
+        if sampled_labels:
+            combined_labels = torch.cat(sampled_labels, dim=0).to(device)
+            result['labels'] = combined_labels
+        
+        return result
     
     def get_buffer_info(self) -> Dict:
         """버퍼 상태 정보 반환"""
@@ -370,13 +391,13 @@ if __name__ == "__main__":
     print("=== ReplayBuffer 테스트 ===")
     
     # 버퍼 생성
-    buffer = ReplayBuffer(buffer_size_per_domain=10, embedding_dim=512)
+    buffer = ReplayBuffer(buffer_size_per_domain=10, embedding_dim=256)
     
     # 더미 데이터 생성
     for domain_id in [600, 800, 1000]:
         num_samples = 50
-        text_emb = torch.randn(num_samples, 512)
-        vib_emb = torch.randn(num_samples, 512)
+        text_emb = torch.randn(num_samples, 256)
+        vib_emb = torch.randn(num_samples, 256)
         metadata = [
             {
                 'rotating_component': 'H',
