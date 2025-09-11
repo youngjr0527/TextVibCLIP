@@ -221,7 +221,7 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         trainer = ContinualTrainer(
             device=device,
             save_dir=f"checkpoints/{config['name']}",
-            use_amp=True,  # OOM 방지를 위해 AMP 활성화
+            use_amp=False,  # 🎯 AMP 비활성화 (수치 안정성 확보)
             max_grad_norm=0.1,
             domain_order=config['domain_order'],
             data_dir=config['data_dir'],

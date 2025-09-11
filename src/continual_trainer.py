@@ -395,16 +395,15 @@ class ContinualTrainer:
             forgetting_score = self._calculate_forgetting(before_performance, after_performance)
             self.forgetting_scores.append(forgetting_score)
             
-                    # 성능 기록 (모든 메트릭 저장)
-        for domain, metrics in after_performance.items():
-            if domain not in self.performance_history:
-                self.performance_history[domain] = {'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': []}
-            
-            self.performance_history[domain]['accuracy'].append(metrics['accuracy'])
-            self.performance_history[domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
-            self.performance_history[domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
-            
-            # 도메인 완료 표시
+            # 성능 기록 (모든 메트릭 저장)
+            for eval_domain, metrics in after_performance.items():
+                if eval_domain not in self.performance_history:
+                    self.performance_history[eval_domain] = {'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': []}
+                self.performance_history[eval_domain]['accuracy'].append(metrics.get('accuracy', 0.0))
+                self.performance_history[eval_domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
+                self.performance_history[eval_domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
+
+            # 현재 도메인 완료 표시 및 결과 저장
             self.completed_domains.append(domain_value)
             remaining_domains_results[domain_value] = {
                 'training_results': domain_results,
@@ -412,8 +411,7 @@ class ContinualTrainer:
                 'forgetting_score': forgetting_score
             }
             
-            logger.info(f"Domain {domain_value} 학습 완료: "
-                       f"Forgetting Score = {forgetting_score:.4f}")
+            logger.info(f"Domain {domain_value} 학습 완료: Forgetting Score = {forgetting_score:.4f}")
             
             # 🎨 도메인별 성능 시각화 생성
             logger.info(f"📊 Domain {domain_value} 성능 시각화 생성 중...")
@@ -632,6 +630,8 @@ class ContinualTrainer:
         all_text_embeddings = []
         all_vib_embeddings = []
         all_file_idx = []
+        all_labels = []
+        all_labels = []
         
         # DataLoader 안전성 확보를 위한 조치
         try:
@@ -651,6 +651,8 @@ class ContinualTrainer:
                     if 'file_idx' in batch:
                         # 디바이스 일치 유지 (GPU 상에서 바로 사용)
                         all_file_idx.append(batch['file_idx'])
+                    if 'labels' in batch:
+                        all_labels.append(batch['labels'])
                     
         except Exception as e:
             logger.error(f"평가 중 오류 발생: {e}")
@@ -663,6 +665,7 @@ class ContinualTrainer:
         text_emb = torch.cat(all_text_embeddings, dim=0)
         vib_emb = torch.cat(all_vib_embeddings, dim=0)
         file_idx = torch.cat(all_file_idx, dim=0) if all_file_idx else None
+        labels_tensor = torch.cat(all_labels, dim=0) if all_labels else None
         
         # 🎯 FIXED: 표준 L2 정규화 (gradient 보존)
         text_emb = F.normalize(text_emb, p=2, dim=1)
@@ -726,34 +729,42 @@ class ContinualTrainer:
                 logger.info(f"🔍 DEBUG - 셔플 베이스라인 Top1/Top5: {top1_shuf:.4f}/{top5_shuf:.4f}")
         
         # 🎯 ENHANCED: 클래스 인식 평가 + 표준 contrastive 평가
-        # 1. 표준 diagonal matching (contrastive learning 기본 평가)
+        # 1) 표준 diagonal matching (모니터링용)
         _, predicted_indices = torch.max(similarity_matrix, dim=1)
         correct_indices = torch.arange(text_emb.size(0), device=text_emb.device)
         diagonal_accuracy = (predicted_indices == correct_indices).float().mean().item()
-        
-        # 2. 클래스 기반 평가 (같은 고장 유형 인식 능력)
-        # 가장 유사한 vibration이 같은 클래스인지 확인
-        class_accuracy = diagonal_accuracy  # 기본값
-        
-        # 배치에 라벨 정보가 있으면 클래스 기반 평가 수행
-        # (나중에 구현 예정)
-        
-        # 3. Top-K retrieval
-        retrieval_accuracy = diagonal_accuracy
-        top1_accuracy = diagonal_accuracy
-        
-        k = min(5, similarity_matrix.size(1))
-        if k > 1:
-            _, topk_indices = torch.topk(similarity_matrix, k=k, dim=1)
-            correct_indices_expanded = correct_indices.unsqueeze(1).expand(-1, k)
-            top5_accuracy = (topk_indices == correct_indices_expanded).any(dim=1).float().mean().item()
-        else:
-            top5_accuracy = top1_accuracy
+
+        # 2) 클래스 기반 평가 (라벨이 있을 때 클래스 동일성 평가)
+        class_top1 = diagonal_accuracy
+        class_top5 = diagonal_accuracy
+        if labels_tensor is not None:
+            if labels_tensor.dim() == 2 and labels_tensor.size(1) >= 1:
+                class_labels = labels_tensor[:, 0]
+            elif labels_tensor.dim() == 1:
+                class_labels = labels_tensor
+            else:
+                class_labels = labels_tensor.view(-1)
+            class_labels = class_labels.to(text_emb.device)
+
+            top1_pred = torch.argmax(similarity_matrix, dim=1)
+            class_top1 = (class_labels[top1_pred] == class_labels).float().mean().item()
+
+            k = min(5, similarity_matrix.size(1))
+            if k > 1:
+                _, topk_indices = torch.topk(similarity_matrix, k=k, dim=1)
+                topk_labels = class_labels[topk_indices]
+                class_top5 = (topk_labels == class_labels.unsqueeze(1)).any(dim=1).float().mean().item()
+            else:
+                class_top5 = class_top1
+
+        retrieval_accuracy = class_top1
+        top1_accuracy = class_top1
+        top5_accuracy = class_top5
         
         return {
             'accuracy': retrieval_accuracy,  # 주 정확도 지표
             'diagonal_accuracy': diagonal_accuracy,  # 표준 contrastive 정확도
-            'class_accuracy': class_accuracy,  # 클래스 인식 정확도
+            'class_accuracy': class_top1,  # 클래스 인식 정확도
             'top1_retrieval': top1_accuracy,
             'top5_retrieval': top5_accuracy
         }
@@ -797,6 +808,7 @@ class ContinualTrainer:
         all_text_embeddings = []
         all_vib_embeddings = []
         all_file_idx = []
+        all_labels = []
         
         try:
             with torch.no_grad():
@@ -812,6 +824,8 @@ class ContinualTrainer:
                     all_vib_embeddings.append(results['vib_embeddings'])
                     if 'file_idx' in batch:
                         all_file_idx.append(batch['file_idx'])
+                    if 'labels' in batch:
+                        all_labels.append(batch['labels'])
                     
         except Exception as e:
             logger.error(f"빠른 평가 중 오류: {e}")
@@ -824,25 +838,47 @@ class ContinualTrainer:
         text_emb = torch.cat(all_text_embeddings, dim=0)
         vib_emb = torch.cat(all_vib_embeddings, dim=0)
         file_idx = torch.cat(all_file_idx, dim=0) if all_file_idx else None
+        labels_tensor = torch.cat(all_labels, dim=0) if all_labels else None
 
         # 🎯 FIXED: 표준 L2 정규화 (gradient 보존)
         text_emb = F.normalize(text_emb, p=2, dim=1)
         vib_emb = F.normalize(vib_emb, p=2, dim=1)
         similarity = torch.matmul(text_emb, vib_emb.t())
 
-        # 🎯 FIXED: 표준 contrastive learning 평가 (diagonal matching)
-        _, pred = torch.max(similarity, dim=1)
-        target = torch.arange(text_emb.size(0), device=text_emb.device)
-        top1 = (pred == target).float().mean().item()
+        # 🎯 클래스 기반 평가
+        class_top1 = 0.0
+        class_top5 = 0.0
+        if labels_tensor is not None:
+            if labels_tensor.dim() == 2 and labels_tensor.size(1) >= 1:
+                class_labels = labels_tensor[:, 0]
+            elif labels_tensor.dim() == 1:
+                class_labels = labels_tensor
+            else:
+                class_labels = labels_tensor.view(-1)
+            class_labels = class_labels.to(text_emb.device)
 
-        # Top-5 (diagonal matching)
-        k = min(5, similarity.size(1))
-        if k > 1:
-            _, topk = torch.topk(similarity, k=k, dim=1)
-            target_expanded = target.unsqueeze(1).expand(-1, k)
-            top5 = (topk == target_expanded).any(dim=1).float().mean().item()
+            pred = torch.argmax(similarity, dim=1)
+            class_top1 = (class_labels[pred] == class_labels).float().mean().item()
+
+            k = min(5, similarity.size(1))
+            if k > 1:
+                _, topk = torch.topk(similarity, k=k, dim=1)
+                topk_labels = class_labels[topk]
+                class_top5 = (topk_labels == class_labels.unsqueeze(1)).any(dim=1).float().mean().item()
+            else:
+                class_top5 = class_top1
         else:
-            top5 = top1
+            # 라벨 없으면 대각선 기준으로 근사
+            _, pred = torch.max(similarity, dim=1)
+            target = torch.arange(text_emb.size(0), device=text_emb.device)
+            class_top1 = (pred == target).float().mean().item()
+            k = min(5, similarity.size(1))
+            if k > 1:
+                _, topk = torch.topk(similarity, k=k, dim=1)
+                target_expanded = target.unsqueeze(1).expand(-1, k)
+                class_top5 = (topk == target_expanded).any(dim=1).float().mean().item()
+            else:
+                class_top5 = class_top1
 
         # 빠른 평가에서도 무결성 디버그(한 번만)
         if not hasattr(self, '_debug_fast_once'):
@@ -857,7 +893,7 @@ class ContinualTrainer:
             off_std = float(off_vals.std(unbiased=False).item())
             logger.info(
                 f"🔍 DEBUG(FAST) - N={N}, diag mean/std={diag_mean:.4f}/{diag_std:.4f}, "
-                f"off mean/std={off_mean:.4f}/{off_std:.4f}, Top1={top1:.4f}, Top5={top5:.4f}"
+                f"off mean/std={off_mean:.4f}/{off_std:.4f}, Top1={class_top1:.4f}, Top5={class_top5:.4f}"
             )
             if file_idx is not None and N >= 2:
                 perm = torch.randperm(N, device=text_emb.device)
@@ -870,11 +906,11 @@ class ContinualTrainer:
                 logger.info(f"🔍 DEBUG(FAST) - 셔플 베이스라인 Top1/Top5: {top1_shuf:.4f}/{top5_shuf:.4f}")
 
         return {
-            'accuracy': top1,  # 주 정확도 지표
-            'diagonal_accuracy': top1,  # 표준 contrastive 정확도
-            'class_accuracy': top1,  # 클래스 인식 정확도 (배치 제한으로 근사치)
-            'top1_retrieval': top1,
-            'top5_retrieval': top5
+            'accuracy': class_top1,  # 클래스 기반 Top-1
+            'diagonal_accuracy': class_top1,  # 라벨 부재 시 동일
+            'class_accuracy': class_top1,
+            'top1_retrieval': class_top1,
+            'top5_retrieval': class_top5
         }
     
     def _calculate_forgetting(self, before: Dict, after: Dict) -> float:
@@ -1190,19 +1226,21 @@ class ContinualTrainer:
         # 현재까지 완료된 도메인들의 성능 수집
         domain_names = []
         accuracies = []
-        forgetting_scores = []
         
         for domain in self.completed_domains:
             domain_names.append(f"Domain_{domain}")
-            
-            # 현재 성능
             if domain in performance_results:
                 accuracies.append(performance_results[domain].get('accuracy', 0.0))
             else:
                 accuracies.append(0.0)
-        
-        # 망각 점수 (첫 도메인은 0)
-        forgetting_scores = [0.0] + self.forgetting_scores[:len(self.completed_domains)-1]
+
+        # 망각 점수 (첫 도메인은 0), 길이 정합성 보정
+        n = len(domain_names)
+        forgetting_scores = [0.0] + list(self.forgetting_scores)
+        if len(forgetting_scores) < n:
+            forgetting_scores = forgetting_scores + [0.0] * (n - len(forgetting_scores))
+        elif len(forgetting_scores) > n:
+            forgetting_scores = forgetting_scores[:n]
         
         # 시각화 생성
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))

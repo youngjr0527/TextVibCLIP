@@ -161,5 +161,5 @@ EVAL_CONFIG = {
 DEVICE_CONFIG = {
     'use_cuda': True,
     'gpu_id': 2,
-    'mixed_precision': True,  # AMP 사용
+    'mixed_precision': False,  # 🎯 AMP 비활성화 (수치 안정성)
 }

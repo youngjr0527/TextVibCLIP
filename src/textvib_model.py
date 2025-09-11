@@ -64,11 +64,15 @@ class InfoNCELoss(nn.Module):
         # Temperature scaling
         logits_scaled = logits / temperature
         
-        # Log-sum-exp for numerical stability
-        log_denominator = torch.logsumexp(logits_scaled, dim=1)  # (N,)
+        # 🎯 AMP 안전성: Half precision 범위 내에서 연산
+        # Float32로 강제 변환하여 오버플로우 방지
+        logits_f32 = logits_scaled.float()
         
-        # Positive pairs only
-        masked_logits = logits_scaled.masked_fill(~positive_mask, -1e9)
+        # Log-sum-exp for numerical stability
+        log_denominator = torch.logsumexp(logits_f32, dim=1)  # (N,)
+        
+        # Positive pairs only (AMP 안전 범위)
+        masked_logits = logits_f32.masked_fill(~positive_mask, -1e4)  # 안전한 범위
         log_numerator = torch.logsumexp(masked_logits, dim=1)  # (N,)
         
         # InfoNCE: -log(exp(pos_sum) / exp(all_sum))
@@ -78,7 +82,8 @@ class InfoNCELoss(nn.Module):
     
     def forward(self, 
                 text_embeddings: torch.Tensor, 
-                vib_embeddings: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+                vib_embeddings: torch.Tensor,
+                batch_labels: torch.Tensor = None) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Bidirectional InfoNCE loss 계산
         
@@ -99,8 +104,8 @@ class InfoNCELoss(nn.Module):
         # 🎯 FIXED: 클래스 기반 Contrastive Learning
         # 같은 고장 유형끼리 positive pairs, 다른 고장 유형은 negative pairs
         
-        # 배치에서 라벨 정보 추출
-        batch_labels = batch.get('labels', None)
+        # 배치에서 라벨 정보 추출 (매개변수로 전달받음)
+        # batch_labels = batch.get('labels', None)  # 이제 매개변수로 받음
         if batch_labels is not None and batch_labels.dim() == 2:
             # UOS: 첫 번째 차원이 주 분류 (7-클래스)
             class_labels = batch_labels[:, 0]  # [0,1,2,3,4,5,6] for H/B/IR/OR/L/U/M
@@ -300,7 +305,9 @@ class TextVibCLIP(nn.Module):
         else:
             # 표준 또는 멀티-포지티브 InfoNCE
             if multi_positive is None:
-                loss, loss_components = self.infonce_loss(text_embeddings, vib_embeddings)
+                # 🎯 라벨 정보를 InfoNCE에 전달
+                batch_labels = batch.get('labels', None)
+                loss, loss_components = self.infonce_loss(text_embeddings, vib_embeddings, batch_labels)
             else:
                 # 🎯 FIXED: 표준 L2 정규화 (gradient 보존)
                 text_norm = F.normalize(text_embeddings, p=2, dim=1)
@@ -321,16 +328,23 @@ class TextVibCLIP(nn.Module):
         # Auxiliary classification loss (first domain only)
         aux_cfg = MODEL_CONFIG.get('aux_classification', {'enabled': False})
         if aux_cfg.get('enabled', False) and not self.is_continual_mode:
-            # labels: batch['labels'] -> UOS: [rc, bc, bt], CWRU: [bc]
-            labels = batch.get('labels', None)
-            if labels is not None:
-                if labels.dim() == 2 and labels.size(1) >= 1:
-                    # bearing_condition index: UOS에서 두 번째(1)
-                    bearing_condition = labels[:, 1] if labels.size(1) >= 2 else labels[:, 0]
+            # 🎯 배치 라벨 정보 사용
+            aux_labels = batch.get('labels', None)
+            if aux_labels is not None:
+                if aux_labels.dim() == 2 and aux_labels.size(1) >= 1:
+                    # UOS: 첫 번째가 주 분류 (7-클래스)
+                    main_class = aux_labels[:, 0]  # H/B/IR/OR/L/U/M
                     # 분류 head 존재 시에만
                     if hasattr(self.vibration_encoder, 'use_aux_head') and self.vibration_encoder.use_aux_head:
                         logits_cls = self.vibration_encoder.aux_head(vib_embeddings)
-                        ce_loss = F.cross_entropy(logits_cls, bearing_condition)
+                        ce_loss = F.cross_entropy(logits_cls, main_class)
+                        loss = loss + float(aux_cfg.get('loss_weight', 1.0)) * ce_loss
+                        loss_components['aux_ce'] = ce_loss
+                elif aux_labels.dim() == 1:
+                    # CWRU: 1차원 라벨 (4-클래스)
+                    if hasattr(self.vibration_encoder, 'use_aux_head') and self.vibration_encoder.use_aux_head:
+                        logits_cls = self.vibration_encoder.aux_head(vib_embeddings)
+                        ce_loss = F.cross_entropy(logits_cls, aux_labels)
                         loss = loss + float(aux_cfg.get('loss_weight', 1.0)) * ce_loss
                         loss_components['aux_ce'] = ce_loss
         
@@ -362,7 +376,7 @@ class TextVibCLIP(nn.Module):
         log_denom = torch.logsumexp(logits_f32, dim=1)  # (N,)
         # 양성 로짓만 남기고 log-sum-exp (분자)
         # 모든 행에 최소 하나 이상의 양성이 존재한다고 가정 (자기 자신 포함)
-        masked_logits = logits_f32.masked_fill(~positive_mask, -1e9)
+        masked_logits = logits_f32.masked_fill(~positive_mask, -1e4)
         log_num = torch.logsumexp(masked_logits, dim=1)  # (N,)
         loss_vec = -(log_num - log_denom)
         return loss_vec.mean()
