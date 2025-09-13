@@ -101,6 +101,19 @@ class VibrationEncoder(nn.Module):
             nn.Linear(MODEL_CONFIG['projection']['hidden_dim'], embedding_dim)
             # 🎯 FIXED: LayerNorm 제거 (gradient vanishing 방지)
         )
+        
+        # 🎯 FIXED: 안정적인 스케일링 팩터
+        self.embedding_scaler = nn.Parameter(torch.tensor(3.0))  # 10.0 → 3.0 (안정화)
+        
+        # Projection layer 초기화 (CLIP-style)
+        with torch.no_grad():
+            # 첫 번째 projection layer: Xavier normal
+            nn.init.xavier_normal_(self.projection[0].weight)
+            nn.init.zeros_(self.projection[0].bias)
+            
+            # 마지막 projection layer: 표준 초기화
+            nn.init.xavier_normal_(self.projection[3].weight)
+            nn.init.zeros_(self.projection[3].bias)
 
         # Auxiliary classification head (bearing condition 4-class)
         aux_cfg = MODEL_CONFIG.get('aux_classification', {'enabled': False})
@@ -172,6 +185,9 @@ class VibrationEncoder(nn.Module):
         
         # Final projection
         output = self.projection(x)  # (batch_size, embedding_dim)
+        
+        # 🎯 CRITICAL FIX: 임베딩 크기 스케일링 (Text encoder와 균형 맞추기)
+        output = output * self.embedding_scaler
         
         return output
     

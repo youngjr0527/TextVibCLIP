@@ -67,6 +67,16 @@ class TextEncoder(nn.Module):
             # 🎯 FIXED: LayerNorm 제거 (gradient vanishing 방지)
         )
         
+        # 🎯 CRITICAL FIX: Projection layer 초기화 (CLIP-style)
+        with torch.no_grad():
+            # 첫 번째 projection layer: Xavier normal
+            nn.init.xavier_normal_(self.projection[0].weight)
+            nn.init.zeros_(self.projection[0].bias)
+            
+            # 마지막 projection layer: 매칭되는 스케일로 초기화
+            nn.init.normal_(self.projection[3].weight, std=0.1)  # 0.02 → 0.1 (vibration과 매칭)
+            nn.init.zeros_(self.projection[3].bias)
+        
         logger.info(f"TextEncoder 초기화 완료: LoRA={enable_lora}, Freeze={freeze_base}")
     
     def _apply_lora(self):

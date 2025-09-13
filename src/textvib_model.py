@@ -43,19 +43,23 @@ class InfoNCELoss(nn.Module):
             reduction (str): Loss reduction method
         """
         super(InfoNCELoss, self).__init__()
-        self.temperature_text = temperature_text
-        self.temperature_vib = temperature_vib
+        
+        # 🎯 CRITICAL FIX: 학습 가능한 온도 파라미터 (CLIP-style)
+        # 초기값을 log space에서 설정하여 안정적인 학습
+        self.log_temperature_text = nn.Parameter(torch.log(torch.tensor(temperature_text)))
+        self.log_temperature_vib = nn.Parameter(torch.log(torch.tensor(temperature_vib)))
+        
         self.reduction = reduction
         
-        logger.info(f"InfoNCE Loss 초기화: τ_text={temperature_text:.3f}, τ_vib={temperature_vib:.3f}")
+        logger.info(f"InfoNCE Loss 초기화: τ_text={temperature_text:.3f}, τ_vib={temperature_vib:.3f} (학습 가능)")
     
     def _class_based_infonce_loss(self, logits: torch.Tensor, positive_mask: torch.Tensor, temperature: float) -> torch.Tensor:
         """
         클래스 기반 InfoNCE loss
         
         Args:
-            logits: 유사도 매트릭 (N, N)
-            positive_mask: 같은 클래스는 True, 다른 클래스는 False (N, N)
+            logits: 유사도 매트릭 (N, M)
+            positive_mask: 같은 클래스는 True, 다른 클래스는 False (N, M)
             temperature: 온도 파라미터
             
         Returns:
@@ -65,19 +69,48 @@ class InfoNCELoss(nn.Module):
         logits_scaled = logits / temperature
         
         # 🎯 AMP 안전성: Half precision 범위 내에서 연산
-        # Float32로 강제 변환하여 오버플로우 방지
         logits_f32 = logits_scaled.float()
+        N = logits_f32.size(0)
+        M = logits_f32.size(1)
+        device = logits_f32.device
         
-        # Log-sum-exp for numerical stability
+        # 분모: log-sum-exp(all)
         log_denominator = torch.logsumexp(logits_f32, dim=1)  # (N,)
         
-        # Positive pairs only (AMP 안전 범위)
-        masked_logits = logits_f32.masked_fill(~positive_mask, -1e4)  # 안전한 범위
+        # 자기자신 제외 마스크(직사각형 대응)
+        eye_mask = torch.zeros((N, M), dtype=torch.bool, device=device)
+        diag_len = min(N, M)
+        if diag_len > 0:
+            idx = torch.arange(diag_len, device=device)
+            eye_mask[idx, idx] = True
+        pos_mask_no_self = positive_mask & (~eye_mask)
+        
+        # 기본: positive 위치만 남김
+        masked_logits = logits_f32.masked_fill(~pos_mask_no_self, -1e4)
         log_numerator = torch.logsumexp(masked_logits, dim=1)  # (N,)
+        
+        # 🎯 FIXED: 행별로 positive가 전혀 없는 경우 안전한 fallback
+        has_positive = pos_mask_no_self.any(dim=1)  # (N,)
+        if not torch.all(has_positive):
+            # positive가 없는 행들에 대해서만 대각 원소 사용
+            no_positive_mask = ~has_positive  # (N,)
+            
+            if diag_len > 0:
+                # 대각선 원소를 사용할 수 있는 행들 (row index < diag_len)
+                row_idx = torch.arange(N, device=device)
+                can_use_diag = (row_idx < diag_len) & no_positive_mask  # (N,)
+                
+                if can_use_diag.any():
+                    # 해당 행들의 대각선 원소 값
+                    diag_values = torch.zeros(N, device=device)  # (N,) 크기로 초기화
+                    diag_indices = row_idx[can_use_diag]
+                    diag_values[can_use_diag] = logits_f32[diag_indices, diag_indices]
+                    
+                    # positive가 없는 행들에 대해서만 대각선 값으로 대체
+                    log_numerator = torch.where(can_use_diag, diag_values, log_numerator)
         
         # InfoNCE: -log(exp(pos_sum) / exp(all_sum))
         loss_per_sample = -(log_numerator - log_denominator)
-        
         return loss_per_sample.mean()
     
     def forward(self, 
@@ -96,22 +129,43 @@ class InfoNCELoss(nn.Module):
         """
         batch_size = text_embeddings.size(0)
         
-        # 🎯 FIXED: 표준 L2 정규화 (gradient 보존)
-        # 단순한 L2 정규화로 cosine similarity 계산
+        # 🎯 CRITICAL FIX: 강제 임베딩 정렬 (CLIP-inspired)
+        # L2 정규화
         text_embeddings = F.normalize(text_embeddings, p=2, dim=1)
         vib_embeddings = F.normalize(vib_embeddings, p=2, dim=1)
+        
+        # 학습 가능한 온도 파라미터 사용
+        temp_text = torch.exp(self.log_temperature_text)
+        temp_vib = torch.exp(self.log_temperature_vib)
+        
+        # 🎯 FIXED: 적절한 스케일링 (발산 방지)
+        # 온도가 낮을 때 적당한 스케일링만 적용
+        alignment_scale = torch.clamp(1.0 / temp_text, min=1.0, max=10.0)  # 100 → 10 (10배 감소)
+        text_embeddings = text_embeddings * alignment_scale
+        vib_embeddings = vib_embeddings * alignment_scale
         
         # 🎯 FIXED: 클래스 기반 Contrastive Learning
         # 같은 고장 유형끼리 positive pairs, 다른 고장 유형은 negative pairs
         
         # 배치에서 라벨 정보 추출 (매개변수로 전달받음)
         # batch_labels = batch.get('labels', None)  # 이제 매개변수로 받음
-        if batch_labels is not None and batch_labels.dim() == 2:
-            # UOS: 첫 번째 차원이 주 분류 (7-클래스)
-            class_labels = batch_labels[:, 0]  # [0,1,2,3,4,5,6] for H/B/IR/OR/L/U/M
-        elif batch_labels is not None and batch_labels.dim() == 1:
-            # CWRU: 1차원 라벨 (4-클래스)
-            class_labels = batch_labels  # [0,1,2,3] for Normal/B/IR/OR
+        if batch_labels is not None:
+            if batch_labels.dim() == 2:
+                if batch_labels.size(1) == 2:
+                    # UOS: 첫 번째 차원이 주 분류 (7-클래스)
+                    class_labels = batch_labels[:, 0]  # [0,1,2,3,4,5,6] for H/B/IR/OR/L/U/M
+                elif batch_labels.size(1) == 1:
+                    # CWRU: (batch_size, 1) 형태의 라벨
+                    class_labels = batch_labels[:, 0]  # [0,1,2,3] for Normal/B/IR/OR
+                else:
+                    # 예상치 못한 형태
+                    class_labels = batch_labels[:, 0]
+            elif batch_labels.dim() == 1:
+                # 1차원 라벨 (직접 사용)
+                class_labels = batch_labels
+            else:
+                # Fallback: diagonal matching
+                class_labels = torch.arange(batch_size).to(text_embeddings.device)
         else:
             # Fallback: diagonal matching (기존 방식)
             class_labels = torch.arange(batch_size).to(text_embeddings.device)
@@ -123,12 +177,15 @@ class InfoNCELoss(nn.Module):
         class_labels = class_labels.to(text_embeddings.device)
         positive_mask = (class_labels.unsqueeze(1) == class_labels.unsqueeze(0))  # (N, N)
         
-        # 클래스 기반 InfoNCE loss 계산
+        # 클래스 기반 InfoNCE loss 계산 (학습 가능한 온도 사용)
+        temp_text = torch.exp(self.log_temperature_text)
+        temp_vib = torch.exp(self.log_temperature_vib)
+        
         loss_text_to_vib = self._class_based_infonce_loss(
-            similarity_matrix, positive_mask, self.temperature_text
+            similarity_matrix, positive_mask, temp_text
         )
         loss_vib_to_text = self._class_based_infonce_loss(
-            similarity_matrix.t(), positive_mask.t(), self.temperature_vib
+            similarity_matrix.t(), positive_mask.t(), temp_vib
         )
         
         # Total bidirectional loss
@@ -145,9 +202,20 @@ class InfoNCELoss(nn.Module):
     
     def update_temperatures(self, temperature_text: float, temperature_vib: float):
         """온도 파라미터 업데이트 (Continual learning에서 사용)"""
-        self.temperature_text = temperature_text
-        self.temperature_vib = temperature_vib
+        with torch.no_grad():
+            self.log_temperature_text.copy_(torch.log(torch.tensor(temperature_text)))
+            self.log_temperature_vib.copy_(torch.log(torch.tensor(temperature_vib)))
         logger.info(f"Temperature 업데이트: τ_text={temperature_text:.3f}, τ_vib={temperature_vib:.3f}")
+    
+    @property
+    def temperature_text(self):
+        """현재 text temperature 값 반환"""
+        return torch.exp(self.log_temperature_text).item()
+    
+    @property  
+    def temperature_vib(self):
+        """현재 vibration temperature 값 반환"""
+        return torch.exp(self.log_temperature_vib).item()
 
 
 class TextVibCLIP(nn.Module):
@@ -250,15 +318,23 @@ class TextVibCLIP(nn.Module):
             replay_labels = batch.get('replay_labels', None)
             
             if batch_labels is not None and replay_labels is not None:
+                # 현재 배치 라벨 처리
                 if batch_labels.dim() == 2:
-                    current_classes = batch_labels[:, 0]  # UOS 주 분류
+                    if batch_labels.size(1) == 2:
+                        current_classes = batch_labels[:, 0]  # UOS 주 분류
+                    else:
+                        current_classes = batch_labels[:, 0]  # CWRU (batch_size, 1)
                 else:
-                    current_classes = batch_labels  # CWRU
+                    current_classes = batch_labels  # 1차원 라벨
                 
+                # Replay 라벨 처리
                 if replay_labels.dim() == 2:
-                    replay_classes = replay_labels[:, 0]
+                    if replay_labels.size(1) == 2:
+                        replay_classes = replay_labels[:, 0]  # UOS
+                    else:
+                        replay_classes = replay_labels[:, 0]  # CWRU (batch_size, 1)
                 else:
-                    replay_classes = replay_labels
+                    replay_classes = replay_labels  # 1차원 라벨
                 
                 all_classes = torch.cat([current_classes, replay_classes], dim=0)
                 

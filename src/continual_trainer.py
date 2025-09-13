@@ -20,7 +20,7 @@ from .textvib_model import TextVibCLIP, create_textvib_model
 from .replay_buffer import ReplayBuffer
 from .data_loader import create_domain_dataloaders, create_combined_dataloader, create_first_domain_dataloader
 from .utils import setup_amp_and_scaler
-from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG
+from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG, CWRU_DATA_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,29 @@ class ContinualTrainer:
         
         # 데이터로더 준비
         if first_domain_dataloader is None:
-            first_domain_dataloader = create_first_domain_dataloader(subset='train', batch_size=self.batch_size)
+            # 시나리오에 맞는 dataset_type과 data_dir 사용
+            if hasattr(self, 'dataset_type'):
+                dataset_type = self.dataset_type
+            else:
+                dataset_type = 'uos'  # 기본값
+            
+            if hasattr(self, 'data_dir'):
+                data_dir = self.data_dir
+            else:
+                data_dir = DATA_CONFIG['data_dir'] if dataset_type == 'uos' else CWRU_DATA_CONFIG['data_dir']
+            
+            if hasattr(self, 'domain_order'):
+                domain_order = self.domain_order
+            else:
+                domain_order = DATA_CONFIG['domain_order'] if dataset_type == 'uos' else CWRU_DATA_CONFIG['domain_order']
+            
+            first_domain_dataloader = create_first_domain_dataloader(
+                data_dir=data_dir,
+                domain_order=domain_order,
+                dataset_type=dataset_type,
+                subset='train', 
+                batch_size=self.batch_size
+            )
         
         if num_epochs is None:
             num_epochs = self.num_epochs
@@ -423,7 +445,15 @@ class ContinualTrainer:
             except Exception as e:
                 logger.warning(f"⚠️ Domain {domain_value} 시각화 실패: {e}")
         
-        # 최종 성능 요약
+        # 최종 성능 요약 (풀 평가로 덮어쓰기)
+        full_eval_results = self._evaluate_all_domains(domain_dataloaders)
+        # 기록에도 풀 평가 최신값 추가
+        for eval_domain, metrics in full_eval_results.items():
+            if eval_domain not in self.performance_history:
+                self.performance_history[eval_domain] = {'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': []}
+            self.performance_history[eval_domain]['accuracy'].append(metrics.get('accuracy', 0.0))
+            self.performance_history[eval_domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
+            self.performance_history[eval_domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
         final_metrics = self._calculate_final_metrics()
         remaining_domains_results['final_metrics'] = final_metrics
         
@@ -671,7 +701,7 @@ class ContinualTrainer:
         text_emb = F.normalize(text_emb, p=2, dim=1)
         vib_emb = F.normalize(vib_emb, p=2, dim=1)
         
-        # 1. Retrieval 정확도 (멀티-포지티브: 같은 파일은 모두 정답 처리)
+        # 1. Retrieval 정확도
         similarity_matrix = torch.matmul(text_emb, vib_emb.t())  # (N, N)
         
         # 디버그: 첫 번째 배치에서 유사도 분포 확인
@@ -717,22 +747,72 @@ class ContinualTrainer:
             top_pairs = [(int(i), int(v)) for i, v in zip(top_idx.tolist(), top_vals.tolist())]
             logger.info(f"🔍 DEBUG - argmax 상위 {topk} 인덱스/빈도: {top_pairs}")
 
-            # 셔플 베이스라인 (멀티-포지티브 기준)
-            if file_idx is not None and N >= 2:
+            # 셔플 베이스라인 (클래스 기반, 공정성 마스크 미적용 단순 참조)
+            if N >= 2 and labels_tensor is not None:
+                # 라벨 정규화
+                if labels_tensor.dim() == 2 and labels_tensor.size(1) >= 1:
+                    cls_dbg = labels_tensor[:, 0]
+                elif labels_tensor.dim() == 1:
+                    cls_dbg = labels_tensor
+                else:
+                    cls_dbg = labels_tensor.view(-1)
+                cls_dbg = cls_dbg.to(text_emb.device)
+
+                # 🎯 FIXED: 올바른 셔플 베이스라인 계산
                 perm = torch.randperm(N, device=text_emb.device)
                 sim_shuf = torch.matmul(text_emb, vib_emb[perm].t())
                 pred_shuf = torch.argmax(sim_shuf, dim=1)
-                top1_shuf = (file_idx[perm][pred_shuf] == file_idx).float().mean().item()
+                
+                # 올바른 계산: 셔플된 순서에서 예측한 클래스와 원래 클래스 비교
+                predicted_classes_shuf = cls_dbg[perm[pred_shuf]]  # 예측된 위치의 실제 클래스
+                top1_shuf = (predicted_classes_shuf == cls_dbg).float().mean().item()
+                
                 k_dbg = min(5, N)
                 _, topk_shuf = torch.topk(sim_shuf, k=k_dbg, dim=1)
-                top5_shuf = (file_idx.unsqueeze(1) == file_idx[perm][topk_shuf]).any(dim=1).float().mean().item()
-                logger.info(f"🔍 DEBUG - 셔플 베이스라인 Top1/Top5: {top1_shuf:.4f}/{top5_shuf:.4f}")
+                topk_classes_shuf = cls_dbg[perm[topk_shuf]]  # topk 위치들의 실제 클래스
+                top5_shuf = (topk_classes_shuf == cls_dbg.unsqueeze(1)).any(dim=1).float().mean().item()
+                
+                logger.info(f"🔍 DEBUG - 셔플 베이스라인 Top1/Top5 (class): {top1_shuf:.4f}/{top5_shuf:.4f}")
+                
+                # 추가 디버그: 클래스 분포 확인
+                unique_classes = torch.unique(cls_dbg)
+                class_counts = [(cls.item(), (cls_dbg == cls).sum().item()) for cls in unique_classes]
+                logger.info(f"🔍 DEBUG - 배치 내 클래스 분포: {class_counts}")
+                
+                # 이론적 랜덤 베이스라인 계산
+                n_classes = len(unique_classes)
+                theoretical_random = 1.0 / n_classes if n_classes > 0 else 0.0
+                logger.info(f"🔍 DEBUG - 이론적 랜덤 베이스라인: {theoretical_random:.4f} (클래스 수: {n_classes})")
         
         # 🎯 ENHANCED: 클래스 인식 평가 + 표준 contrastive 평가
         # 1) 표준 diagonal matching (모니터링용)
         _, predicted_indices = torch.max(similarity_matrix, dim=1)
         correct_indices = torch.arange(text_emb.size(0), device=text_emb.device)
         diagonal_accuracy = (predicted_indices == correct_indices).float().mean().item()
+
+        # 🎯 공정 평가: 자기 자신(대각선) 제거 + (행별 조건부) 동일파일 제거
+        N = similarity_matrix.size(0)
+        sim_eval = similarity_matrix.clone()
+        if N > 1:
+            sim_eval.fill_diagonal_(-1e4)
+            if file_idx is not None and file_idx.numel() == N and labels_tensor is not None:
+                # 라벨 텐서 정규화
+                if labels_tensor.dim() == 2 and labels_tensor.size(1) >= 1:
+                    class_labels_for_mask = labels_tensor[:, 0]
+                elif labels_tensor.dim() == 1:
+                    class_labels_for_mask = labels_tensor
+                else:
+                    class_labels_for_mask = labels_tensor.view(-1)
+                class_labels_for_mask = class_labels_for_mask.to(text_emb.device)
+
+                same_file_mask = (file_idx.unsqueeze(1) == file_idx.unsqueeze(0))
+                class_equal_mask = (class_labels_for_mask.unsqueeze(1) == class_labels_for_mask.unsqueeze(0))
+                off_diag_mask = ~torch.eye(N, dtype=torch.bool, device=text_emb.device)
+                # 각 행에 동일파일이 아닌 같은 클래스 후보가 하나라도 있으면 동일파일 전부 마스킹
+                has_other_file_positive = ((class_equal_mask & ~same_file_mask & off_diag_mask)).any(dim=1)
+                row_mask = has_other_file_positive.unsqueeze(1).expand(-1, N)
+                mask_to_apply = same_file_mask & row_mask
+                sim_eval = sim_eval.masked_fill(mask_to_apply, -1e4)
 
         # 2) 클래스 기반 평가 (라벨이 있을 때 클래스 동일성 평가)
         class_top1 = diagonal_accuracy
@@ -746,12 +826,12 @@ class ContinualTrainer:
                 class_labels = labels_tensor.view(-1)
             class_labels = class_labels.to(text_emb.device)
 
-            top1_pred = torch.argmax(similarity_matrix, dim=1)
+            top1_pred = torch.argmax(sim_eval, dim=1)
             class_top1 = (class_labels[top1_pred] == class_labels).float().mean().item()
 
-            k = min(5, similarity_matrix.size(1))
+            k = min(5, sim_eval.size(1))
             if k > 1:
-                _, topk_indices = torch.topk(similarity_matrix, k=k, dim=1)
+                _, topk_indices = torch.topk(sim_eval, k=k, dim=1)
                 topk_labels = class_labels[topk_indices]
                 class_top5 = (topk_labels == class_labels.unsqueeze(1)).any(dim=1).float().mean().item()
             else:
@@ -845,6 +925,28 @@ class ContinualTrainer:
         vib_emb = F.normalize(vib_emb, p=2, dim=1)
         similarity = torch.matmul(text_emb, vib_emb.t())
 
+        # 공정성 마스크: 자기자신 제거 + (행별 조건부) 동일파일 제거
+        N = similarity.size(0)
+        sim_eval = similarity.clone()
+        if N > 1:
+            sim_eval.fill_diagonal_(-1e4)
+            if file_idx is not None and file_idx.numel() == N and labels_tensor is not None:
+                if labels_tensor.dim() == 2 and labels_tensor.size(1) >= 1:
+                    class_labels_for_mask = labels_tensor[:, 0]
+                elif labels_tensor.dim() == 1:
+                    class_labels_for_mask = labels_tensor
+                else:
+                    class_labels_for_mask = labels_tensor.view(-1)
+                class_labels_for_mask = class_labels_for_mask.to(text_emb.device)
+
+                same_file_mask = (file_idx.unsqueeze(1) == file_idx.unsqueeze(0))
+                class_equal_mask = (class_labels_for_mask.unsqueeze(1) == class_labels_for_mask.unsqueeze(0))
+                off_diag_mask = ~torch.eye(N, dtype=torch.bool, device=text_emb.device)
+                has_other_file_positive = ((class_equal_mask & ~same_file_mask & off_diag_mask)).any(dim=1)
+                row_mask = has_other_file_positive.unsqueeze(1).expand(-1, N)
+                mask_to_apply = same_file_mask & row_mask
+                sim_eval = sim_eval.masked_fill(mask_to_apply, -1e4)
+
         # 🎯 클래스 기반 평가
         class_top1 = 0.0
         class_top5 = 0.0
@@ -857,24 +959,24 @@ class ContinualTrainer:
                 class_labels = labels_tensor.view(-1)
             class_labels = class_labels.to(text_emb.device)
 
-            pred = torch.argmax(similarity, dim=1)
+            pred = torch.argmax(sim_eval, dim=1)
             class_top1 = (class_labels[pred] == class_labels).float().mean().item()
 
-            k = min(5, similarity.size(1))
+            k = min(5, sim_eval.size(1))
             if k > 1:
-                _, topk = torch.topk(similarity, k=k, dim=1)
+                _, topk = torch.topk(sim_eval, k=k, dim=1)
                 topk_labels = class_labels[topk]
                 class_top5 = (topk_labels == class_labels.unsqueeze(1)).any(dim=1).float().mean().item()
             else:
                 class_top5 = class_top1
         else:
             # 라벨 없으면 대각선 기준으로 근사
-            _, pred = torch.max(similarity, dim=1)
+            _, pred = torch.max(sim_eval, dim=1)
             target = torch.arange(text_emb.size(0), device=text_emb.device)
             class_top1 = (pred == target).float().mean().item()
-            k = min(5, similarity.size(1))
+            k = min(5, sim_eval.size(1))
             if k > 1:
-                _, topk = torch.topk(similarity, k=k, dim=1)
+                _, topk = torch.topk(sim_eval, k=k, dim=1)
                 target_expanded = target.unsqueeze(1).expand(-1, k)
                 class_top5 = (topk == target_expanded).any(dim=1).float().mean().item()
             else:
@@ -895,15 +997,23 @@ class ContinualTrainer:
                 f"🔍 DEBUG(FAST) - N={N}, diag mean/std={diag_mean:.4f}/{diag_std:.4f}, "
                 f"off mean/std={off_mean:.4f}/{off_std:.4f}, Top1={class_top1:.4f}, Top5={class_top5:.4f}"
             )
-            if file_idx is not None and N >= 2:
+            # 셔플 베이스라인 (클래스 기반)
+            if N >= 2 and labels_tensor is not None:
+                if labels_tensor.dim() == 2 and labels_tensor.size(1) >= 1:
+                    cls_dbg = labels_tensor[:, 0]
+                elif labels_tensor.dim() == 1:
+                    cls_dbg = labels_tensor
+                else:
+                    cls_dbg = labels_tensor.view(-1)
+                cls_dbg = cls_dbg.to(text_emb.device)
                 perm = torch.randperm(N, device=text_emb.device)
                 sim_shuf = torch.matmul(text_emb, vib_emb[perm].t())
                 pred_shuf = torch.argmax(sim_shuf, dim=1)
-                top1_shuf = (file_idx[perm][pred_shuf] == file_idx).float().mean().item()
+                top1_shuf = (cls_dbg[perm][pred_shuf] == cls_dbg).float().mean().item()
                 k_dbg = min(5, N)
                 _, topk_shuf = torch.topk(sim_shuf, k=k_dbg, dim=1)
-                top5_shuf = (file_idx.unsqueeze(1) == file_idx[perm][topk_shuf]).any(dim=1).float().mean().item()
-                logger.info(f"🔍 DEBUG(FAST) - 셔플 베이스라인 Top1/Top5: {top1_shuf:.4f}/{top5_shuf:.4f}")
+                top5_shuf = (cls_dbg.unsqueeze(1) == cls_dbg[perm][topk_shuf]).any(dim=1).float().mean().item()
+                logger.info(f"🔍 DEBUG(FAST) - 셔플 베이스라인 Top1/Top5 (class): {top1_shuf:.4f}/{top5_shuf:.4f}")
 
         return {
             'accuracy': class_top1,  # 클래스 기반 Top-1

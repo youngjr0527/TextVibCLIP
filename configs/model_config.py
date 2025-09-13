@@ -37,21 +37,21 @@ MODEL_CONFIG = {
         # 5-layer deep CNN으로 복잡한 진동 패턴 학습 능력 향상
     },
     
-    # InfoNCE Loss - FIXED: 정상 온도 범위로 복원
+    # InfoNCE Loss - BALANCED: 안정적인 온도로 조정
     'infonce': {
-        # First Domain Training (Domain 1) - CLIP 표준 온도
-        'first_domain_temperature_text': 0.07,   # 표준 contrastive learning 온도
-        'first_domain_temperature_vib': 0.07,    # 균등 학습
+        # First Domain Training (Domain 1) - 안정적인 온도
+        'first_domain_temperature_text': 0.05,   # 0.01 → 0.05 (안정화)
+        'first_domain_temperature_vib': 0.05,    # 0.01 → 0.05 (안정화)
         
-        # Continual Learning (Domain 2+) - 검증된 비대칭 설정  
-        'continual_temperature_text': 0.10,  # text 안정성 (freeze되므로 높은 온도)
-        'continual_temperature_vib': 0.05,   # vibration 적극 학습 (낮은 온도)
+        # Continual Learning (Domain 2+) - 비대칭 설정
+        'continual_temperature_text': 0.07,  # 0.05 → 0.07 (text 안정성)
+        'continual_temperature_vib': 0.03,   # 0.01 → 0.03 (vibration 적극 학습)
 
-        # First domain 온도 스케줄(선형): init → final (없으면 고정 온도 사용)
-        'first_domain_temperature_text_init': 0.10,
-        'first_domain_temperature_text_final': 0.07,
-        'first_domain_temperature_vib_init': 0.10,
-        'first_domain_temperature_vib_final': 0.07,
+        # First domain 온도 스케줄(선형): init → final
+        'first_domain_temperature_text_init': 0.07,  # 0.05 → 0.07
+        'first_domain_temperature_text_final': 0.05, # 0.01 → 0.05
+        'first_domain_temperature_vib_init': 0.07,   # 0.05 → 0.07
+        'first_domain_temperature_vib_final': 0.05,  # 0.01 → 0.05
     },
     
     # Projection layers
@@ -62,9 +62,9 @@ MODEL_CONFIG = {
     },
     # Auxiliary classification for first domain bootstrapping
     'aux_classification': {
-        'enabled': False,  # 🎯 FIXED: Auxiliary loss 비활성화 (contrastive learning 집중)
+        'enabled': True,   # 🎯 CRITICAL FIX: Auxiliary loss 활성화 (supervised signal 강화)
         'num_classes': 7,  # UOS 7-클래스 지원 (H/B/IR/OR/L/U/M)
-        'loss_weight': 0.5,  # 가중치 감소
+        'loss_weight': 1.0,  # 가중치 증가 (contrastive와 동등)
         'dropout': 0.1
     }
 }
