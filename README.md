@@ -14,8 +14,9 @@
 
 ## 📊 실험 시나리오
 
-### **시나리오 1: UOS - Varying Speed**
+### **시나리오 1: UOS - Varying Speed (Deep Groove Ball)**
 - **Domain 순서**: 600 → 800 → 1000 → 1200 → 1400 → 1600 RPM
+- **베어링 타입**: Deep Groove Ball (6204) 단일 타입
 - **클래스**: {H, B, IR, OR, L, U, M} (7개) - **모든 도메인에서 동일**
 - **Domain Shift**: 회전 속도 변화 (환경 변화)
 
@@ -95,17 +96,23 @@ python run_all_scenarios.py --skip_uos --epochs 30
 ```
 TextVibCLIP/
 ├── 📄 run_all_scenarios.py              # 통합 실험 스크립트
+├── 📄 prepare_uos_scenario1.py          # UOS 데이터 전처리 (Deep Groove Ball만)
+├── 📄 prepare_cwru_scenario2.py         # CWRU 데이터 전처리
 ├── 📁 src/                              # 소스 코드
 │   ├── textvib_model.py                 # TextVibCLIP 메인 모델
 │   ├── continual_trainer.py            # Continual Learning 트레이너
 │   ├── data_loader.py                   # 데이터 로더 (UOS/CWRU)
+│   ├── data_cache.py                    # 데이터 캐싱 시스템
 │   ├── text_encoder.py                  # DistilBERT + LoRA
 │   ├── vibration_encoder.py             # 1D-CNN
 │   └── utils.py                         # 유틸리티 함수들
 ├── 📁 configs/                          # 설정 파일
 │   └── model_config.py                  # 모델 및 실험 설정
-├── 📁 data_scenario1/                   # UOS 데이터 (Varying Speed)
-├── 📁 data_scenario2/                   # CWRU 데이터 (Varying Load)
+├── 📁 uos_data/                         # UOS 원본 데이터
+├── 📁 cwru_data/                        # CWRU 원본 데이터
+├── 📁 data_scenario1/                   # UOS 전처리 데이터 (Deep Groove Ball)
+├── 📁 data_scenario2/                   # CWRU 전처리 데이터
+├── 📁 cache/                            # 데이터 캐시
 └── 📁 results/                          # 실험 결과
 ```
 
@@ -157,9 +164,9 @@ InfoNCE = 1/(2N) * Σ[
 
 ## 📈 실험 결과 예시
 
-### UOS 시나리오 (Varying Speed)
-- **평균 정확도**: ~17% (7개 클래스, 어려운 태스크)
-- **Top5 성능**: ~35% (검색 관점에서는 합리적)
+### UOS 시나리오 (Varying Speed, Deep Groove Ball)
+- **평균 정확도**: ~50-70% (7개 클래스, 단일 베어링 타입으로 단순화)
+- **Top5 성능**: ~80% (검색 관점에서 우수)
 - **망각도**: 0.0% (Replay buffer 효과)
 
 ### CWRU 시나리오 (Varying Load)

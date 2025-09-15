@@ -155,15 +155,15 @@ class BearingDataset(Dataset):
             raise ValueError(f"지원하지 않는 데이터셋 타입: {self.dataset_type}")
     
     def _collect_uos_file_paths(self) -> List[str]:
-        """UOS 데이터 파일 경로 수집"""
+        """UOS 데이터 파일 경로 수집 (Deep Groove Ball만)"""
         if self.domain_value is not None:
-            # 특정 RPM만 로딩
-            pattern = os.path.join(self.data_dir, "**", f"RotatingSpeed_{self.domain_value}", "*.mat")
+            # 🎯 SIMPLIFIED: Deep Groove Ball (6204)만 로딩
+            pattern = os.path.join(self.data_dir, f"RotatingSpeed_{self.domain_value}", "*.mat")
         else:
-            # 모든 RPM 로딩
-            pattern = os.path.join(self.data_dir, "**", "*.mat")
+            # 모든 RPM의 Deep Groove Ball 로딩
+            pattern = os.path.join(self.data_dir, "RotatingSpeed_*", "*.mat")
         
-        file_paths = glob.glob(pattern, recursive=True)
+        file_paths = glob.glob(pattern, recursive=False)  # recursive=False (단일 레벨)
         
         if len(file_paths) == 0:
             raise ValueError(f"UOS 파일을 찾을 수 없습니다: {pattern}")
@@ -469,7 +469,7 @@ class BearingDataset(Dataset):
         elif self.subset == 'test':
             self._window_split_range = (0.8, 1.0)  # 각 파일의 80-100%
         
-        # 🎯 FIXED: 실제 7-클래스 분포 확인
+        # 🎯 FIXED: Deep Groove Ball 7-클래스 분포 확인
         from collections import Counter
         
         # 실제 라벨 생성하여 분포 확인
@@ -489,8 +489,15 @@ class BearingDataset(Dataset):
         class_distribution = Counter(actual_labels)
         unique_classes = list(class_distribution.keys())
         
-        logger.info(f"  실제 7-클래스 분포: {dict(class_distribution)}")
-        logger.info(f"  클래스 수: {len(unique_classes)}개")
+        logger.info(f"  Deep Groove Ball 7-클래스 분포: {dict(class_distribution)}")
+        logger.info(f"  클래스 수: {len(unique_classes)}개 (균형 확인)")
+        
+        # 클래스 균형 검증
+        counts = list(class_distribution.values())
+        if counts and max(counts) == min(counts):
+            logger.info("  ✅ 완벽한 클래스 균형 달성!")
+        else:
+            logger.warning(f"  ⚠️ 클래스 불균형: 최대 {max(counts) if counts else 0}개, 최소 {min(counts) if counts else 0}개")
         
         # 분할 결과 로깅 (디버깅용)
         logger.info(f"UOS {self.subset} 분할 결과:")

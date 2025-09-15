@@ -119,12 +119,12 @@ def _generate_uos_text_description(metadata: Dict[str, str]) -> str:
         'OR': ['outer race defect', 'outer ring fault', 'outer raceway damage', 'outer race surface defect', 'outer ring wear']
     }
     
-    # 베어링 타입 매핑 (더 상세한 설명)
+    # 🎯 SIMPLIFIED: Deep Groove Ball 베어링만 (단일 타입)
     bearing_type_variations = {
         '6204': ['deep groove ball bearing model 6204', 'single-row deep groove ball bearing', '6204 series ball bearing', 'radial ball bearing 6204'],
-        '30204': ['tapered roller bearing model 30204', 'single-row tapered roller bearing', '30204 series tapered bearing', 'conical roller bearing 30204'],
-        'N204': ['cylindrical roller bearing model N204', 'single-row cylindrical roller bearing', 'N204 series roller bearing', 'radial roller bearing N204'],
-        'NJ204': ['cylindrical roller bearing model NJ204', 'NJ204 series roller bearing with flanges', 'flanged cylindrical roller bearing', 'NJ-type roller bearing']
+        # '30204': ['tapered roller bearing model 30204', 'single-row tapered roller bearing', '30204 series tapered bearing', 'conical roller bearing 30204'],
+        # 'N204': ['cylindrical roller bearing model N204', 'single-row cylindrical roller bearing', 'N204 series roller bearing', 'radial roller bearing N204'],
+        # 'NJ204': ['cylindrical roller bearing model NJ204', 'NJ204 series roller bearing with flanges', 'flanged cylindrical roller bearing', 'NJ-type roller bearing']
     }
     
     # 속도 관련 다양한 표현

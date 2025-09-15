@@ -45,9 +45,17 @@ def main():
     os.makedirs(target_dir, exist_ok=True)
     print(f"✅ {target_dir} 폴더를 생성했습니다.")
     
-    # 16kHz 파일들 중에서 단일 결함만 선별 (올바른 7-클래스 분류)
-    # H: 완전 정상, B/IR/OR: 베어링 결함, L/U/M: 회전체 결함
-    include_patterns = ['H_H', 'H_B', 'H_IR', 'H_OR', 'L_H', 'U3_H', 'M3_H']
+    # 🎯 SIMPLIFIED: Deep Groove Ball 베어링 + 단일 결함만 선별
+    # 16kHz + 6204 베어링 + 단일 결함만 사용 (복합 결함 제외)
+    include_patterns = [
+        'H_H_16_6204',    # 완전 정상
+        'H_B_16_6204',    # 베어링 볼 결함만
+        'H_IR_16_6204',   # 베어링 내륜 결함만
+        'H_OR_16_6204',   # 베어링 외륜 결함만
+        'L_H_16_6204',    # 회전체 느슨함만
+        'U3_H_16_6204',   # 회전체 불균형만 (최고 레벨)
+        'M3_H_16_6204'    # 회전체 정렬불량만 (최고 레벨)
+    ]
     
     # 라벨 매핑 정의 (올바른 분류)
     label_mapping = {
@@ -74,24 +82,26 @@ def main():
     for file_path in all_files:
         filename = os.path.basename(file_path)
         
-        # 파일명에서 회전체상태_베어링상태 추출
+        # 파일명에서 패턴 추출: 회전체상태_베어링상태_샘플링_베어링타입
         parts = filename.split('_')
         if len(parts) < 5:
             continue
             
-        condition = f"{parts[0]}_{parts[1]}"
+        # 전체 패턴 매칭: H_H_16_6204 형태
+        pattern = f"{parts[0]}_{parts[1]}_{parts[2]}_{parts[3]}"
         
-        # 포함할 패턴인지 확인
-        if condition not in include_patterns:
+        # 🎯 CRITICAL: 정확한 패턴 매칭
+        if pattern not in include_patterns:
             continue
         
         # 경로 정보 추출
         path_parts = Path(file_path).parts
-        bearing_type = path_parts[-4]  # BearingType_xxx
+        bearing_type_folder = path_parts[-4]  # BearingType_xxx
         rotating_speed = path_parts[-2]  # RotatingSpeed_xxx
         
-        # 새 디렉토리 구조 생성
-        new_dir = os.path.join(target_dir, bearing_type, rotating_speed)
+        # 🎯 SIMPLIFIED: Deep Groove Ball만 사용하므로 베어링 타입 폴더 생략
+        # 새 디렉토리 구조: data_scenario1/RotatingSpeed_xxx/
+        new_dir = os.path.join(target_dir, rotating_speed)
         os.makedirs(new_dir, exist_ok=True)
         
         # 새 파일명 생성 (U3->U, M3->M, 샘플링레이트 제거)

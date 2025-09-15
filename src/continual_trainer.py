@@ -987,10 +987,12 @@ class ContinualTrainer:
                 mask_to_apply = same_file_mask & row_mask
                 sim_eval = sim_eval.masked_fill(mask_to_apply, -1e4)
 
-        # 🎯 클래스 기반 평가
+        # 🎯 CRITICAL FIX: 올바른 Zero-shot 분류 평가 (fast 버전에도 적용)
         class_top1 = 0.0
         class_top5 = 0.0
+        
         if labels_tensor is not None:
+            # 라벨 정규화
             if labels_tensor.dim() == 2 and labels_tensor.size(1) >= 1:
                 class_labels = labels_tensor[:, 0]
             elif labels_tensor.dim() == 1:
@@ -998,17 +1000,49 @@ class ContinualTrainer:
             else:
                 class_labels = labels_tensor.view(-1)
             class_labels = class_labels.to(text_emb.device)
-
-            pred = torch.argmax(sim_eval, dim=1)
-            class_top1 = (class_labels[pred] == class_labels).float().mean().item()
-
-            k = min(5, sim_eval.size(1))
-            if k > 1:
-                _, topk = torch.topk(sim_eval, k=k, dim=1)
-                topk_labels = class_labels[topk]
-                class_top5 = (topk_labels == class_labels.unsqueeze(1)).any(dim=1).float().mean().item()
+            
+            # Zero-shot 분류 평가 (full 버전과 동일한 로직)
+            unique_classes = torch.unique(class_labels)
+            n_classes = len(unique_classes)
+            
+            if n_classes > 1:
+                # 각 클래스의 prototype 임베딩 계산
+                class_prototypes = []
+                for cls in unique_classes:
+                    cls_mask = (class_labels == cls)
+                    if cls_mask.any():
+                        cls_text_emb = text_emb[cls_mask].mean(dim=0, keepdim=True)
+                        class_prototypes.append(cls_text_emb)
+                
+                if len(class_prototypes) == n_classes:
+                    # 모든 클래스의 prototype 결합
+                    prototype_embeddings = torch.cat(class_prototypes, dim=0)
+                    
+                    # 각 진동 임베딩을 모든 클래스 prototype과 비교
+                    vib_to_prototype_sim = torch.matmul(vib_emb, prototype_embeddings.t())
+                    
+                    # 예측: 가장 유사한 prototype의 클래스
+                    predicted_class_idx = torch.argmax(vib_to_prototype_sim, dim=1)
+                    predicted_classes = unique_classes[predicted_class_idx]
+                    
+                    # Zero-shot 분류 정확도
+                    class_top1 = (predicted_classes == class_labels).float().mean().item()
+                    
+                    # Top-5 계산
+                    if n_classes >= 5:
+                        _, top5_idx = torch.topk(vib_to_prototype_sim, k=5, dim=1)
+                        top5_classes = unique_classes[top5_idx]
+                        class_top5 = (top5_classes == class_labels.unsqueeze(1)).any(dim=1).float().mean().item()
+                    else:
+                        class_top5 = class_top1
+                else:
+                    # Prototype 생성 실패 시 기본값
+                    class_top1 = 0.0
+                    class_top5 = 0.0
             else:
-                class_top5 = class_top1
+                # 클래스가 1개뿐이면 항상 100%
+                class_top1 = 1.0
+                class_top5 = 1.0
         else:
             # 라벨 없으면 대각선 기준으로 근사
             _, pred = torch.max(sim_eval, dim=1)
@@ -1151,6 +1185,18 @@ class ContinualTrainer:
             for p in vib_params:
                 seen.add(id(p))
 
+        # 🎯 CRITICAL FIX: InfoNCE 온도 파라미터 추가
+        temp_params = []
+        if hasattr(self.model.infonce_loss, 'log_temperature_text'):
+            temp_params.append(self.model.infonce_loss.log_temperature_text)
+        if hasattr(self.model.infonce_loss, 'log_temperature_vib'):
+            temp_params.append(self.model.infonce_loss.log_temperature_vib)
+        
+        if temp_params:
+            params.append({'params': temp_params, 'lr': base_lr * 2.0, 'weight_decay': 0.0})  # 온도는 weight decay 없음
+            for p in temp_params:
+                seen.add(id(p))
+
         # 누락 파라미터 보완
         remain = [p for p in self.model.parameters() if p.requires_grad and id(p) not in seen]
         if remain:
@@ -1164,12 +1210,48 @@ class ContinualTrainer:
         return CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
     
     def _create_continual_optimizer(self) -> torch.optim.Optimizer:
-        """Continual learning용 optimizer 생성 (Vibration encoder만)"""
-        return optim.AdamW(
-            self.model.vibration_encoder.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay
-        )
+        """Continual learning용 optimizer 생성 (Vibration + Text projection + 온도)"""
+        base_lr = self.learning_rate
+        proj_mult = float(TRAINING_CONFIG.get('proj_lr_mult', 5.0))
+        vib_mult = float(TRAINING_CONFIG.get('vib_lr_mult', 2.0))
+        
+        params = []
+        seen = set()
+        
+        # Text projection 파라미터 (continual learning에서 학습 가능)
+        if hasattr(self.model.text_encoder, 'projection'):
+            proj_params = [p for p in self.model.text_encoder.projection.parameters() if p.requires_grad]
+            if proj_params:
+                params.append({'params': proj_params, 'lr': base_lr * proj_mult, 'weight_decay': self.weight_decay})
+                for p in proj_params:
+                    seen.add(id(p))
+        
+        # Vibration encoder 파라미터
+        vib_params = [p for p in self.model.vibration_encoder.parameters() if p.requires_grad]
+        vib_params = [p for p in vib_params if id(p) not in seen]
+        if vib_params:
+            params.append({'params': vib_params, 'lr': base_lr * vib_mult, 'weight_decay': self.weight_decay})
+            for p in vib_params:
+                seen.add(id(p))
+        
+        # 🎯 CRITICAL FIX: InfoNCE 온도 파라미터 추가
+        temp_params = []
+        if hasattr(self.model.infonce_loss, 'log_temperature_text'):
+            temp_params.append(self.model.infonce_loss.log_temperature_text)
+        if hasattr(self.model.infonce_loss, 'log_temperature_vib'):
+            temp_params.append(self.model.infonce_loss.log_temperature_vib)
+        
+        if temp_params:
+            params.append({'params': temp_params, 'lr': base_lr * 2.0, 'weight_decay': 0.0})
+            for p in temp_params:
+                seen.add(id(p))
+        
+        # 누락 파라미터 보완
+        remain = [p for p in self.model.parameters() if p.requires_grad and id(p) not in seen]
+        if remain:
+            params.append({'params': remain, 'lr': base_lr, 'weight_decay': self.weight_decay})
+        
+        return optim.AdamW(params)
     
     def _create_scheduler(self, optimizer: torch.optim.Optimizer, total_steps: int):
         """학습률 스케줄러 생성 (단일 구현)"""
