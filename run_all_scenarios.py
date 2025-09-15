@@ -51,6 +51,7 @@ sys.path.insert(0, str(project_root))
 
 from src.continual_trainer import ContinualTrainer
 from src.data_loader import BearingDataset, create_domain_dataloaders
+from src.data_cache import create_cached_domain_dataloaders, create_cached_first_domain_dataloader, get_global_cache, clear_all_caches
 from src.textvib_model import create_textvib_model
 from src.utils import set_seed
 from src.visualization import create_visualizer
@@ -208,7 +209,7 @@ class ExperimentResults:
         return detailed_path, summary_path, pivot_path
 
 
-def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.device) -> Dict:
+def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.device, args) -> Dict:
     """단일 시나리오 실행"""
     logger.info(f"🚀 {config['name']} 시작!")
     logger.info(f"   Domain Shift: {config['shift_type']}")
@@ -234,8 +235,9 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         trainer.learning_rate = 3e-4  # config와 일치하도록 수정
         trainer.replay_buffer.buffer_size_per_domain = config['replay_buffer_size']
         
-        # 데이터셋 정보 수집
-        sample_dataset = BearingDataset(
+        # 🚀 캐시된 데이터셋 정보 수집 (고속화)
+        from src.data_cache import CachedBearingDataset
+        sample_dataset = CachedBearingDataset(
             data_dir=config['data_dir'],
             dataset_type=config['dataset_type'],
             domain_value=config['domain_order'][0],
@@ -248,15 +250,25 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         
         # First Domain Training
         logger.info("📚 First Domain Training...")
-        from src.data_loader import create_first_domain_dataloader
         
-        first_loader = create_first_domain_dataloader(
-            data_dir=config['data_dir'],
-            domain_order=config['domain_order'],
-            dataset_type=config['dataset_type'],
-            subset='train',
-            batch_size=config['batch_size']
-        )
+        # 🚀 캐시된 DataLoader 사용 (고속화)
+        if args.no_cache:
+            from src.data_loader import create_first_domain_dataloader
+            first_loader = create_first_domain_dataloader(
+                data_dir=config['data_dir'],
+                domain_order=config['domain_order'],
+                dataset_type=config['dataset_type'],
+                subset='train',
+                batch_size=config['batch_size']
+            )
+        else:
+            first_loader = create_cached_first_domain_dataloader(
+                data_dir=config['data_dir'],
+                domain_order=config['domain_order'],
+                dataset_type=config['dataset_type'],
+                subset='train',
+                batch_size=config['batch_size']
+            )
         
         # 🎯 FIXED: 조기 종료 예외 처리 제거 (전체 파이프라인 테스트)
         first_results = trainer.train_first_domain(
@@ -343,14 +355,21 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         logger.info("🔄 Remaining Domains Training...")
         trainer.num_epochs = config['remaining_epochs']
         
-        # 도메인별 데이터로더 생성
-        from src.data_loader import create_domain_dataloaders
-        domain_loaders = create_domain_dataloaders(
-            data_dir=config['data_dir'],
-            domain_order=config['domain_order'],
-            dataset_type=config['dataset_type'],
-            batch_size=config['batch_size']
-        )
+        # 🚀 캐시된 도메인별 데이터로더 생성 (고속화)
+        if args.no_cache:
+            domain_loaders = create_domain_dataloaders(
+                data_dir=config['data_dir'],
+                domain_order=config['domain_order'],
+                dataset_type=config['dataset_type'],
+                batch_size=config['batch_size']
+            )
+        else:
+            domain_loaders = create_cached_domain_dataloaders(
+                data_dir=config['data_dir'],
+                domain_order=config['domain_order'],
+                dataset_type=config['dataset_type'],
+                batch_size=config['batch_size']
+            )
         
         remaining_results = trainer.train_remaining_domains(domain_loaders)
         
@@ -384,7 +403,8 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         domain_embeddings = {}
         
         for domain in config['domain_order']:
-            test_dataset = BearingDataset(
+            # 🚀 캐시된 데이터셋 사용 (고속화)
+            test_dataset = CachedBearingDataset(
                 data_dir=config['data_dir'],
                 dataset_type=config['dataset_type'],
                 domain_value=domain,
@@ -483,6 +503,10 @@ def parse_arguments():
                        help='First domain sanity check만 수행 (학습/정확도/임베딩 정렬 확인)')
     parser.add_argument('--sanity_samples', type=int, default=100,
                        help='sanity check에서 수집할 샘플 수(도메인 내)')
+    parser.add_argument('--clear_cache', action='store_true',
+                       help='실험 시작 전 모든 캐시 삭제')
+    parser.add_argument('--no_cache', action='store_true',
+                       help='캐시 시스템 사용 안함 (디버깅용)')
     
     return parser.parse_args()
 
@@ -499,6 +523,11 @@ def main():
     
     # 로깅 설정 및 실험 폴더 생성
     logger, experiment_dir = setup_logging(args.output_dir)
+    
+    # 캐시 관리 (로깅 초기화 후)
+    if args.clear_cache:
+        logger.info("🗑️ 캐시 삭제 중...")
+        clear_all_caches()
     logger.info("🎯 TextVibCLIP 전체 시나리오 통합 실험 시작!")
     logger.info(f"📁 기본 저장 경로: {args.output_dir}")
     logger.info(f"📁 실험 결과 폴더: {experiment_dir}")
@@ -550,7 +579,7 @@ def main():
             scenario_result = run_single_scenario({
                 **scenario,
                 'remaining_epochs': 0  # 나머지 도메인 스킵
-            }, logger, device)
+            }, logger, device, args)
             if scenario_result:
                 # First-domain 전용 리포트
                 domain_names = scenario_result['domain_names']
@@ -573,7 +602,7 @@ def main():
                 logger.error(f"❌ {scenario['name']} 실행 실패!")
             break
         else:
-            scenario_result = run_single_scenario(scenario, logger, device)
+            scenario_result = run_single_scenario(scenario, logger, device, args)
         
         if scenario_result:
             results.add_scenario_result(scenario['name'], scenario_result)
@@ -658,6 +687,14 @@ def main():
     except Exception as e:
         logger.error(f"❌ 시각화 생성 실패: {str(e)}")
         logger.exception("상세 오류:")
+    
+    # 캐시 통계 출력
+    cache = get_global_cache()
+    cache_stats = cache.get_cache_stats()
+    logger.info(f"\n📊 캐시 성능:")
+    logger.info(f"   적중률: {cache_stats['hit_rate']:.1f}%")
+    logger.info(f"   캐시 파일: {cache_stats['cached_files']}개")
+    logger.info(f"   캐시 크기: {cache_stats['total_size_mb']:.1f}MB")
     
     # 최종 요약
     total_time = time.time() - total_start_time

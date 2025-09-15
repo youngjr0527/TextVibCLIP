@@ -401,9 +401,9 @@ class TextVibCLIP(nn.Module):
                     'total': loss
                 }
 
-        # Auxiliary classification loss (first domain only)
+        # Auxiliary classification loss (모든 도메인에서 활성화)
         aux_cfg = MODEL_CONFIG.get('aux_classification', {'enabled': False})
-        if aux_cfg.get('enabled', False) and not self.is_continual_mode:
+        if aux_cfg.get('enabled', False):  # continual mode 제한 제거
             # 🎯 배치 라벨 정보 사용
             aux_labels = batch.get('labels', None)
             if aux_labels is not None:
@@ -469,20 +469,21 @@ class TextVibCLIP(nn.Module):
         """Continual learning 모드로 전환"""
         self.is_continual_mode = True
         
-        # Text encoder 완전 freeze (LoRA + projection 모두)
+        # 🎯 CRITICAL FIX: Text encoder 부분 freeze (완전 freeze 문제 해결)
+        # LoRA는 freeze하되, projection layer는 학습 가능하게 유지
         self.text_encoder.disable_lora_training()
         
-        # Projection layer도 완전히 freeze
+        # Projection layer는 학습 가능하게 유지 (최소한의 adaptation)
         if hasattr(self.text_encoder, 'projection'):
             for param in self.text_encoder.projection.parameters():
-                param.requires_grad = False
+                param.requires_grad = True  # False → True (학습 가능)
         
         # InfoNCE temperature 업데이트
         temp_text = MODEL_CONFIG['infonce']['continual_temperature_text']
         temp_vib = MODEL_CONFIG['infonce']['continual_temperature_vib']
         self.infonce_loss.update_temperatures(temp_text, temp_vib)
         
-        logger.info("Continual learning 모드로 전환 완료 (TextEncoder 완전 freeze)")
+        logger.info("Continual learning 모드로 전환 완료 (LoRA freeze, Projection 학습 가능)")
     
     def switch_to_first_domain_mode(self):
         """First domain training 모드로 전환"""

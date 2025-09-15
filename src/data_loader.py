@@ -334,21 +334,32 @@ class BearingDataset(Dataset):
             # CWRU: 4개 파일 [Normal, B, IR, OR] - 각 클래스 1개씩
             # 모든 클래스를 포함하면서도 파일 레벨에서 분할
             
-            # 🎯 FIXED: CWRU 클래스 균형 개선
-            # 모든 subset에 모든 클래스 포함하되 파일 레벨에서 분할
-            if self.subset == 'train':
-                selected_indices = [0, 1, 2]  # Normal, B, IR (3개 클래스)
-            elif self.subset == 'val':
-                selected_indices = [0, 3]     # Normal, OR (2개 클래스)
-            elif self.subset == 'test':
-                selected_indices = [1, 2, 3]  # B, IR, OR (3개 클래스)
-            else:
-                raise ValueError(f"알 수 없는 subset: {self.subset}")
+            # 🎯 CRITICAL FIX: CWRU 윈도우 레벨 분할 (데이터 구조에 맞게)
+            # CWRU도 클래스별로 1개 파일만 있으므로 윈도우 레벨 분할 필요
             
-            # 인덱스 범위 체크
-            valid_indices = [i for i in selected_indices if i < len(self.file_paths)]
-            selected_files = [self.file_paths[i] for i in valid_indices]
-            selected_meta = [self.metadata_list[i] for i in valid_indices]
+            logger.info("CWRU Domain-Incremental 윈도우 레벨 분할:")
+            logger.info(f"  모든 subset에 모든 {total_files}개 파일 포함")
+            logger.info(f"  각 파일 내에서 윈도우 분할: Train 70%, Val 15%, Test 15%")
+            
+            # 모든 파일을 모든 subset에 포함
+            selected_files = self.file_paths
+            selected_meta = self.metadata_list
+            
+            # 윈도우 분할 정보 설정
+            if self.subset == 'train':
+                self._window_split_range = (0.0, 0.7)  # 각 파일의 처음 70%
+            elif self.subset == 'val':
+                self._window_split_range = (0.7, 0.85)  # 각 파일의 70-85%
+            elif self.subset == 'test':
+                self._window_split_range = (0.85, 1.0)  # 각 파일의 85-100%
+            
+            # 클래스 분포 확인 (모든 클래스가 모든 subset에 포함됨)
+            from collections import Counter
+            all_classes = [meta['bearing_condition'] for meta in self.metadata_list]
+            unique_classes = list(Counter(all_classes).keys())
+            
+            logger.info(f"  모든 subset 클래스: {unique_classes} ({len(unique_classes)}개)")
+            logger.info(f"  클래스별 파일 수: {dict(Counter(all_classes))}")
             
             logger.info(f"CWRU {self.subset} subset: {len(selected_files)}개 파일 사용 (총 {total_files}개 중)")
             
@@ -434,69 +445,52 @@ class BearingDataset(Dataset):
         # 윈도우 레벨 분할은 같은 베어링의 연속 신호를 train/val/test로 분할하여 
         # 심각한 데이터 누수를 야기함 → 100% 정확도의 원인
         
-        # 🎯 CRITICAL FIX: 클래스 균형을 강제로 보장하는 분할
-        # 각 subset에 모든 클래스가 포함되도록 수동 분할
+        # 🎯 CRITICAL FIX: 윈도우 레벨 분할 (UOS 데이터 구조에 맞게)
+        # UOS/CWRU는 클래스별로 1개 파일만 존재하므로, 윈도우 레벨에서 분할해야 함
+        # 모든 파일을 모든 subset에 포함하되, 각 파일 내에서 윈도우를 분할
         
-        from collections import defaultdict
+        logger.info("UOS Domain-Incremental 윈도우 레벨 분할:")
+        logger.info(f"  모든 subset에 모든 {len(self.file_paths)}개 파일 포함")
+        logger.info(f"  각 파일 내에서 윈도우 분할: Train 60%, Val 20%, Test 20%")
         
-        # 클래스별 파일 그룹화
-        class_files = defaultdict(list)
-        class_meta = defaultdict(list)
+        # 모든 파일을 모든 subset에 포함
+        files_train = self.file_paths
+        files_val = self.file_paths
+        files_test = self.file_paths
+        meta_train = self.metadata_list
+        meta_val = self.metadata_list
+        meta_test = self.metadata_list
         
-        for file_path, metadata in zip(self.file_paths, self.metadata_list):
-            combined_label = f"{metadata['bearing_condition']}_{metadata['bearing_type']}"
-            class_files[combined_label].append(file_path)
-            class_meta[combined_label].append(metadata)
+        # 윈도우 분할 정보 설정 (나중에 __getitem__에서 사용)
+        if self.subset == 'train':
+            self._window_split_range = (0.0, 0.6)  # 각 파일의 처음 60%
+        elif self.subset == 'val':
+            self._window_split_range = (0.6, 0.8)  # 각 파일의 60-80%
+        elif self.subset == 'test':
+            self._window_split_range = (0.8, 1.0)  # 각 파일의 80-100%
         
-        files_train = []
-        files_val = []
-        files_test = []
-        meta_train = []
-        meta_val = []
-        meta_test = []
+        # 🎯 FIXED: 실제 7-클래스 분포 확인
+        from collections import Counter
         
-        # 각 클래스에서 파일을 train/val/test에 분배
-        for class_label, class_file_list in class_files.items():
-            n_files = len(class_file_list)
-            class_metadata = class_meta[class_label]
+        # 실제 라벨 생성하여 분포 확인
+        actual_labels = []
+        for meta in self.metadata_list:
+            rotating_comp = meta['rotating_component']
+            bearing_cond = meta['bearing_condition']
+            combined_condition = f"{rotating_comp}_{bearing_cond}"
             
-            if n_files >= 3:
-                # 파일이 3개 이상이면 각 subset에 최소 1개씩 배정
-                n_train = max(1, int(n_files * 0.6))
-                n_val = max(1, int(n_files * 0.2))
-                n_test = max(1, n_files - n_train - n_val)
-                
-                files_train.extend(class_file_list[:n_train])
-                files_val.extend(class_file_list[n_train:n_train + n_val])
-                files_test.extend(class_file_list[n_train + n_val:n_train + n_val + n_test])
-                
-                meta_train.extend(class_metadata[:n_train])
-                meta_val.extend(class_metadata[n_train:n_train + n_val])
-                meta_test.extend(class_metadata[n_train + n_val:n_train + n_val + n_test])
-                
-            elif n_files == 2:
-                # 파일이 2개면 train에 1개, val에 1개, test는 train 파일 재사용
-                files_train.extend([class_file_list[0]])
-                files_val.extend([class_file_list[1]])
-                files_test.extend([class_file_list[0]])  # train 파일 재사용
-                
-                meta_train.extend([class_metadata[0]])
-                meta_val.extend([class_metadata[1]])
-                meta_test.extend([class_metadata[0]])
-                
-            else:
-                # 파일이 1개면 모든 subset에 포함
-                files_train.extend(class_file_list)
-                files_val.extend(class_file_list)
-                files_test.extend(class_file_list)
-                
-                meta_train.extend(class_metadata)
-                meta_val.extend(class_metadata)
-                meta_test.extend(class_metadata)
+            condition_map = {
+                'H_H': 'H',   'H_B': 'B',   'H_IR': 'IR', 'H_OR': 'OR',
+                'L_H': 'L',   'U_H': 'U',   'M_H': 'M'
+            }
+            actual_class = condition_map.get(combined_condition, 'Unknown')
+            actual_labels.append(actual_class)
         
-        logger.info("UOS 클래스 균형 분할 완료:")
-        logger.info(f"  각 클래스별 파일 수: {[(k, len(v)) for k, v in class_files.items()]}")
-        logger.info(f"  Train: {len(files_train)}개, Val: {len(files_val)}개, Test: {len(files_test)}개")
+        class_distribution = Counter(actual_labels)
+        unique_classes = list(class_distribution.keys())
+        
+        logger.info(f"  실제 7-클래스 분포: {dict(class_distribution)}")
+        logger.info(f"  클래스 수: {len(unique_classes)}개")
         
         # 분할 결과 로깅 (디버깅용)
         logger.info(f"UOS {self.subset} 분할 결과:")
@@ -567,23 +561,55 @@ class BearingDataset(Dataset):
         metadata = self.metadata_list[file_idx]
         
         try:
-            # 진동 신호 로딩
-            signal = load_mat_file(filepath, dataset_type=self.dataset_type)
+            # 🎯 CRITICAL FIX: 파일별 윈도우 캐싱 (매우 중요한 최적화)
+            # 같은 파일의 윈도우들을 반복 요청할 때 매번 로딩하지 않도록 캐싱
+            if not hasattr(self, '_file_windows_cache'):
+                self._file_windows_cache = {}
             
-            # 신호 전처리
-            signal = normalize_signal(signal, method=self.normalization)
-            
-            # 윈도잉
-            windowed_signals = create_windowed_signal(
-                signal, self.window_size, self.overlap_ratio
-            )
-            
-            # 🎯 FIXED: 윈도우 레벨 분할 제거 - 파일 레벨 분할 사용
-            # 기본 윈도우 선택 로직 (데이터 누수 방지)
-            if window_idx < len(windowed_signals):
-                selected_signal = windowed_signals[window_idx]
+            if file_idx not in self._file_windows_cache:
+                # 진동 신호 로딩 (파일당 1회만)
+                signal = load_mat_file(filepath, dataset_type=self.dataset_type)
+                
+                # 신호 전처리 (파일당 1회만)
+                signal = normalize_signal(signal, method=self.normalization)
+                
+                # 윈도잉 (파일당 1회만)
+                windowed_signals = create_windowed_signal(
+                    signal, self.window_size, self.overlap_ratio
+                )
+                
+                # 캐시에 저장
+                self._file_windows_cache[file_idx] = windowed_signals
+                logger.debug(f"파일 캐시 생성: {os.path.basename(filepath)} ({len(windowed_signals)}개 윈도우)")
             else:
-                selected_signal = windowed_signals[-1]
+                # 캐시에서 로드
+                windowed_signals = self._file_windows_cache[file_idx]
+            
+            # 🎯 CRITICAL FIX: 윈도우 레벨 분할 복원 (UOS 데이터 구조에 맞게)
+            # UOS/CWRU는 클래스별로 1개 파일만 있으므로 윈도우 레벨 분할이 필요
+            if hasattr(self, '_window_split_range'):
+                total_windows = len(windowed_signals)
+                start_ratio, end_ratio = self._window_split_range
+                start_idx = int(total_windows * start_ratio)
+                end_idx = int(total_windows * end_ratio)
+                
+                # 범위 내에서 윈도우 선택
+                valid_range = end_idx - start_idx
+                if valid_range > 0:
+                    adjusted_window_idx = start_idx + (window_idx % valid_range)
+                else:
+                    adjusted_window_idx = start_idx
+                
+                if adjusted_window_idx < len(windowed_signals):
+                    selected_signal = windowed_signals[adjusted_window_idx]
+                else:
+                    selected_signal = windowed_signals[-1]
+            else:
+                # 기본 로직 (fallback)
+                if window_idx < len(windowed_signals):
+                    selected_signal = windowed_signals[window_idx]
+                else:
+                    selected_signal = windowed_signals[-1]
             
             # 텍스트 설명 생성
             text_description = generate_text_description(metadata)

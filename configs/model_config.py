@@ -64,8 +64,8 @@ MODEL_CONFIG = {
     'aux_classification': {
         'enabled': True,   # 🎯 CRITICAL FIX: Auxiliary loss 활성화 (supervised signal 강화)
         'num_classes': 7,  # UOS 7-클래스 지원 (H/B/IR/OR/L/U/M)
-        'loss_weight': 1.0,  # 가중치 증가 (contrastive와 동등)
-        'dropout': 0.1
+        'loss_weight': 3.0,  # 1.0 → 3.0 (supervised signal 대폭 강화)
+        'dropout': 0.05    # 0.1 → 0.05 (드롭아웃 감소)
     }
 }
 
@@ -94,8 +94,8 @@ TRAINING_CONFIG = {
 
     # 파라미터 그룹 LR 멀티플라이어 (텍스트 LoRA/프로젝션 가속)
     'lora_lr_mult': 3.0,
-    'proj_lr_mult': 3.0,
-    'vib_lr_mult': 1.0,
+    'proj_lr_mult': 5.0,  # 3.0 → 5.0 (continual learning에서 projection 학습 강화)
+    'vib_lr_mult': 2.0,   # 1.0 → 2.0 (vibration encoder 학습 강화)
 }
 
 # 데이터 설정
@@ -152,9 +152,9 @@ EVAL_CONFIG = {
     ],
 
     # 평가 배치 제한 (메모리 안전성 및 정확한 평가)
-    'max_full_eval_batches': 20,  # 최대 20배치로 제한 (메모리 안전)
+    'max_full_eval_batches': -1,  # 🎯 FIXED: 전체 평가 (제한 없음)
     # 빠른 평가 배치 제한 (FAST 경로)
-    'max_fast_eval_batches': 5
+    'max_fast_eval_batches': 10
 }
 
 # 디바이스 설정
