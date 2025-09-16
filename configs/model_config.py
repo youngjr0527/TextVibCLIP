@@ -22,19 +22,19 @@ MODEL_CONFIG = {
         }
     },
     
-    # Vibration Encoder (1D-CNN) - UPGRADED ARCHITECTURE
+    # Vibration Encoder (1D-CNN) - 2048 최적화 아키텍처
     'vibration_encoder': {
-        'input_length': 4096,  # 진동 신호 길이 (windowing)
+        'input_length': 2048,  # 4096 → 2048 (베어링 회전 주기 최적화)
         'architecture': '1D-CNN',  # 아키텍처 타입
-        'kernel_sizes': [16, 32, 64, 32, 16],  # 더 깊은 5-layer 구조
-        'channels': [128, 256, 512, 1024, 512],   # 더 큰 채널 수 (64→128 시작, 최대 1024)
+        'kernel_sizes': [16, 32, 64, 32],  # 4-layer 구조 (2048에 최적화)
+        'channels': [64, 128, 256, 512],   # 자연스러운 채널 증가 (64→512)
         'stride': 2,  # 모든 Conv1d의 stride
-        'dropout': 0.15,  # 0.1 → 0.15: 큰 모델에 맞춰 드롭아웃 증가
+        'dropout': 0.1,  # 0.15 → 0.1 (적절한 정규화)
         'activation': 'relu',  # Activation function
         'normalization': 'batch_norm',  # Normalization type
         'pooling': 'adaptive_avg',  # Global pooling type
-        # 업그레이드된 아키텍처: 더 깊고 넓은 네트워크로 표현력 증가
-        # 5-layer deep CNN으로 복잡한 진동 패턴 학습 능력 향상
+        # 2048 입력에 최적화된 아키텍처: 자연스러운 차원 축소
+        # 2048 → 1024 → 512 → 256 → 128 → Global Pool → 256 embedding
     },
     
     # InfoNCE Loss - BALANCED: 안정적인 온도로 조정
@@ -107,9 +107,9 @@ DATA_CONFIG = {
     'validation_split': 0.2,
     'test_split': 0.2,
     
-    # 데이터 전처리
+    # 데이터 전처리 (베어링 회전 주기 최적화)
     'signal_normalization': 'standardize',  # 'standardize', 'minmax', 'none'
-    'window_size': 4096,
+    'window_size': 2048,  # 4096 → 2048 (1-5 회전 포함, 효율적 결함 감지)
     'overlap_ratio': 0.5,
     
     # 텍스트 생성
@@ -124,10 +124,10 @@ CWRU_DATA_CONFIG = {
     'validation_split': 0.2,
     'test_split': 0.2,
     
-    # 데이터 전처리
+    # 데이터 전처리 (UOS와 통일)
     'signal_normalization': 'standardize',
-    'window_size': 4096,
-    'overlap_ratio': 0.5,
+    'window_size': 2048,  # UOS와 동일 (통일된 아키텍처)
+    'overlap_ratio': 0.5,  # UOS와 동일 (일관성)
     
     # 텍스트 생성
     'max_text_length': 128,

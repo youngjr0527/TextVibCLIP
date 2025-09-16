@@ -54,38 +54,34 @@ class VibrationEncoder(nn.Module):
         self.input_length = input_length
         self.embedding_dim = embedding_dim
         
-        # UPGRADED: 더 깊고 넓은 다중 스케일 1D Convolution Layers
-        # 베어링 결함의 다양한 주파수 특성을 캡처하기 위해 서로 다른 커널 크기 사용
+        # 🎯 OPTIMIZED: 2048 입력에 최적화된 4-layer 1D-CNN
+        # 자연스러운 차원 축소: 2048 → 1024 → 512 → 256 → 128
+        kernel_sizes = MODEL_CONFIG['vibration_encoder']['kernel_sizes']
+        channels = MODEL_CONFIG['vibration_encoder']['channels']
         dropout_rate = MODEL_CONFIG['vibration_encoder']['dropout']
         
         self.conv_layers = nn.Sequential(
-            # Block 1: 고주파 충격 패턴 감지 (베어링 결함 특유의 충격파) - ENHANCED
-            nn.Conv1d(1, 128, kernel_size=16, stride=2, padding=8),  # 4096 -> 2048
-            nn.BatchNorm1d(128),
+            # Block 1: 고주파 충격 패턴 감지 (베어링 결함 특유의 충격파)
+            nn.Conv1d(1, channels[0], kernel_size=kernel_sizes[0], stride=2, padding=kernel_sizes[0]//2),  # 2048 → 1024
+            nn.BatchNorm1d(channels[0]),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             
-            # Block 2: 중간 주파수 패턴 (회전 주기, 조화파) - ENHANCED
-            nn.Conv1d(128, 256, kernel_size=32, stride=2, padding=16),  # 2048 -> 1024
-            nn.BatchNorm1d(256),
+            # Block 2: 중간 주파수 패턴 (회전 주기, 조화파)
+            nn.Conv1d(channels[0], channels[1], kernel_size=kernel_sizes[1], stride=2, padding=kernel_sizes[1]//2),  # 1024 → 512
+            nn.BatchNorm1d(channels[1]),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             
-            # Block 3: 저주파 구조적 진동 패턴 - ENHANCED
-            nn.Conv1d(256, 512, kernel_size=64, stride=2, padding=32),  # 1024 -> 512
-            nn.BatchNorm1d(512),
+            # Block 3: 저주파 구조적 진동 패턴
+            nn.Conv1d(channels[1], channels[2], kernel_size=kernel_sizes[2], stride=2, padding=kernel_sizes[2]//2),  # 512 → 256
+            nn.BatchNorm1d(channels[2]),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             
-            # Block 4: 고급 특징 추출 - NEW LAYER
-            nn.Conv1d(512, 1024, kernel_size=32, stride=2, padding=16),  # 512 -> 256
-            nn.BatchNorm1d(1024),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            
-            # Block 5: 특징 집약 및 차원 조정 - NEW LAYER
-            nn.Conv1d(1024, 512, kernel_size=16, stride=2, padding=8),  # 256 -> 128
-            nn.BatchNorm1d(512),
+            # Block 4: 특징 집약 및 최종 표현
+            nn.Conv1d(channels[2], channels[3], kernel_size=kernel_sizes[3], stride=2, padding=kernel_sizes[3]//2),  # 256 → 128
+            nn.BatchNorm1d(channels[3]),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
         )
@@ -93,9 +89,10 @@ class VibrationEncoder(nn.Module):
         # Global Average Pooling (시간축 정보 집약)
         self.global_pool = nn.AdaptiveAvgPool1d(1)
         
-        # Final projection to embedding space
+        # Final projection to embedding space (마지막 conv 채널 수에 맞춤)
+        final_conv_channels = channels[-1]  # 512
         self.projection = nn.Sequential(
-            nn.Linear(512, MODEL_CONFIG['projection']['hidden_dim']),
+            nn.Linear(final_conv_channels, MODEL_CONFIG['projection']['hidden_dim']),
             nn.ReLU(),
             nn.Dropout(MODEL_CONFIG['projection']['dropout']),
             nn.Linear(MODEL_CONFIG['projection']['hidden_dim'], embedding_dim)
@@ -133,8 +130,8 @@ class VibrationEncoder(nn.Module):
         
         logger.info(f"1D-CNN VibrationEncoder 초기화: input_length={input_length}, "
                    f"embedding_dim={embedding_dim}")
-        logger.info(f"   UPGRADED: 커널 크기: [16, 32, 64, 32, 16] - 5-layer 다중 주파수 대역 커버")
-        logger.info(f"   UPGRADED: 채널 수: [128, 256, 512, 1024, 512] - 더 큰 표현력")
+        logger.info(f"   OPTIMIZED: 커널 크기: {kernel_sizes} - 4-layer 베어링 최적화")
+        logger.info(f"   OPTIMIZED: 채널 수: {channels} - 자연스러운 64→512 증가")
         logger.info(f"   총 파라미터: {self.get_trainable_parameters():,}")
     
     def _init_parameters(self):
@@ -169,7 +166,8 @@ class VibrationEncoder(nn.Module):
         """
         batch_size, seq_len = x.shape
         
-        # Input validation
+        # 🎯 SIMPLIFIED: 통일된 입력 길이 (2048)
+        # 입력 길이 검증
         if seq_len != self.input_length:
             raise ValueError(f"입력 길이 불일치: 예상 {self.input_length}, 실제 {seq_len}")
         

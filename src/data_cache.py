@@ -34,15 +34,29 @@ class DataCache:
     
     def _get_cache_key(self, **kwargs) -> str:
         """캐시 키 생성 (파라미터 기반 해싱)"""
-        # 중요한 파라미터들만 사용하여 해시 생성
+        # 🎯 CRITICAL FIX: 실제 사용되는 설정값으로 캐시 키 생성
+        dataset_type = kwargs.get('dataset_type', '')
+        
+        # 데이터셋별 실제 설정 적용
+        if dataset_type == 'cwru':
+            from configs.model_config import CWRU_DATA_CONFIG
+            default_window = CWRU_DATA_CONFIG['window_size']
+            default_overlap = CWRU_DATA_CONFIG['overlap_ratio']
+            default_norm = CWRU_DATA_CONFIG['signal_normalization']
+        else:
+            from configs.model_config import DATA_CONFIG
+            default_window = DATA_CONFIG['window_size']
+            default_overlap = DATA_CONFIG['overlap_ratio']
+            default_norm = DATA_CONFIG['signal_normalization']
+        
         key_params = {
             'data_dir': kwargs.get('data_dir', ''),
-            'dataset_type': kwargs.get('dataset_type', ''),
+            'dataset_type': dataset_type,
             'domain_value': kwargs.get('domain_value', ''),
             'subset': kwargs.get('subset', ''),
-            'window_size': kwargs.get('window_size', 4096),
-            'overlap_ratio': kwargs.get('overlap_ratio', 0.5),
-            'normalization': kwargs.get('normalization', 'standardize')
+            'window_size': kwargs.get('window_size', default_window),
+            'overlap_ratio': kwargs.get('overlap_ratio', default_overlap),
+            'normalization': kwargs.get('normalization', default_norm)
         }
         
         # 해시 생성
@@ -159,9 +173,9 @@ def preprocess_and_cache_dataset(data_dir: str,
                                 dataset_type: str,
                                 domain_value: Optional[int] = None,
                                 subset: str = 'train',
-                                window_size: int = 4096,
-                                overlap_ratio: float = 0.5,
-                                normalization: str = 'standardize') -> Dict[str, Any]:
+                                window_size: int = None,
+                                overlap_ratio: float = None,
+                                normalization: str = None) -> Dict[str, Any]:
     """
     데이터셋 전처리 및 캐싱
     
@@ -186,14 +200,32 @@ def preprocess_and_cache_dataset(data_dir: str,
     
     cached_data = cache.get_cached_data(**cache_params)
     if cached_data is not None:
+        logger.info(f"캐시 사용: {len(cached_data['samples'])}개 샘플")
         return cached_data
     
     # 캐시 미스 - 실제 데이터 로딩
     logger.info(f"🔄 데이터 전처리 시작: {dataset_type} {domain_value} {subset}")
     start_time = time.time()
     
-    # 실제 데이터 로딩 로직 (기존 BearingDataset 로직 사용)
+    # 🎯 CRITICAL FIX: 데이터셋별 설정 자동 적용
     from .data_loader import BearingDataset
+    from configs.model_config import DATA_CONFIG, CWRU_DATA_CONFIG
+    
+    # 데이터셋별 기본 설정 선택
+    if dataset_type == 'cwru':
+        config = CWRU_DATA_CONFIG
+    else:
+        config = DATA_CONFIG
+    
+    # 파라미터가 None이면 설정에서 가져오기
+    if window_size is None:
+        window_size = config['window_size']
+    if overlap_ratio is None:
+        overlap_ratio = config['overlap_ratio']
+    if normalization is None:
+        normalization = config['signal_normalization']
+    
+    logger.info(f"사용된 설정: window_size={window_size}, overlap_ratio={overlap_ratio}")
     
     # 임시 데이터셋 생성하여 전처리된 데이터 추출
     temp_dataset = BearingDataset(
@@ -247,9 +279,9 @@ class CachedBearingDataset(torch.utils.data.Dataset):
                  dataset_type: str,
                  domain_value: Optional[int] = None,
                  subset: str = 'train',
-                 window_size: int = 4096,
-                 overlap_ratio: float = 0.5,
-                 normalization: str = 'standardize'):
+                 window_size: int = None,
+                 overlap_ratio: float = None,
+                 normalization: str = None):
         """
         Args:
             data_dir: 데이터 디렉토리
@@ -260,15 +292,27 @@ class CachedBearingDataset(torch.utils.data.Dataset):
             overlap_ratio: 윈도우 겹침 비율
             normalization: 정규화 방법
         """
+        # 🎯 CRITICAL FIX: 데이터셋별 설정 자동 적용
+        from configs.model_config import DATA_CONFIG, CWRU_DATA_CONFIG
+        
+        if dataset_type == 'cwru':
+            config = CWRU_DATA_CONFIG
+        else:
+            config = DATA_CONFIG
+            
+        final_window_size = window_size if window_size is not None else config['window_size']
+        final_overlap_ratio = overlap_ratio if overlap_ratio is not None else config['overlap_ratio']
+        final_normalization = normalization if normalization is not None else config['signal_normalization']
+        
         # 캐시된 데이터 로드
         self.cached_data = preprocess_and_cache_dataset(
             data_dir=data_dir,
             dataset_type=dataset_type,
             domain_value=domain_value,
             subset=subset,
-            window_size=window_size,
-            overlap_ratio=overlap_ratio,
-            normalization=normalization
+            window_size=final_window_size,
+            overlap_ratio=final_overlap_ratio,
+            normalization=final_normalization
         )
         
         self.samples = self.cached_data['samples']

@@ -30,7 +30,7 @@ from .utils import (
     normalize_signal,
     create_labels
 )
-from configs.model_config import DATA_CONFIG
+from configs.model_config import DATA_CONFIG, CWRU_DATA_CONFIG
 
 # 로깅 설정 (메인에서 구성되므로 basicConfig 제거)
 logger = logging.getLogger(__name__)
@@ -103,9 +103,9 @@ class BearingDataset(Dataset):
                  dataset_type: str = 'uos',
                  domain_value: Optional[Union[int, str]] = None,
                  subset: str = 'train',
-                 window_size: int = DATA_CONFIG['window_size'],
-                 overlap_ratio: float = DATA_CONFIG['overlap_ratio'],
-                 normalization: str = DATA_CONFIG['signal_normalization'],
+                 window_size: int = None,
+                 overlap_ratio: float = None,
+                 normalization: str = None,
                  max_text_length: int = DATA_CONFIG['max_text_length']):
         """
         Args:
@@ -123,11 +123,18 @@ class BearingDataset(Dataset):
         self.data_dir = data_dir
         self.dataset_type = dataset_type.lower()
         self.domain_value = domain_value
-        self.window_size = window_size
-        self.overlap_ratio = overlap_ratio
-        self.normalization = normalization
         self.max_text_length = max_text_length
         self.subset = subset
+        
+        # 🎯 CRITICAL FIX: 데이터셋별 설정 적용
+        if self.dataset_type == 'cwru':
+            config = CWRU_DATA_CONFIG
+        else:
+            config = DATA_CONFIG
+            
+        self.window_size = window_size if window_size is not None else config['window_size']
+        self.overlap_ratio = overlap_ratio if overlap_ratio is not None else config['overlap_ratio']
+        self.normalization = normalization if normalization is not None else config['signal_normalization']
         
         # 데이터 로딩
         self.file_paths = self._collect_file_paths()

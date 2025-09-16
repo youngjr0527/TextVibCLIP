@@ -99,11 +99,11 @@ class ScenarioConfig:
         'domain_order': [600, 800, 1000, 1200, 1400, 1600],
         'domain_names': ['600RPM', '800RPM', '1000RPM', '1200RPM', '1400RPM', '1600RPM'],
         'shift_type': 'Varying Speed',
-        'first_domain_epochs': 15,  # 현실적 에포크 수
-        'remaining_epochs': 10,
+        'first_domain_epochs': 25,  # 15 → 25 (충분한 학습)
+        'remaining_epochs': 15,     # 10 → 15 (안정적 continual learning)
         'batch_size': 4,  # 메모리 안전성 강화
         'replay_buffer_size': 1000,
-        'patience': 5
+        'patience': 8  # 5 → 8 (더 관대한 early stopping)
     }
     
     CWRU_CONFIG = {
@@ -113,8 +113,8 @@ class ScenarioConfig:
         'domain_order': [0, 1, 2, 3],
         'domain_names': ['0HP', '1HP', '2HP', '3HP'],
         'shift_type': 'Varying Load',
-        'first_domain_epochs': 20,  # 현실적 에포크 수
-        'remaining_epochs': 10,
+        'first_domain_epochs': 30,  # 20 → 30 (CWRU 데이터 부족 보상)
+        'remaining_epochs': 15,     # 10 → 15
         'batch_size': 8,
         'replay_buffer_size': 200,
         'patience': 15
@@ -556,7 +556,7 @@ def main():
         logger.error("❌ 실행할 시나리오가 없습니다!")
         return
     
-    # Quick test 모드 설정
+    # 에포크 설정 (quick_test 모드와 일반 모드 모두 지원)
     if args.quick_test:
         test_epochs = args.epochs if args.epochs else 5
         logger.info(f"⚡ 빠른 테스트 모드: 에포크 수를 {test_epochs}로 축소")
@@ -565,6 +565,12 @@ def main():
             scenario['remaining_epochs'] = test_epochs // 2
             # 빠른 테스트에서도 메모리 안전한 배치 크기 사용
             scenario['batch_size'] = min(scenario.get('batch_size', 4), 4)
+    elif args.epochs:
+        # 🎯 FIXED: 일반 모드에서도 --epochs 옵션 적용
+        logger.info(f"🔧 사용자 지정 에포크: {args.epochs}")
+        for scenario in scenarios:
+            scenario['first_domain_epochs'] = args.epochs
+            scenario['remaining_epochs'] = max(args.epochs // 3, 5)  # 1/3 또는 최소 5
     
     # 시나리오별 실행
     total_start_time = time.time()

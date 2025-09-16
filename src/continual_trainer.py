@@ -402,18 +402,43 @@ class ContinualTrainer:
             current_train_loader = domain_dataloaders[domain_value]['train']
             current_val_loader = domain_dataloaders[domain_value]['val']
             
-            # 이전 도메인 성능 기록 (Forgetting 계산용) - 간소화
-            logger.info(f"Domain {domain_value} 학습 전 성능 평가 스킵 (빠른 테스트)")
-            before_performance = {}  # 임시로 비활성화
+            # 🎯 CRITICAL FIX: 학습 전 이전 도메인들 성능 기록 (Forgetting 계산용)
+            logger.info(f"Domain {domain_value} 학습 전 이전 도메인들 성능 평가")
+            
+            # 이전 도메인들만 평가 (현재 도메인 제외)
+            previous_domains = self.completed_domains.copy()
+            if previous_domains:
+                previous_dataloaders = {}
+                for prev_domain in previous_domains:
+                    if prev_domain in domain_dataloaders:
+                        previous_dataloaders[prev_domain] = domain_dataloaders[prev_domain]
+                
+                before_performance = self._evaluate_all_domains(previous_dataloaders)
+                logger.info(f"학습 전 평가 도메인: {list(previous_dataloaders.keys())}")
+            else:
+                before_performance = {}
             
             # 현재 도메인 학습
             domain_results = self._train_single_domain(
                 domain_value, current_train_loader, current_val_loader
             )
             
-            # 학습 후 성능 평가 - 간소화
-            logger.info(f"Domain {domain_value} 학습 후 성능 평가 (빠른 버전)")
-            after_performance = self._evaluate_all_domains_fast(domain_dataloaders)
+            # 🎯 CRITICAL FIX: 올바른 Continual Learning 평가 프로토콜
+            # 현재까지 학습한 모든 도메인에 대해 평가 (누적 평가)
+            logger.info(f"Domain {domain_value} 학습 후 누적 성능 평가")
+            
+            # 현재까지 완료된 도메인들만 평가
+            current_domains = self.completed_domains.copy()  # 이전 도메인들
+            current_domains.append(domain_value)  # 현재 도메인 추가
+            
+            # 해당 도메인들만 포함하는 데이터로더 생성
+            cumulative_dataloaders = {}
+            for eval_domain in current_domains:
+                if eval_domain in domain_dataloaders:
+                    cumulative_dataloaders[eval_domain] = domain_dataloaders[eval_domain]
+            
+            after_performance = self._evaluate_all_domains(cumulative_dataloaders)
+            logger.info(f"누적 평가 도메인: {list(cumulative_dataloaders.keys())}")
             
             # Forgetting 계산
             forgetting_score = self._calculate_forgetting(before_performance, after_performance)
@@ -447,17 +472,13 @@ class ContinualTrainer:
             except Exception as e:
                 logger.warning(f"⚠️ Domain {domain_value} 시각화 실패: {e}")
         
-        # 최종 성능 요약 (풀 평가로 덮어쓰기)
-        full_eval_results = self._evaluate_all_domains(domain_dataloaders)
-        # 기록에도 풀 평가 최신값 추가
-        for eval_domain, metrics in full_eval_results.items():
-            if eval_domain not in self.performance_history:
-                self.performance_history[eval_domain] = {'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': []}
-            self.performance_history[eval_domain]['accuracy'].append(metrics.get('accuracy', 0.0))
-            self.performance_history[eval_domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
-            self.performance_history[eval_domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
+        # 🎯 FIXED: 최종 메트릭 계산 (중복 평가 제거)
+        # 이미 누적 평가를 통해 모든 성능이 기록되었으므로 별도 평가 불필요
         final_metrics = self._calculate_final_metrics()
         remaining_domains_results['final_metrics'] = final_metrics
+        
+        logger.info(f"최종 평균 정확도: {final_metrics.get('average_accuracy', 0.0):.4f}")
+        logger.info(f"최종 평균 망각도: {final_metrics.get('average_forgetting', 0.0):.4f}")
         
         logger.info("=== Remaining Domains Training 완료 ===")
         
@@ -1098,18 +1119,37 @@ class ContinualTrainer:
         }
     
     def _calculate_forgetting(self, before: Dict, after: Dict) -> float:
-        """Forgetting score 계산"""
+        """
+        Forgetting score 계산 (Continual Learning 표준)
+        
+        Forgetting = max(0, 이전 최고 성능 - 현재 성능)
+        """
         if len(self.completed_domains) <= 1:
             return 0.0
         
         forgetting_scores = []
-        for domain in self.completed_domains[:-1]:  # 마지막 도메인 제외
-            before_acc = before.get(domain, {}).get('accuracy', 0.0)
-            after_acc = after.get(domain, {}).get('accuracy', 0.0)
-            forgetting = max(0.0, before_acc - after_acc)
-            forgetting_scores.append(forgetting)
         
-        return np.mean(forgetting_scores) if forgetting_scores else 0.0
+        # 이전 도메인들에 대해서만 forgetting 계산
+        for domain in self.completed_domains[:-1]:  # 현재 학습 중인 도메인 제외
+            # 해당 도메인의 역대 최고 성능
+            if domain in self.performance_history and self.performance_history[domain]['accuracy']:
+                historical_best = max(self.performance_history[domain]['accuracy'])
+            else:
+                historical_best = 0.0
+            
+            # 현재 성능
+            current_acc = after.get(domain, {}).get('accuracy', 0.0)
+            
+            # Forgetting = 최고 성능 - 현재 성능
+            forgetting = max(0.0, historical_best - current_acc)
+            forgetting_scores.append(forgetting)
+            
+            logger.debug(f"Domain {domain} Forgetting: {historical_best:.4f} → {current_acc:.4f} = {forgetting:.4f}")
+        
+        avg_forgetting = np.mean(forgetting_scores) if forgetting_scores else 0.0
+        logger.info(f"평균 Forgetting Score: {avg_forgetting:.4f}")
+        
+        return avg_forgetting
     
     def _calculate_final_metrics(self) -> Dict[str, float]:
         """최종 Continual Learning 메트릭 계산"""
