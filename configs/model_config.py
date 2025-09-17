@@ -64,8 +64,8 @@ MODEL_CONFIG = {
     'aux_classification': {
         'enabled': True,   # 🎯 CRITICAL FIX: Auxiliary loss 활성화 (supervised signal 강화)
         'num_classes': 7,  # UOS 7-클래스 지원 (H/B/IR/OR/L/U/M)
-        'loss_weight': 3.0,  # 1.0 → 3.0 (supervised signal 대폭 강화)
-        'dropout': 0.05    # 0.1 → 0.05 (드롭아웃 감소)
+        'loss_weight': 2.0,  # 5.0 → 2.0 (overfitting 방지)
+        'dropout': 0.2     # 0.05 → 0.2 (정규화 강화)
     }
 }
 

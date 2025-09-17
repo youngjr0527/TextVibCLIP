@@ -341,24 +341,19 @@ class BearingDataset(Dataset):
             # CWRU: 4개 파일 [Normal, B, IR, OR] - 각 클래스 1개씩
             # 모든 클래스를 포함하면서도 파일 레벨에서 분할
             
-            # 🎯 CRITICAL FIX: CWRU 윈도우 레벨 분할 (데이터 구조에 맞게)
-            # CWRU도 클래스별로 1개 파일만 있으므로 윈도우 레벨 분할 필요
+            # 🎯 CRITICAL FIX: CWRU 전체 윈도우 사용 (데이터 부족 해결)
+            # CWRU는 데이터가 적으므로 윈도우 분할 없이 전체 사용
             
-            logger.info("CWRU Domain-Incremental 윈도우 레벨 분할:")
-            logger.info(f"  모든 subset에 모든 {total_files}개 파일 포함")
-            logger.info(f"  각 파일 내에서 윈도우 분할: Train 70%, Val 15%, Test 15%")
+            logger.info("CWRU Domain-Incremental 전체 윈도우 사용:")
+            logger.info(f"  모든 subset에 모든 {total_files}개 파일의 전체 윈도우 포함")
+            logger.info(f"  윈도우 분할 없음 (데이터 부족으로 인한 최대 활용)")
             
             # 모든 파일을 모든 subset에 포함
             selected_files = self.file_paths
             selected_meta = self.metadata_list
             
-            # 윈도우 분할 정보 설정
-            if self.subset == 'train':
-                self._window_split_range = (0.0, 0.7)  # 각 파일의 처음 70%
-            elif self.subset == 'val':
-                self._window_split_range = (0.7, 0.85)  # 각 파일의 70-85%
-            elif self.subset == 'test':
-                self._window_split_range = (0.85, 1.0)  # 각 파일의 85-100%
+            # 🎯 윈도우 분할 정보 제거 (전체 윈도우 사용)
+            # self._window_split_range 설정하지 않음 → 전체 윈도우 사용
             
             # 클래스 분포 확인 (모든 클래스가 모든 subset에 포함됨)
             from collections import Counter

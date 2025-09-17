@@ -401,28 +401,36 @@ class TextVibCLIP(nn.Module):
                     'total': loss
                 }
 
-        # Auxiliary classification loss (모든 도메인에서 활성화)
+        # 🎯 CRITICAL FIX: CWRU 전용 강화된 Auxiliary Classification
         aux_cfg = MODEL_CONFIG.get('aux_classification', {'enabled': False})
-        if aux_cfg.get('enabled', False):  # continual mode 제한 제거
-            # 🎯 배치 라벨 정보 사용
+        if aux_cfg.get('enabled', False):
             aux_labels = batch.get('labels', None)
             if aux_labels is not None:
                 if aux_labels.dim() == 2 and aux_labels.size(1) >= 1:
                     # UOS: 첫 번째가 주 분류 (7-클래스)
-                    main_class = aux_labels[:, 0]  # H/B/IR/OR/L/U/M
-                    # 분류 head 존재 시에만
+                    main_class = aux_labels[:, 0]
                     if hasattr(self.vibration_encoder, 'use_aux_head') and self.vibration_encoder.use_aux_head:
                         logits_cls = self.vibration_encoder.aux_head(vib_embeddings)
                         ce_loss = F.cross_entropy(logits_cls, main_class)
                         loss = loss + float(aux_cfg.get('loss_weight', 1.0)) * ce_loss
                         loss_components['aux_ce'] = ce_loss
                 elif aux_labels.dim() == 1:
-                    # CWRU: 1차원 라벨 (4-클래스)
+                    # 🎯 CWRU: 강화된 직접 분류 (contrastive learning 보완)
                     if hasattr(self.vibration_encoder, 'use_aux_head') and self.vibration_encoder.use_aux_head:
                         logits_cls = self.vibration_encoder.aux_head(vib_embeddings)
                         ce_loss = F.cross_entropy(logits_cls, aux_labels)
-                        loss = loss + float(aux_cfg.get('loss_weight', 1.0)) * ce_loss
+                        
+                        # CWRU에서는 auxiliary loss를 주요 loss로 강화
+                        aux_weight = float(aux_cfg.get('loss_weight', 3.0))
+                        if hasattr(batch, 'get') and 'metadata' in batch:
+                            # CWRU 데이터인지 확인
+                            metadata_sample = batch['metadata'][0] if batch['metadata'] else {}
+                            if metadata_sample.get('dataset_type') == 'cwru':
+                                aux_weight = 10.0  # CWRU에서는 10배 강화
+                        
+                        loss = loss + aux_weight * ce_loss
                         loss_components['aux_ce'] = ce_loss
+                        loss_components['aux_weight'] = aux_weight
         
         # 결과 딕셔너리 구성
         results = {
