@@ -100,24 +100,80 @@ def generate_text_description(metadata: Dict[str, str]) -> str:
 
 
 def _generate_uos_text_description(metadata: Dict[str, str]) -> str:
-    """UOS 데이터셋용 다양한 텍스트 설명 생성 (CRITICAL FIX: 텍스트 다양성 대폭 개선)"""
+    """🎯 CRITICAL FIX: 클래스별 고유 키워드 강화 (텍스트 다양성 대폭 개선)"""
     import random
     
-    # 회전체 상태 매핑 (다양한 표현)
-    rotating_component_variations = {
-        'H': ['healthy rotating machinery', 'normal rotating component', 'well-balanced rotating system', 'properly aligned rotating shaft'],
-        'L': ['loose rotating component', 'looseness in the rotating machinery', 'mechanical looseness in shaft', 'loose coupling in rotating system'], 
-        'U': ['unbalanced rotating component', 'mass imbalance in rotor', 'unbalanced rotating machinery', 'rotor imbalance condition'],
-        'M': ['misaligned rotating component', 'shaft misalignment', 'angular misalignment in rotating system', 'parallel misalignment condition']
-    }
+    rotating_comp = metadata['rotating_component']
+    bearing_cond = metadata['bearing_condition']
     
-    # 베어링 상태 매핑 (다양한 표현)
-    bearing_condition_variations = {
-        'H': ['healthy bearing condition', 'normal bearing', 'fault-free bearing', 'bearing in good condition', 'undamaged bearing'],
-        'B': ['ball defect', 'rolling element fault', 'ball bearing damage', 'defective ball element', 'ball surface fault'],
-        'IR': ['inner race defect', 'inner ring fault', 'inner raceway damage', 'inner race surface defect', 'inner ring wear'], 
-        'OR': ['outer race defect', 'outer ring fault', 'outer raceway damage', 'outer race surface defect', 'outer ring wear']
-    }
+    # 🎯 ISO 15243 표준 기반 베어링 진단 용어 (산업 표준)
+    if rotating_comp == 'H' and bearing_cond == 'H':
+        # 정상 상태 - 산업 표준 용어
+        templates = [
+            "No defects detected in bearing operation",
+            "Healthy bearing condition observed",
+            "Normal bearing operation confirmed", 
+            "Fault-free bearing performance",
+            "Bearing operates within normal parameters"
+        ]
+    elif rotating_comp == 'H' and bearing_cond == 'B':
+        # 볼 결함 - 롤링 엘리먼트 전문 용어
+        templates = [
+            "Ball element defect detected",
+            "Rolling element damage observed",
+            "Ball surface pitting present",
+            "Ball wear pattern identified",
+            "Rolling element fault confirmed"
+        ]
+    elif rotating_comp == 'H' and bearing_cond == 'IR':
+        # 내륜 결함 - 내륜/내측 레이스웨이 전문 용어
+        templates = [
+            "Inner race defect detected",
+            "Inner ring fault observed",
+            "Inner raceway damage present",
+            "Inner race spalling identified",
+            "Inner ring surface defect confirmed"
+        ]
+    elif rotating_comp == 'H' and bearing_cond == 'OR':
+        # 외륜 결함 - 외륜/외측 레이스웨이 전문 용어
+        templates = [
+            "Outer race defect detected",
+            "Outer ring fault observed", 
+            "Outer raceway damage present",
+            "Outer race spalling identified",
+            "Outer ring surface defect confirmed"
+        ]
+    elif rotating_comp == 'L' and bearing_cond == 'H':
+        # 기계적 느슨함 - 베어링 장착 관련 용어
+        templates = [
+            "Mechanical looseness detected",
+            "Loose bearing mounting observed",
+            "Bearing looseness present",
+            "Assembly looseness identified",
+            "Mounting looseness confirmed"
+        ]
+    elif rotating_comp == 'U' and bearing_cond == 'H':
+        # 회전 불균형 - 로터 불균형 전문 용어
+        templates = [
+            "Rotor unbalance detected",
+            "Mass unbalance observed",
+            "Dynamic unbalance present", 
+            "Rotational imbalance identified",
+            "Rotor mass imbalance confirmed"
+        ]
+    elif rotating_comp == 'M' and bearing_cond == 'H':
+        # 축 정렬불량 - 정렬 전문 용어 (단순화)
+        templates = [
+            "Shaft misalignment detected",
+            "Angular misalignment observed",
+            "Parallel misalignment present",
+            "Bearing misalignment identified", 
+            "Shaft alignment fault confirmed"
+        ]
+    else:
+        templates = ["Unknown bearing condition"]
+    
+    return random.choice(templates)
     
     # 🎯 SIMPLIFIED: Deep Groove Ball 베어링만 (단일 타입)
     bearing_type_variations = {

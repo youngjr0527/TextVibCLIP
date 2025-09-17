@@ -245,6 +245,23 @@ class TextVibCLIP(nn.Module):
         # Vibration Encoder 생성
         self.vibration_encoder = create_vibration_encoder()
         
+        # 🎯 CRITICAL FIX: Cross-Modal Projection Layer 추가
+        self.text_projection = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim * 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(embedding_dim * 2, embedding_dim),
+            nn.LayerNorm(embedding_dim)
+        )
+        
+        self.vibration_projection = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim * 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(embedding_dim * 2, embedding_dim),
+            nn.LayerNorm(embedding_dim)
+        )
+        
         # InfoNCE Loss 설정
         if domain_stage == 'first_domain':
             temp_text = MODEL_CONFIG['infonce']['first_domain_temperature_text']
@@ -292,6 +309,10 @@ class TextVibCLIP(nn.Module):
         else:
             # 텍스트 리스트 직접 토크나이징 (하위 호환성)
             text_embeddings = self.text_encoder.encode_texts(texts, device, max_length=128)
+        
+        # 🎯 CRITICAL FIX: Cross-Modal Projection 적용
+        text_embeddings = F.normalize(self.text_projection(text_embeddings), p=2, dim=1)
+        vib_embeddings = F.normalize(self.vibration_projection(vib_embeddings), p=2, dim=1)
         
         # 🎯 FIXED: 표준 contrastive learning (diagonal pairs only)
         # 각 text-vibration 쌍은 배치 내에서 대각선 위치에서만 매칭

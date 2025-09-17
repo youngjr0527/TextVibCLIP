@@ -37,11 +37,11 @@ MODEL_CONFIG = {
         # 2048 → 1024 → 512 → 256 → 128 → Global Pool → 256 embedding
     },
     
-    # InfoNCE Loss - BALANCED: 안정적인 온도로 조정
+    # InfoNCE Loss - OPTIMIZED: Cross-Modal Projection 기반 최적화
     'infonce': {
-        # First Domain Training (Domain 1) - 안정적인 온도
-        'first_domain_temperature_text': 0.05,   # 0.01 → 0.05 (안정화)
-        'first_domain_temperature_vib': 0.05,    # 0.01 → 0.05 (안정화)
+        # First Domain Training (Domain 1) - 높은 온도로 안정화
+        'first_domain_temperature_text': 0.2,   # 0.05 → 0.2 (Cross-Modal 최적화)
+        'first_domain_temperature_vib': 0.2,    # 0.05 → 0.2 (Cross-Modal 최적화)
         
         # Continual Learning (Domain 2+) - 비대칭 설정
         'continual_temperature_text': 0.07,  # 0.05 → 0.07 (text 안정성)
