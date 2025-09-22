@@ -25,10 +25,13 @@ MODEL_CONFIG = {
     # Prototypes (class anchors) for shared semantic space
     'prototypes': {
         'enabled': True,           # turn on prototype alignment loss
-        'tau': 0.1,                # temperature for prototype logits
+        'tau': 0.12,               # temperature for prototype logits (stabilize CE)
         'lambda_proto': 0.25,       # loss weight for prototype CE
-        'ema_momentum': 0.99,      # EMA momentum for prototype updates
-        'init_from_text': True     # initialize prototypes from text class means
+        'ema_momentum': 0.995,      # EMA momentum for prototype updates
+        'init_from_text': True,     # initialize prototypes from text class means
+        'continual_lambda': 0.1,    # lower prototype weight for continual phase
+        # Continual 단계 프로토타입 업데이트 모드: 'both' | 'text_only' | 'frozen'
+        'update_mode_continual': 'text_only'
     },
     
     # Vibration Encoder (1D-CNN) - 2048 최적화 아키텍처
@@ -54,7 +57,7 @@ MODEL_CONFIG = {
         
         # Continual Learning (Domain 2+) - 비대칭 설정
         'continual_temperature_text': 0.07,  # 0.05 → 0.07 (text 안정성)
-        'continual_temperature_vib': 0.03,   # 0.01 → 0.03 (vibration 적극 학습)
+        'continual_temperature_vib': 0.04,   # 0.03 → 0.04 (약 +30%)
 
         # First domain 온도 스케줄(선형): init → final
         'first_domain_temperature_text_init': 0.07,  # 0.05 → 0.07
@@ -80,7 +83,19 @@ MODEL_CONFIG = {
     # Similarity head options
     'similarity': {
         'bilinear_enabled': True,
-        'lambda_bilinear': 0.3
+        'lambda_bilinear': 0.15
+    },
+
+    # 도메인별 동적 하이퍼파라미터 오버라이드(continual 구간)
+    'domain_overrides': {
+        1000: {
+            'continual_temperature_vib': 0.045,
+            'continual_lambda_proto': 0.08
+        },
+        1200: {
+            'continual_temperature_vib': 0.05,
+            'continual_lambda_proto': 0.05
+        }
     },
 
     # Regularizers for continual learning
@@ -110,11 +125,13 @@ TRAINING_CONFIG = {
     
     # Continual Learning 설정
     'replay_buffer_size': 500,  # 도메인당 저장할 embedding 수
-    'replay_ratio': 0.5,  # 새 데이터 vs replay 데이터 비율
+    'replay_ratio': 0.6,  # 새 데이터 vs replay 데이터 비율
     'replay_every_n': 1,  # 몇 배치마다 replay를 섞을지 (작은 에포크에서는 1 권장)
+    'replay_selection': 'balanced',  # replay 샘플 선택 전략: 'random' | 'balanced' | 'representative'
     
     # Early stopping
-    'patience': 10,
+    'patience': 12,
+    'min_epoch_per_domain': 5,
     'min_delta': 1e-4,
     
     # 체크포인트
@@ -129,7 +146,10 @@ TRAINING_CONFIG = {
     'vib_lr_mult': 2.0,   # 1.0 → 2.0 (vibration encoder 학습 강화)
 
     # First-domain two-stage schedule
-    'first_domain_stage1_epochs': 8  # Stage-1: encoders freeze, projection/prototypes only
+    'first_domain_stage1_epochs': 8,  # Stage-1: encoders freeze, projection/prototypes only
+    # 도메인별 리플레이 부스팅(중간 도메인 안정화)
+    'replay_boost_domains': [1000, 1200],
+    'replay_boost_ratio': 0.7
 }
 
 # 데이터 설정

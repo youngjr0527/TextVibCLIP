@@ -260,6 +260,7 @@ class TextVibCLIP(nn.Module):
         self.use_prototypes = bool(proto_cfg.get('enabled', False))
         self.prototype_tau = float(proto_cfg.get('tau', 0.1))
         self.prototype_lambda = float(proto_cfg.get('lambda_proto', 0.5))
+        self.prototype_lambda_continual = float(proto_cfg.get('continual_lambda', self.prototype_lambda))
         self.prototype_ema_m = float(proto_cfg.get('ema_momentum', 0.99))
         self.prototype_init_from_text = bool(proto_cfg.get('init_from_text', True))
 
@@ -530,7 +531,8 @@ class TextVibCLIP(nn.Module):
                     ce_text = F.cross_entropy(logits_text_proto, class_labels)
                     ce_vib = F.cross_entropy(logits_vib_proto, class_labels)
                     proto_loss = (ce_text + ce_vib) * 0.5
-                    loss = loss + self.prototype_lambda * proto_loss
+                    lambda_proto = self.prototype_lambda_continual if self.is_continual_mode else self.prototype_lambda
+                    loss = loss + lambda_proto * proto_loss
                     loss_components['proto_ce'] = proto_loss
 
                     # 초기화(텍스트 기반 평균) 및 EMA 업데이트
@@ -542,7 +544,14 @@ class TextVibCLIP(nn.Module):
                             if mask.any():
                                 mean_t = text_embeddings[mask].mean(dim=0)
                                 mean_v = vib_embeddings[mask].mean(dim=0)
-                                mean_tv = F.normalize(0.5 * (mean_t + mean_v), p=2, dim=0)
+                                # 업데이트 모드에 따라 평균 선택
+                                update_mode = MODEL_CONFIG.get('prototypes', {}).get('update_mode_continual', 'both') if self.is_continual_mode else 'both'
+                                if update_mode == 'frozen' and self.is_continual_mode:
+                                    mean_tv = F.normalize(self.prototypes.data[cls], p=2, dim=0)
+                                elif update_mode == 'text_only' and self.is_continual_mode:
+                                    mean_tv = F.normalize(mean_t, p=2, dim=0)
+                                else:
+                                    mean_tv = F.normalize(0.5 * (mean_t + mean_v), p=2, dim=0)
 
                                 if (self.prototypes_initialized.item() == 0) and self.prototype_init_from_text:
                                     # 최초 한 번 텍스트 기반으로 더 강하게 초기화

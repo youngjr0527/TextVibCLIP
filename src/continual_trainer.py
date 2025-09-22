@@ -451,6 +451,21 @@ class ContinualTrainer:
             else:
                 before_performance = {}
             
+            # 도메인별 하이퍼파라미터 오버라이드(continual)
+            try:
+                overrides = MODEL_CONFIG.get('domain_overrides', {})
+                if domain_value in overrides:
+                    ov = overrides[domain_value]
+                    t_text = MODEL_CONFIG['infonce'].get('continual_temperature_text', 0.07)
+                    t_vib = float(ov.get('continual_temperature_vib', MODEL_CONFIG['infonce'].get('continual_temperature_vib', 0.04)))
+                    self.model.infonce_loss.update_temperatures(t_text, t_vib)
+                    # 프로토타입 람다 동적 조정
+                    if float(ov.get('continual_lambda_proto', -1)) > 0:
+                        self.model.prototype_lambda_continual = float(ov['continual_lambda_proto'])
+                    logger.info(f"[Override] Domain {domain_value}: τ_vib={t_vib:.3f}, λ_proto_cont={self.model.prototype_lambda_continual:.3f}")
+            except Exception as e:
+                logger.info(f"도메인 오버라이드 적용 스킵: {e}")
+
             # 현재 도메인 학습
             domain_results = self._train_single_domain(
                 domain_value, current_train_loader, current_val_loader
@@ -552,11 +567,22 @@ class ContinualTrainer:
         self.model.train()
         epoch_losses = []
         best_val_acc = 0.0
+        best_epoch = -1
         patience_counter = 0
         
+        rkd_history: List[float] = []
+        val_acc_history: List[float] = []
+
         for epoch in range(self.num_epochs):
+            # 도메인별 리플레이 부스트(중간 도메인 안정화)
+            boost_domains = set(TRAINING_CONFIG.get('replay_boost_domains', []))
+            base_replay_ratio = float(TRAINING_CONFIG.get('replay_ratio', 0.6))
+            boosted_ratio = float(TRAINING_CONFIG.get('replay_boost_ratio', base_replay_ratio))
+            current_replay_ratio = boosted_ratio if domain_value in boost_domains else base_replay_ratio
             epoch_loss = 0.0
             num_batches = 0
+            epoch_rkd_sum = 0.0
+            epoch_rkd_count = 0
             
             for batch_idx, batch in enumerate(train_loader):
                 # 현재 배치를 디바이스로 이동
@@ -570,10 +596,14 @@ class ContinualTrainer:
                 use_replay = (batch_idx % every_n == 0)
                 
                 if use_replay:
-                    replay_batch_size = min(int(current_batch_size * self.replay_ratio), 8)  # 크기 제한
-                    replay_data = self.replay_buffer.sample_replay_data(
-                        replay_batch_size, exclude_current=True, device=self.device
-                    )
+                    replay_batch_size = min(int(current_batch_size * current_replay_ratio), 8)  # 크기 제한
+                    # 선택 전략 전달(설정 기반)
+                    selection = str(TRAINING_CONFIG.get('replay_selection', 'balanced'))
+                    # 버퍼의 전략 속성을 일시 변경(샘플링에만 반영)
+                    prev = getattr(self.replay_buffer, 'sampling_strategy', 'random')
+                    self.replay_buffer.sampling_strategy = 'balanced' if selection not in ['random','representative'] else selection
+                    replay_data = self.replay_buffer.sample_replay_data(replay_batch_size, exclude_current=True, device=self.device)
+                    self.replay_buffer.sampling_strategy = prev
                     
                     # 현재 데이터와 Replay 데이터 결합
                     if replay_data is not None:
@@ -594,6 +624,11 @@ class ContinualTrainer:
                         reg_loss = self._compute_regularizers(combined_batch, results)
                         if reg_loss is not None:
                             loss = loss + reg_loss
+                            try:
+                                epoch_rkd_sum += float(reg_loss.detach().item())
+                                epoch_rkd_count += 1
+                            except Exception:
+                                pass
                     
                     # Backward pass with AMP
                     self.scaler.scale(loss).backward()
@@ -611,6 +646,11 @@ class ContinualTrainer:
                     reg_loss = self._compute_regularizers(combined_batch, results)
                     if reg_loss is not None:
                         loss = loss + reg_loss
+                        try:
+                            epoch_rkd_sum += float(reg_loss.detach().item())
+                            epoch_rkd_count += 1
+                        except Exception:
+                            pass
                     
                     # Backward pass
                     loss.backward()
@@ -636,13 +676,16 @@ class ContinualTrainer:
             # Validation
             val_metrics = self._evaluate_single_domain(val_loader)
             val_acc = val_metrics['accuracy']
+            val_acc_history.append(float(val_acc))
             
             logger.info(f"Domain {domain_value} Epoch {epoch+1}: "
                        f"Loss = {avg_epoch_loss:.4f}, Val Acc = {val_acc:.4f}")
             
-            # Early stopping
+            # Early stopping (최소 에포크 보장)
+            min_ep = int(TRAINING_CONFIG.get('min_epoch_per_domain', 0))
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
+                best_epoch = epoch + 1
                 patience_counter = 0
                 
                 # Best model 저장
@@ -651,7 +694,7 @@ class ContinualTrainer:
             else:
                 patience_counter += 1
                 
-                if patience_counter >= TRAINING_CONFIG['patience']:
+                if (epoch + 1) >= min_ep and patience_counter >= TRAINING_CONFIG['patience']:
                     logger.info(f"Early stopping at epoch {epoch+1}")
                     break
         
@@ -662,11 +705,91 @@ class ContinualTrainer:
         final_loss = epoch_losses[-1] if epoch_losses else float('inf')
         num_epochs = len(epoch_losses)
         
+        # RKD 에포크 평균 기록
+        if epoch_rkd_count > 0:
+            rkd_history.append(epoch_rkd_sum / max(1, epoch_rkd_count))
+
         return {
             'final_loss': final_loss,
             'best_val_accuracy': best_val_acc,
-            'num_epochs': num_epochs
+            'best_epoch': best_epoch,
+            'num_epochs': num_epochs,
+            'rkd_history': rkd_history,
+            'val_acc_history': val_acc_history
         }
+
+    def _compute_prototype_alignment_stats(self, dataloader: DataLoader) -> Dict[str, float]:
+        """프로토타입 정렬 통계 계산(Validation 기준):
+        - 클래스별 텍스트/진동 평균 임베딩과 프로토타입 간 코사인 거리
+        - 진동 within-class 분산 평균
+        - 프로토타입 간 평균 코사인 거리(분리도)
+        """
+        stats: Dict[str, float] = {}
+        model = self.model
+        if not getattr(model, 'use_prototypes', False) or not hasattr(model, 'prototypes'):
+            return stats
+        model.eval()
+        all_t = []
+        all_v = []
+        all_y = []
+        with torch.no_grad():
+            for batch in dataloader:
+                batch = self._move_batch_to_device(batch)
+                out = model(batch, return_embeddings=True)
+                t = F.normalize(out['text_embeddings'], p=2, dim=1)
+                v = F.normalize(out['vib_embeddings'], p=2, dim=1)
+                labels = batch.get('labels', None)
+                if labels is None:
+                    continue
+                if labels.dim() == 2:
+                    y = labels[:, 0]
+                elif labels.dim() == 1:
+                    y = labels
+                else:
+                    continue
+                all_t.append(t.detach().cpu())
+                all_v.append(v.detach().cpu())
+                all_y.append(y.detach().cpu())
+        if not all_t:
+            return stats
+        import torch as _torch
+        t_all = _torch.cat(all_t, dim=0)
+        v_all = _torch.cat(all_v, dim=0)
+        y_all = _torch.cat(all_y, dim=0)
+        C = F.normalize(model.prototypes.detach().cpu(), p=2, dim=1)
+        num_classes = C.size(0)
+        # 클래스별 통계
+        within_vars = []
+        for k in range(num_classes):
+            m = (y_all == k)
+            if m.any():
+                t_mean = t_all[m].mean(dim=0, keepdim=True)
+                v_mean = v_all[m].mean(dim=0, keepdim=True)
+                c_k = C[k:k+1]
+                # 코사인 거리 = 1 - 코사인유사도
+                stats[f'class_{k}_t_proto_cosdist'] = float(1.0 - F.cosine_similarity(t_mean, c_k).item())
+                stats[f'class_{k}_v_proto_cosdist'] = float(1.0 - F.cosine_similarity(v_mean, c_k).item())
+                within_var_v = v_all[m].var(dim=0, unbiased=False).mean().item()
+                stats[f'class_{k}_v_within_var'] = float(within_var_v)
+                within_vars.append(within_var_v)
+        if within_vars:
+            stats['v_within_var_mean'] = float(sum(within_vars) / len(within_vars))
+        # 프로토타입 간 평균 코사인 거리(분리도)
+        if num_classes > 1:
+            iu = _torch.triu_indices(num_classes, num_classes, offset=1)
+            sims = (C @ C.t())[iu[0], iu[1]]
+            stats['proto_between_mean_cosdist'] = float(1.0 - sims.mean().item())
+        return stats
+
+    def compute_prototype_alignment_stats_for_domains(self, domain_dataloaders: Dict) -> Dict[Union[int, str], Dict[str, float]]:
+        """도메인별 validation 로더로 프로토타입 정렬 통계 계산"""
+        results: Dict[Union[int, str], Dict[str, float]] = {}
+        for domain_value, loaders in domain_dataloaders.items():
+            if 'val' not in loaders:
+                continue
+            stats = self._compute_prototype_alignment_stats(loaders['val'])
+            results[domain_value] = stats
+        return results
 
     def _compute_regularizers(self, batch: Dict, results: Dict) -> Optional[torch.Tensor]:
         """관계 지식 증류(RKD) 및 LwF 보조 항 계산.
@@ -1142,6 +1265,18 @@ class ContinualTrainer:
                 'num_samples': len(test_loader.dataset)
             }
         
+        return results
+
+    def _evaluate_all_domains_val(self, domain_dataloaders: Dict) -> Dict[int, Dict[str, float]]:
+        """모든 도메인의 validation 성능 평가(추가 저장용)"""
+        results = {}
+        for domain_value, loaders in domain_dataloaders.items():
+            val_loader = loaders['val']
+            metrics = self._evaluate_single_domain(val_loader)
+            results[domain_value] = {
+                **metrics,
+                'num_samples': len(val_loader.dataset)
+            }
         return results
     
     def _evaluate_all_domains_fast(self, domain_dataloaders: Dict) -> Dict[str, Dict[str, float]]:

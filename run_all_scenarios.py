@@ -136,7 +136,7 @@ class ExperimentResults:
         # 상세 결과 추가 (도메인별)
         for domain_idx, domain_name in enumerate(results['domain_names']):
             if domain_idx < len(results['final_accuracies']):
-                self.detailed_results.append({
+                row = {
                     'Scenario': scenario_name,
                     'Domain_Index': domain_idx + 1,
                     'Domain_Name': domain_name,
@@ -146,7 +146,33 @@ class ExperimentResults:
                     'Top5_Retrieval': results.get('final_top5_retrievals', [0] * len(results['domain_names']))[domain_idx],
                     'Samples_Per_Domain': results.get('samples_per_domain', 0),
                     'Total_Training_Time': results.get('total_time', 0)
-                })
+                }
+                # validation 메트릭 추가 저장(있을 경우)
+                val_accs = results.get('val_accuracies', [])
+                val_top1 = results.get('val_top1_retrievals', [])
+                val_top5 = results.get('val_top5_retrievals', [])
+                if domain_idx < len(val_accs):
+                    row['Val_Accuracy'] = val_accs[domain_idx]
+                    row['Val_Top1_Retrieval'] = val_top1[domain_idx] if domain_idx < len(val_top1) else 0
+                    row['Val_Top5_Retrieval'] = val_top5[domain_idx] if domain_idx < len(val_top5) else 0
+                # best epoch(해당 도메인의 인덱스가 1부터 시작하는 remaining에 대응)
+                be_list = results.get('best_epochs', [])
+                if domain_idx >= 1 and (domain_idx - 1) < len(be_list):
+                    row['Best_Epoch'] = be_list[domain_idx - 1]
+                # 프로토타입 정렬 통계의 주요 지표만 상세 CSV에도 요약 저장
+                proto_stats = results.get('proto_alignment_stats', {}).get(
+                    results['domain_names'][domain_idx].replace('RPM','').replace('HP',''), {})
+                # 키가 정수 도메인일 수 있어 보조 매핑
+                if not proto_stats:
+                    try:
+                        # domain_names -> domain_order 매핑을 통해 키 찾기
+                        pass
+                    except Exception:
+                        proto_stats = {}
+                for k in ['v_within_var_mean', 'proto_between_mean_cosdist']:
+                    if k in proto_stats:
+                        row[k] = proto_stats[k]
+                self.detailed_results.append(row)
         
         # 요약 결과 추가 (시나리오별)
         self.summary_results.append({
@@ -198,7 +224,7 @@ class ExperimentResults:
                 pivot_df = detailed_df.pivot_table(
                     index=['Domain_Index', 'Domain_Name'],
                     columns='Scenario',
-                    values=['Accuracy', 'Top1_Retrieval', 'Top5_Retrieval'],
+                    values=['Accuracy', 'Top1_Retrieval', 'Top5_Retrieval', 'Val_Accuracy', 'Val_Top1_Retrieval', 'Val_Top5_Retrieval'],
                     aggfunc='first'
                 )
                 pivot_path = os.path.join(output_dir, f'comparison_results_{timestamp}.csv')
@@ -209,7 +235,7 @@ class ExperimentResults:
         return detailed_path, summary_path, pivot_path
 
 
-def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.device, args) -> Dict:
+def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.device, args, experiment_dir: str) -> Dict:
     """단일 시나리오 실행"""
     logger.info(f"🚀 {config['name']} 시작!")
     logger.info(f"   Domain Shift: {config['shift_type']}")
@@ -375,14 +401,80 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         
         # 결과 정리
         final_metrics = remaining_results['final_metrics']
+        # best epoch 로그(도메인별)
+        try:
+            best_epochs = []
+            for d in config['domain_order'][1:]:
+                if d in remaining_results:
+                    be = remaining_results[d]['training_results'].get('best_epoch', -1)
+                    best_epochs.append(be)
+                else:
+                    best_epochs.append(-1)
+        except Exception:
+            best_epochs = []
+        # Validation 메트릭 수집: 도메인별 val 평가 수행
+        try:
+            val_eval = trainer._evaluate_all_domains_val(domain_loaders)
+            val_domain_order = config['domain_order']
+            val_accs = [val_eval[d]['accuracy'] for d in val_domain_order if d in val_eval]
+            val_top1 = [val_eval[d]['top1_retrieval'] for d in val_domain_order if d in val_eval]
+            val_top5 = [val_eval[d]['top5_retrieval'] for d in val_domain_order if d in val_eval]
+        except Exception:
+            val_accs, val_top1, val_top5 = [], [], []
+
+        # 프로토타입 정렬 통계 수집(Validation 기준)
+        proto_stats_per_domain = {}
+        try:
+            proto_stats_per_domain = trainer.compute_prototype_alignment_stats_for_domains(domain_loaders)
+            # CSV로 저장
+            if PANDAS_AVAILABLE and proto_stats_per_domain:
+                rows = []
+                for d, st in proto_stats_per_domain.items():
+                    base = {'Domain': d}
+                    base.update(st)
+                    rows.append(base)
+                if rows:
+                    import pandas as pd
+                    df_proto = pd.DataFrame(rows)
+                    path_proto = os.path.join(experiment_dir, f'prototype_alignment_stats_{config["name"]}.csv')
+                    df_proto.to_csv(path_proto, index=False)
+                    logger.info(f"   ✅ Prototype 정렬 통계 저장: {os.path.basename(path_proto)}")
+        except Exception as e:
+            logger.info(f"   ℹ️ Prototype 정렬 통계 수집 스킵: {e}")
+
+        # RKD/Validation 추이 저장 (도메인별)
+        try:
+            if PANDAS_AVAILABLE:
+                import pandas as pd
+                rows = []
+                for d in config['domain_order'][1:]:
+                    if d in remaining_results:
+                        tr = remaining_results[d].get('training_results', {})
+                        rkd_hist = tr.get('rkd_history', []) or []
+                        val_hist = tr.get('val_acc_history', []) or []
+                        for i, v in enumerate(rkd_hist):
+                            rows.append({'Domain': d, 'Epoch': i+1, 'RKD_Loss': v, 'Val_Accuracy': val_hist[i] if i < len(val_hist) else None})
+                if rows:
+                    df_hist = pd.DataFrame(rows)
+                    path_hist = os.path.join(experiment_dir, f'rkd_val_history_{config["name"]}.csv')
+                    df_hist.to_csv(path_hist, index=False)
+                    logger.info(f"   ✅ RKD/Val 추이 저장: {os.path.basename(path_hist)}")
+        except Exception as e:
+            logger.info(f"   ℹ️ RKD/Val 추이 저장 스킵: {e}")
         total_time = time.time() - start_time
         
         results = {
             'domain_names': config['domain_names'],
+            'domain_values': config['domain_order'],
             'shift_type': config['shift_type'],
             'final_accuracies': final_metrics['final_accuracies'],
             'final_top1_retrievals': final_metrics.get('final_top1_retrievals', []),
             'final_top5_retrievals': final_metrics.get('final_top5_retrievals', []),
+            'val_accuracies': val_accs,
+            'val_top1_retrievals': val_top1,
+            'val_top5_retrievals': val_top5,
+            'best_epochs': best_epochs,
+        'proto_alignment_stats': proto_stats_per_domain,
             'average_accuracy': final_metrics['average_accuracy'],
             'average_forgetting': final_metrics['average_forgetting'],
             'samples_per_domain': samples_per_domain,
@@ -585,7 +677,7 @@ def main():
             scenario_result = run_single_scenario({
                 **scenario,
                 'remaining_epochs': 0  # 나머지 도메인 스킵
-            }, logger, device, args)
+            }, logger, device, args, experiment_dir)
             if scenario_result:
                 # First-domain 전용 리포트
                 domain_names = scenario_result['domain_names']
@@ -608,7 +700,7 @@ def main():
                 logger.error(f"❌ {scenario['name']} 실행 실패!")
             break
         else:
-            scenario_result = run_single_scenario(scenario, logger, device, args)
+            scenario_result = run_single_scenario(scenario, logger, device, args, experiment_dir)
         
         if scenario_result:
             results.add_scenario_result(scenario['name'], scenario_result)
@@ -640,6 +732,8 @@ def main():
                 domain_names = scenario_result['domain_names']
                 accuracies = scenario_result['final_accuracies']
                 forgetting_scores = scenario_result.get('forgetting_scores', [0.0] * len(domain_names))
+                # Validation과 함께 double-bar 도표를 저장(추가 파일명)
+                val_accs = scenario_result.get('val_accuracies', [])
                 
                 perf_path = visualizer.create_continual_learning_performance_plot(
                     domain_names=domain_names,
@@ -650,6 +744,16 @@ def main():
                 if perf_path:
                     figure_count += 1
                     logger.info(f"   ✅ 성능 시각화: {os.path.basename(perf_path)}")
+                # 보조: validation 막대표 CSV 저장(간단 로그)
+                try:
+                    if len(val_accs) == len(domain_names) and PANDAS_AVAILABLE:
+                        import pandas as pd
+                        df_va = pd.DataFrame({'Domain': domain_names, 'Val_Accuracy': val_accs, 'Test_Accuracy': accuracies})
+                        va_path = os.path.join(experiment_dir, f'val_vs_test_{scenario_name}.csv')
+                        df_va.to_csv(va_path, index=False)
+                        logger.info(f"   ✅ Val vs Test CSV: {os.path.basename(va_path)}")
+                except Exception as e:
+                    logger.info(f"   ℹ️ Val/Test CSV 생성 스킵: {e}")
             
             # 2. Domain Shift Robustness 시각화 (도메인별 임베딩 분포)
             if 'domain_embeddings' in scenario_result:
