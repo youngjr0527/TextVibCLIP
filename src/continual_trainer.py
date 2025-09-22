@@ -143,6 +143,13 @@ class ContinualTrainer:
         
         # 모델을 첫 번째 도메인 학습 모드로 설정
         self.model.switch_to_first_domain_mode()  # First domain mode (LoRA 활성화)
+
+        # Procrustes 초기화: 도메인1에서 클래스 중심 정렬로 vibration projection 마지막 층 정렬
+        try:
+            self._procrustes_init_vib_projection(first_domain_dataloader)
+            logger.info("✅ Procrustes 초기화 완료 (vibration_projection)")
+        except Exception as e:
+            logger.warning(f"⚠️ Procrustes 초기화 스킵: {e}")
         
         # Optimizer 설정 (Text LoRA + Vibration full)
         optimizer = self._create_optimizer()
@@ -152,9 +159,10 @@ class ContinualTrainer:
         if not hasattr(self, 'debug_grad_norms'):
             self.debug_grad_norms = []  # 각 항목: {'step': int, 'text_lora': float, 'vib': float}
 
-        # 학습 루프
+        # 학습 루프 (Two-Stage: Stage-1 → Stage-2)
         self.model.train()
         epoch_losses = []
+        stage1_epochs = int(TRAINING_CONFIG.get('first_domain_stage1_epochs', 0))
         
         for epoch in range(num_epochs):
             # 첫 도메인 온도 스케줄(선형): init -> final
@@ -176,6 +184,28 @@ class ContinualTrainer:
             self.model.infonce_loss.update_temperatures(t_text, t_vib)
             if epoch % 5 == 0 or epoch == 0:
                 logger.info(f"[TempSchedule] epoch {epoch+1}/{num_epochs}: τ_text={t_text:.3f}, τ_vib={t_vib:.3f}")
+
+            # Stage-1: encoders freeze (projection + prototypes only), Stage-2: normal
+            if stage1_epochs > 0 and epoch < stage1_epochs:
+                # Freeze encoders
+                for p in self.model.text_encoder.parameters():
+                    p.requires_grad = False
+                for p in self.model.vibration_encoder.parameters():
+                    p.requires_grad = False
+                # Keep projections/trainable temps/prototypes
+                for p in self.model.text_projection.parameters():
+                    p.requires_grad = True
+                for p in self.model.vibration_projection.parameters():
+                    p.requires_grad = True
+                if getattr(self.model, 'use_prototypes', False) and hasattr(self.model, 'prototypes'):
+                    self.model.prototypes.requires_grad = True
+            elif stage1_epochs > 0 and epoch == stage1_epochs:
+                # Unfreeze back for Stage-2
+                for p in self.model.text_encoder.parameters():
+                    # 텍스트는 LoRA만 활성화되도록 기존 모드 유지
+                    pass
+                for p in self.model.vibration_encoder.parameters():
+                    p.requires_grad = True
 
             epoch_loss = 0.0
             num_batches = 0
@@ -554,6 +584,10 @@ class ContinualTrainer:
                     with torch.cuda.amp.autocast():
                         results = self.model(combined_batch)
                         loss = results['loss']
+                        # RKD/LwF 정규화 (continual 단계에서만 의미 있음)
+                        reg_loss = self._compute_regularizers(combined_batch, results)
+                        if reg_loss is not None:
+                            loss = loss + reg_loss
                     
                     # Backward pass with AMP
                     self.scaler.scale(loss).backward()
@@ -568,6 +602,9 @@ class ContinualTrainer:
                 else:
                     results = self.model(combined_batch)
                     loss = results['loss']
+                    reg_loss = self._compute_regularizers(combined_batch, results)
+                    if reg_loss is not None:
+                        loss = loss + reg_loss
                     
                     # Backward pass
                     loss.backward()
@@ -624,6 +661,125 @@ class ContinualTrainer:
             'best_val_accuracy': best_val_acc,
             'num_epochs': num_epochs
         }
+
+    def _compute_regularizers(self, batch: Dict, results: Dict) -> Optional[torch.Tensor]:
+        """관계 지식 증류(RKD) 및 LwF 보조 항 계산.
+        - RKD: 배치 내 pairwise 거리/각도 매트릭스를 이전(리플레이) 임베딩과 정렬
+        - LwF: 이전 로짓(가능 시)과 현재 로짓의 KL
+        현재는 간결 버전(RKD)만 활성(설정 토글)하며, 리플레이 임베딩이 전달된 경우에만 계산.
+        """
+        reg_cfg = MODEL_CONFIG.get('regularizers', {})
+        rkd_enabled = bool(reg_cfg.get('rkd_enabled', False))
+        lambda_rkd = float(reg_cfg.get('lambda_rkd', 0.0))
+        if not rkd_enabled or lambda_rkd <= 0.0:
+            return None
+        # 리플레이 임베딩이 없는 경우 skip
+        rt = batch.get('replay_text_embeddings', None)
+        rv = batch.get('replay_vib_embeddings', None)
+        if rt is None or rv is None or rt.numel() == 0 or rv.numel() == 0:
+            return None
+        # 현재 임베딩 (정규화 상태)
+        t = results.get('text_embeddings', None)
+        v = results.get('vib_embeddings', None)
+        if t is None or v is None:
+            return None
+        t = F.normalize(t, p=2, dim=1)
+        v = F.normalize(v, p=2, dim=1)
+        rt = F.normalize(rt, p=2, dim=1)
+        rv = F.normalize(rv, p=2, dim=1)
+        # 거리 기반 RKD: 현재 쌍wise 코사인 거리 분포 vs 리플레이 분포
+        def _pairwise_cos(x):
+            s = torch.matmul(x, x.t())
+            return s
+        # 텍스트/진동 각각 계산 후 평균
+        s_t = _pairwise_cos(t)
+        s_v = _pairwise_cos(v)
+        s_rt = _pairwise_cos(rt)
+        s_rv = _pairwise_cos(rv)
+        # 사이즈가 다르므로 비교를 위해 상삼각 정규화된 히스토그램 근사(간단 L2로 근사)
+        def _upper_tri(a):
+            n = a.size(0)
+            if n <= 1:
+                return a.new_zeros(1)
+            iu = torch.triu_indices(n, n, offset=1, device=a.device)
+            return a[iu[0], iu[1]]
+        ut, uv = _upper_tri(s_t), _upper_tri(s_v)
+        urt, urv = _upper_tri(s_rt), _upper_tri(s_rv)
+        # 평균/분산 정규화 후 L2 차이
+        def _norm_vec(x):
+            if x.numel() == 0:
+                return x
+            return (x - x.mean()) / (x.std(unbiased=False) + 1e-6)
+        ut, uv, urt, urv = map(_norm_vec, [ut, uv, urt, urv])
+        loss_t = F.mse_loss(ut, urt.expand_as(ut)[:ut.numel()]) if ut.numel() > 0 and urt.numel() > 0 else t.new_zeros(1)
+        loss_v = F.mse_loss(uv, urv.expand_as(uv)[:uv.numel()]) if uv.numel() > 0 and urv.numel() > 0 else v.new_zeros(1)
+        return lambda_rkd * 0.5 * (loss_t + loss_v)
+
+    def _procrustes_init_vib_projection(self, dataloader: DataLoader, max_batches: int = 50) -> None:
+        """도메인1에서 클래스 중심(텍스트/진동) 기반 정규직교 Procrustes로 vib projection 마지막층 초기화.
+        Args:
+            dataloader: 첫 도메인 train 로더
+            max_batches: 사용 배치 수 제한(속도/안정성)
+        """
+        if dataloader is None:
+            return
+        device = self.device
+        self.model.eval()
+        embedding_dim = self.model.embedding_dim
+        # 클래스 수 추정 (설정에서)
+        num_classes = int(MODEL_CONFIG.get('aux_classification', {}).get('num_classes', 7))
+        # 누적 합/카운트
+        sum_text = torch.zeros(num_classes, embedding_dim, device=device)
+        sum_vib = torch.zeros(num_classes, embedding_dim, device=device)
+        count = torch.zeros(num_classes, dtype=torch.long, device=device)
+        with torch.no_grad():
+            for b_idx, batch in enumerate(dataloader):
+                if b_idx >= max_batches:
+                    break
+                batch = self._move_batch_to_device(batch)
+                out = self.model(batch, return_embeddings=True)
+                text_emb = F.normalize(out['text_embeddings'], p=2, dim=1)
+                vib_emb = F.normalize(out['vib_embeddings'], p=2, dim=1)
+                labels = batch.get('labels', None)
+                if labels is None:
+                    continue
+                if labels.dim() == 2:
+                    cls = labels[:, 0]
+                elif labels.dim() == 1:
+                    cls = labels
+                else:
+                    continue
+                cls = cls.clamp(min=0, max=num_classes - 1)
+                # 배치 내 클래스별 평균 누적
+                for c in cls.unique().tolist():
+                    m = (cls == c)
+                    if m.any():
+                        sum_text[c] += text_emb[m].mean(dim=0)
+                        sum_vib[c] += vib_emb[m].mean(dim=0)
+                        count[c] += 1
+        # 유효 클래스 필터
+        valid = count > 0
+        if valid.sum() < 2:
+            # 의미있는 정렬 불가
+            return
+        mu_t = F.normalize(sum_text[valid] / count[valid].float().unsqueeze(1), p=2, dim=1)  # (K', D)
+        mu_v = F.normalize(sum_vib[valid] / count[valid].float().unsqueeze(1), p=2, dim=1)  # (K', D)
+        # A^T B = (mu_v)^T (mu_t)
+        cov = torch.matmul(mu_v.t(), mu_t)  # (D, D)
+        # SVD
+        try:
+            U, S, Vh = torch.linalg.svd(cov)
+        except RuntimeError:
+            U, S, Vh = torch.svd(cov)  # 호환 경로
+        R = torch.matmul(U, Vh)  # (D, D), orthonormal
+        # 마지막 linear layer에 주입 (y = x W^T + b) 이므로 weight = R^T, bias=0
+        last_linear = self.model.vibration_projection[3]
+        assert isinstance(last_linear, nn.Linear)
+        with torch.no_grad():
+            last_linear.weight.copy_(R.t())
+            if last_linear.bias is not None:
+                last_linear.bias.zero_()
+        self.model.train()
     
     def _collect_domain_embeddings(self, dataloader: DataLoader) -> Optional[Dict]:
         """현재 도메인 데이터의 임베딩 수집 (🎯 라벨 정보 포함)"""

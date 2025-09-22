@@ -22,6 +22,15 @@ MODEL_CONFIG = {
         }
     },
     
+    # Prototypes (class anchors) for shared semantic space
+    'prototypes': {
+        'enabled': True,           # turn on prototype alignment loss
+        'tau': 0.1,                # temperature for prototype logits
+        'lambda_proto': 0.5,       # loss weight for prototype CE
+        'ema_momentum': 0.99,      # EMA momentum for prototype updates
+        'init_from_text': True     # initialize prototypes from text class means
+    },
+    
     # Vibration Encoder (1D-CNN) - 2048 최적화 아키텍처
     'vibration_encoder': {
         'input_length': 2048,  # 4096 → 2048 (베어링 회전 주기 최적화)
@@ -60,6 +69,27 @@ MODEL_CONFIG = {
         'output_dim': 256,  # 512 → 256: 최종 임베딩 차원
         'dropout': 0.1
     },
+    # Residual projection stack (optional)
+    'residual_projection': {
+        'enabled': True,
+        'num_layers': 3,
+        'ffn_mult': 4,
+        'dropout': 0.1
+    },
+
+    # Similarity head options
+    'similarity': {
+        'bilinear_enabled': True,
+        'lambda_bilinear': 0.3
+    },
+
+    # Regularizers for continual learning
+    'regularizers': {
+        'rkd_enabled': True,
+        'lambda_rkd': 0.1,
+        'lwf_enabled': False,
+        'lambda_lwf': 0.0
+    },
     # Auxiliary classification for first domain bootstrapping
     'aux_classification': {
         'enabled': True,   # 🎯 CRITICAL FIX: Auxiliary loss 활성화 (supervised signal 강화)
@@ -96,6 +126,9 @@ TRAINING_CONFIG = {
     'lora_lr_mult': 3.0,
     'proj_lr_mult': 5.0,  # 3.0 → 5.0 (continual learning에서 projection 학습 강화)
     'vib_lr_mult': 2.0,   # 1.0 → 2.0 (vibration encoder 학습 강화)
+
+    # First-domain two-stage schedule
+    'first_domain_stage1_epochs': 15  # Stage-1: encoders freeze, projection/prototypes only
 }
 
 # 데이터 설정
