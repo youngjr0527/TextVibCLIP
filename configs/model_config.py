@@ -26,7 +26,7 @@ MODEL_CONFIG = {
     'prototypes': {
         'enabled': True,           # turn on prototype alignment loss
         'tau': 0.1,                # temperature for prototype logits
-        'lambda_proto': 0.5,       # loss weight for prototype CE
+        'lambda_proto': 0.25,       # loss weight for prototype CE
         'ema_momentum': 0.99,      # EMA momentum for prototype updates
         'init_from_text': True     # initialize prototypes from text class means
     },
@@ -86,7 +86,7 @@ MODEL_CONFIG = {
     # Regularizers for continual learning
     'regularizers': {
         'rkd_enabled': True,
-        'lambda_rkd': 0.1,
+        'lambda_rkd': 0.2,
         'lwf_enabled': False,
         'lambda_lwf': 0.0
     },
@@ -110,7 +110,8 @@ TRAINING_CONFIG = {
     
     # Continual Learning 설정
     'replay_buffer_size': 500,  # 도메인당 저장할 embedding 수
-    'replay_ratio': 0.3,  # 새 데이터 vs replay 데이터 비율
+    'replay_ratio': 0.5,  # 새 데이터 vs replay 데이터 비율
+    'replay_every_n': 1,  # 몇 배치마다 replay를 섞을지 (작은 에포크에서는 1 권장)
     
     # Early stopping
     'patience': 10,
@@ -128,7 +129,7 @@ TRAINING_CONFIG = {
     'vib_lr_mult': 2.0,   # 1.0 → 2.0 (vibration encoder 학습 강화)
 
     # First-domain two-stage schedule
-    'first_domain_stage1_epochs': 15  # Stage-1: encoders freeze, projection/prototypes only
+    'first_domain_stage1_epochs': 8  # Stage-1: encoders freeze, projection/prototypes only
 }
 
 # 데이터 설정

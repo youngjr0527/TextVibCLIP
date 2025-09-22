@@ -1,0 +1,216 @@
+## 서론
+
+산업 설비의 고장 진단에서 베어링 결함을 조기에 탐지하고 정확히 식별하는 기술은 생산성 향상, 비용 절감, 그리고 설비 안정성 확보에 핵심적인 역할을 한다. 그러나 실제 산업 환경에서는 베어링 유형, 회전 속도, 결함 형태 등이 지속적으로 변화하며, 이는 기존에 학습된 진단 모델의 성능 저하를 유발하는 **domain shift** 문제를 야기한다. 이러한 문제는 모델의 실용성을 제한하는 주요 요인으로 작용한다.
+
+딥러닝 기반 고장 진단 연구는 신호 처리 기법과 최신 머신러닝 알고리즘을 활용하여 높은 결함 분류 성능을 달성해왔다. 하지만 대부분의 연구는 단일 도메인(특정 베어링 타입, 고정 회전 속도)에 초점을 맞춘 성능 최적화에 집중되어 있어, 도메인 변화에 대한 **generalization** 능력이 부족하다. 베어링 간 결함 특성과 회전체 부품의 동작 조건이 다르기 때문에, domain gap이 커질수록 성능 저하가 두드러진다. 이를 해결하려면 기존에 학습한 도메인 지식의 **catastrophic forgetting**을 방지하면서도 새로운 도메인 정보를 순차적으로 학습할 수 있는 **continual learning** 접근이 필요하다.
+
+본 연구는 진동 신호와 텍스트 형태의 metadata(베어링 유형, 회전 속도, 결함 특성)를 결합한 **contrastive learning** 기반의 새로운 방법론을 제안한다. 이는 이미지와 텍스트 쌍을 활용한 CLIP 구조를 진동 신호와 텍스트로 재구성한 것으로, 텍스트 정보를 통해 다양한 도메인의 특징을 임베딩 공간에 효과적으로 매핑하여 모델의 지식을 지속적으로 확장한다. 제안된 방법론은 **두 가지 시나리오**로 검증한다:
+
+**시나리오 1**: UOS 데이터셋을 활용한 **Varying Speed** 실험 (600→1600 RPM)
+**시나리오 2**: CWRU 데이터셋을 활용한 **Varying Load** 실험 (0→3 HP)
+
+연구의 목표는 continual learning 전략을 통해 이전 도메인의 지식을 보존하면서 새로운 베어링 유형과 회전 속도 조건을 순차적으로 학습하는 모델을 개발하는 것이다. 특히, 진동-텍스트 contrastive learning으로 형성된 **multimodal embedding space**은 각 도메인의 고유한 특성을 유지하며, 도메인 전환 시 성능 저하를 최소화한다. 이를 통해 운용 조건이 변화하는 실제 산업 현장에 적용 가능한 **robust diagnosis model**을 제공한다.  LoRA (Low-Rank Adaptation)를 encoders에 도입하여 parameter-efficient adaptation을 실현하며, 첫 domain에서는 standard joint training, subsequent domains에서 LoRA + replay buffer를 활용한다.
+
+---
+
+## 배경 및 관련 연구
+
+### 1. Deep Learning for Bearing Fault Diagnosis
+
+회전 기계의 결함 진단 분야는 전통적인 신호 처리 기반 접근에서 딥러닝 기반 방법론으로 전환되고 있다. 딥러닝 모델은 복잡한 진동 패턴에서 결함 특성을 자동으로 학습하여 높은 성능을 보인다. 예를 들어:
+
+- **RNN 및 Transformer**: 시계열 데이터의 장기 의존성을 모델링하여 시간적 변동성을 가진 결함 패턴을 식별.
+그러나 이러한 모델은 학습 데이터와 유사한 도메인에서만 우수한 성능을 발휘하며, 새로운 도메인이나 예상치 못한 운전 조건에서는 성능이 급격히 저하된다. 최근 연구에서 다중 스케일 1D-CNN이 bearing fault diagnosis에서 메모리 효율성과 실용성을 크게 향상시킨다.
+
+### 2. Continual Learning in Industrial Applications
+
+산업 환경의 동적 특성을 고려할 때, 모델이 새로운 도메인 지식을 지속적으로 습득하면서 기존 도메인 성능을 유지하는 것이 중요하다. **Continual learning**은 새로운 task나 domain이 순차적으로 제시될 때, 이전 학습 내용의 catastrophic forgetting을 방지하며 지식을 확장하는 것을 목표로 한다.
+
+- **Experience replay**: 이전 domain의 representative samples 또는 Prototype vector을 memory bank에 저장하고, 새로운 domain 학습 시 이를 함께 활용하여 전체 domain에 대한 일관된 성능을 유지. 2025 연구에서 uncertainty-based replay buffer filtering이 continual reinforcement learning에서 effective하다.
+
+여기서 bearing vibration signals의 time series 특성을 이해하는 것이 핵심이다. 일반적인 time series data (e.g., stock prices, weather patterns)는 장기적인 trend, seasonality, periodicity 같은 패턴을 중심으로 forecasting이나 anomaly detection 등을 수행한다. 반면, bearing vibration signals은 short-term segments (e.g., 1600-6000 samples)에서 fault classification/diagnosis를 목적으로 하며, high-frequency impulses (e.g., inner/outer race faults), noise interference, domain shifts (varying speeds/loads)에 sensitive하다. UOS dataset 같은 bearing datasets는 multi-domain 구조 (RPM)를 가진다.
+
+Continual Learning 시나리오에서 가변 작업 조건(**Varying Working Conditions, VWC**) 하의 회전 기계 고장 진단 분야에서 활발히 연구되고 있다. **VWC는** 기계가 작동하는 동안 기계의 성능과 진동 신호 특성에 영향을 미치는 모든 작동 파라미터 변화를 포괄한다. 
+
+- 속도 변화 (Varying Speed): 회전 속도(RPM)의 변화.
+- 부하 변화 (Varying Load): 기계에 가해지는 부하의 변화.
+- 환경 노이즈 (Environmental Noise): 주변 환경에서 발생하는 예측 불가능한 노이즈.
+
+**시나리오 1 - UOS 데이터셋**: Varying Speed 실험 (domain shift 시 RPM이 변화)
+- Domain 순서: 600 → 800 → 1000 → 1200 → 1400 → 1600 RPM
+- 라벨: 회전체 상태(H/L/U/M) × 베어링 상태(H/B/IR/OR) × 베어링 타입(3종)
+
+**시나리오 2 - CWRU 데이터셋**: Varying Load 실험 (domain shift 시 부하가 변화)  
+- Domain 순서: 0hp → 1hp → 2hp → 3hp
+- 라벨: 베어링 상태(Normal/B/IR/OR), 베어링 타입은 Deep Groove Ball로 고정
+
+### 3. Contrastive Learning and Multi-modal Approaches
+
+**Contrastive learning**은 데이터 샘플 간 유사성과 차이점을 학습하여 효과적인 특징 표현을 얻는 방법론이다. 이는 **CLIP**에서 큰 성공을 거두었으며, 이미지와 텍스트를 동일한 embedding space에 매핑하여 유연한 인식을 가능하게 했다. 본 연구는 이 개념을 **진동 신호와 텍스트 쌍**으로 확장하여 적용한다.
+
+### 4. Time Series Representation Learning
+
+시계열 데이터의 **self-supervised representation learning**은 시간적 특성과 구조적 패턴을 포착하는 데 유용하다.
+
+- **1D-CNN**: 다중 스케일 컨볼루션을 통해 베어링 결함의 다양한 주파수 패턴을 효과적으로 감지. TST 대비 메모리 효율성과 계산 효율성이 뛰어나며, 실제 산업 환경 배포에 적합하다.
+본 연구는 1D-CNN을 활용하여 진동 신호의 representation을 학습한다.
+
+## 방법론
+
+### 1. 파일명 파싱 (UOS 데이터셋) (디렉토리: uos_data)
+
+예시: `"H_B_8_30204_800.mat"`
+
+1. `.mat` 확장자는 제거하고 → `"H_B_8_30204_800"`
+2. `_` 언더스코어 기준으로 split → `["H", "B", "8", "30204", "800"]`
+
+---
+
+### 2. 각 부분의 의미 및 매핑 설명
+
+| 인덱스 | 값 | 의미 |
+| --- | --- | --- |
+| 0 | `H` , `L`,  `U1~U3`, `M1~M3` | **Rotating Component Condition** (회전체 상태) |
+| 1 | `H`,`IR`, `OR`, `B` | **Bearing Condition** (베어링 상태) |
+| 2 | `8` , `16` | **Sampling Rate** (샘플링 주파수) |
+| 3 | `6204`, `30204`, `N204`, `NJ204` | **베어링 종류** |
+| `6204`: Deep Groove Ball Bearing |  |  |
+| `N204`, `NJ204`: Cylindrical Roller Bearings |  |  |
+| `30204`: Tapered Roller Bearing |  |  |
+| 4 | `600`, `800`, `1000`, `1200`, `1400`, `1600` | **Rotating Speed** (회전 속도). 단위: RPM |
+
+**인덱스 0:**
+
+- `H`: Healthy, 즉 회전체에 결함 없음
+- 다른 예: `L` (Looseness), `U1~U3` (Unbalance 정도), `M1~M3` (Misalignment 정도)
+
+**인덱스 1:**
+
+- `H`: Healthy
+- `B`: Ball fault (볼 손상)
+- `IR`: Inner-raceway fault (내륜 손상)
+- `OR`: Outer-raceway fault (외륜 손상)
+
+**인덱스 2:**
+
+- 단위: kHz → `8`은 8000 Hz
+- 8 또는 16 중 하나임
+
+**인덱스 3:**
+
+- `30204`: Tapered Roller Bearing (원추 롤러 베어링)
+- `6204`: Deep Groove Ball Bearing (깊은 홈 볼 베어링)
+- `N204`, `NJ204`: Cylindrical Roller Bearings (원통 롤러 베어링)
+
+**인덱스 4:**
+
+- 단위: RPM
+- 예: 600, 800, 1000, 1200, 1400, 1600 중 하나
+
+---
+
+### 예시) `"H_B_16_30204_800"` 의미 정리
+
+- **Rotating Component**: Healthy 상태 (이상 없음)
+- **Bearing**: Ball fault (볼 손상 있음)
+- **Sampling Rate**: 16 kHz
+- **Bearing Type**: 30204 → Tapered Roller Bearing
+- **Rotating Speed**: 800 RPM
+
+---
+
+### UOS 데이터셋: 사용할 샘플링 레이트(**Sampling Rate)**
+
+데이터 해상도의 일관성을 유지하고, 분석 복잡성을 줄이기 위해 샘플링 레이트는 16 kHz만 사용하며 8 kHz 데이터는 제외한다. 
+
+---
+
+### 구분 대상 vs Domain shift
+
+**🎯 개선된 구분 대상 (7-클래스 시스템)**: 
+
+**주 분류 (7개 클래스)**:
+- **H (Healthy)**: H_H - 회전체 정상 + 베어링 정상 (완전 건강)
+- **B (Ball Fault)**: H_B - 회전체 정상 + 베어링 볼 결함
+- **IR (Inner Race)**: H_IR - 회전체 정상 + 베어링 내륜 결함
+- **OR (Outer Race)**: H_OR - 회전체 정상 + 베어링 외륜 결함
+- **L (Looseness)**: L_H - 회전체 느슨함 + 베어링 정상
+- **U (Unbalance)**: U_H - 회전체 불균형 + 베어링 정상
+- **M (Misalignment)**: M_H - 회전체 정렬불량 + 베어링 정상
+
+**보조 분류**:
+- bearing_types(Tapered Roller, Deep Groove Ball, Cylindrical Roller)
+
+**연구 의의**: 베어링 결함과 회전체 결함을 분리하여 더 정밀한 진단 가능
+    - 파일명에 포함된 `U1~U3`, `M1~M3`는 각 최고 단계인 3단계만 사용.
+    - (회전체 카테고리 간 label balance를 확보하기 위해, U와 M 조건에서는 가장 높은 severity level (level 3)만 사용한다. 구체적으로 U1과 U2는 제외하고 U3를 U로 relabel하며, 마찬가지로 M1과 M2는 제외하고 M3를 M으로 relabel한다. 이 접근은 모든 level을 포함할 경우 U와 M에 대한 샘플 수가 H나 L 같은 다른 카테고리에 비해 3배 많아지는 data imbalance를 방지한다.)
+
+**Domain shift(varying speed)**: rotating_speed
+
+- 600→800→1000→1200→1400→1600 RPM
+- 결함의 **severity level** 차이와 운전 조건 변화에 모델이 robust한지를 실험
+
+---
+
+### 2. Model Architecture
+
+- **Text Encoder**: Transformer 기반 언어 모델(DistilBERT)을 사용하며, 산업 진단 시나리오에 맞춘 fine-tuning으로 텍스트 임베딩 추출. LoRA 도입으로 parameter-efficient adaptation.
+- **Vibration Encoder**: 1D-CNN (다중 스케일 컨볼루션)으로 vibration signals 처리, 베어링 결함의 다양한 주파수 패턴 감지. Full training + Replay 기법 사용.
+- **Contrastive Pairwise Matrix**: 진동과 텍스트 임베딩을 배치 단위로 쌍지어 유사도 계산, contrastive learning으로 positive/negative pair 간 거리 학습.
+
+### 3. Contrastive Learning Objective
+
+**InfoNCE loss**를 사용하여 진동과 텍스트 임베딩을 동일한 특징 공간에 매핑. 이를 통해 모델은 텍스트 설명에 맞는 진동 패턴을 인식하며, domain 변동에 robust한 처리가 가능하다.
+
+### 4. Continual Learning Scenario and Replay-Based Strategy
+
+Domain 확장 시 catastrophic forgetting 방지 위해 **replay-based strategy** 도입. 이전 domain의 representative samples을 memory bank에 저장, 새로운 domain 학습 시 이를 활용하여 전체 domain 성능 유지.
+
+
+---
+
+### Joint Training → Continual Domain Adaptation
+
+① Joint Training (Initial Alignment)
+
+- **첫 번째 도메인(600 RPM)만**으로 Text Encoder ↔ Vibration Encoder joint 학습.
+- InfoNCE temperature τ 동일하게 설정하여 embedding space 맞춤.
+- **LoRA 기반 parameter-efficient fine-tuning** 적용.
+Stratified sampling: bearing_condition, rotating_component_category(H/L/U/M), bearing_type 균형 유지.
+
+② Continual Domain Adaptation
+D₁ (첫 domain) → D₂ → … 순차 학습
+
+**첫 번째 도메인(600 RPM)**: Text encoder LoRA + Vibration encoder full training.
+**이후 도메인들(800~1600 RPM)**: Text encoder freeze + Vibration encoder adaptation
+Vibration encoder adaptation: Full parameter fine-tuning + Replay mechanism (embedding 저장방식).
+
+
+# 1. Joint Training 단계
+
+Cross-modal Alignment loss = InfoNCE
+\[ \text{InfoNCE} = \frac{1}{2N} \sum_{i=1}^N \left[ -\log \frac{e^{\langle z_{\text{text}}^i, z_{\text{vib}}^i \rangle / \tau}} {\sum_j e^{\langle z_{\text{text}}^i, z_{\text{vib}}^j \rangle / \tau}} - \log \frac{e^{\langle z_{\text{vib}}^i, z_{\text{text}}^i \rangle / \tau}} {\sum_j e^{\langle z_{\text{vib}}^i, z_{\text{text}}^j \rangle / \tau}} \right] \]
+
+첫 항: Text query – positive vibration pair close, negatives far.
+두 번째 항: Vibration query – symmetric.
+
+- Identical τ for balanced learning.
+- Encoders form common space for rotating_components, bearing_conditions, bearing_types.
+
+# 2. Continual Domain Adaptation 단계
+
+\[ $\text{InfoNCE} = \frac{1}{2N} \sum_{i=1}^{N} \left[ -\log \frac{\exp(\langle z_{\text{text}}^{i}, z_{\text{vib}}^{i} \rangle / \tau_{\text{text}})} {\sum_{j} \exp(\langle z_{\text{text}}^{i}, z_{\text{vib}}^{j} \rangle / \tau_{\text{text}})} - \log \frac{\exp(\langle z_{\text{vib}}^{i}, z_{\text{text}}^{i} \rangle / \tau_{\text{vib}})} {\sum_{j} \exp(\langle z_{\text{vib}}^{i}, z_{\text{text}}^{j} \rangle / \tau_{\text{vib}})} \right]$ \]
+
+- τ_text: Text adaptation control (higher for minimal change).
+- τ_vib: Vibration adaptation control (lower for aggressive update).
+- New domain (rotating_speed changes) learning.
+- Vibration encoder focused.
+- **Asymmetric adaptation**: τ adjustment for gradient scaling.
+- + LoRA: Text encoder에만 적용되는 low-rank matrices for efficient updates (freeze base, train adapters).
+- Replay: Memory bank samples mixed, negative pairs from bank for robust contrast.
+
+> Joint training에서 τ_text = τ_vib for alignment.
+Continual에서 τ_vib lower for vibration gradient boost, domain adaptation. LoRA + replay from second domain for forgetting mitigation.
+> 
+
+---

@@ -163,6 +163,9 @@ class ContinualTrainer:
         self.model.train()
         epoch_losses = []
         stage1_epochs = int(TRAINING_CONFIG.get('first_domain_stage1_epochs', 0))
+        # Quick test 대비 안전장치: 전체 에포크보다 Stage-1이 길면 절반으로 캡핑
+        if num_epochs is not None and stage1_epochs > max(1, num_epochs - 1):
+            stage1_epochs = max(1, num_epochs // 2)
         
         for epoch in range(num_epochs):
             # 첫 도메인 온도 스케줄(선형): init -> final
@@ -561,7 +564,10 @@ class ContinualTrainer:
                 current_batch_size = batch['vibration'].size(0)
                 
                 # Replay 데이터 샘플링 (성능 최적화: 간헐적 사용)
-                use_replay = (batch_idx % 3 == 0)  # 3배치마다 한 번만 replay 사용
+                # 설정 기반: 작은 에포크/빠른 테스트에서는 더 자주 리플레이
+                every_n = int(TRAINING_CONFIG.get('replay_every_n', 1))
+                every_n = max(1, every_n)
+                use_replay = (batch_idx % every_n == 0)
                 
                 if use_replay:
                     replay_batch_size = min(int(current_batch_size * self.replay_ratio), 8)  # 크기 제한

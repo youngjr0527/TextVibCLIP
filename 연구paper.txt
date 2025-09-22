@@ -1,0 +1,113 @@
+# **Abstract + 1. Introduction + 2. Related Work**
+
+Abstract: Early detection and accurate classification of bearing faults are critical for maintaining the reliability of rotating machinery. However, deep‑learning models trained exclusively on vibration signals often suffer severe performance degradation when operating conditions or bearing types change—a challenge commonly referred to as domain shift. To overcome this limitation, we propose TextVibCLIP, a multimodal continual‑learning framework that embeds vibration signals and textual metadata in a unified latent space via bidirectional InfoNCE pre‑training. During the continual domain‑learning stage, the language encoder is frozen while an asymmetric temperature schedule amplifies the gradients flowing to the vibration encoder, enabling rapid adaptation to previously unseen rotating speed and varying load without eroding earlier knowledge. In addition, a replay buffer employing multi‑criteria exemplar selection effectively mitigates catastrophic forgetting. Experiments conducted on the multi‑domain UOS bearing dataset demonstrate that TextVibCLIP improves average domain accuracy by up to (     ) % compared with state‑of‑the‑art continual‑learning baselines and reduces forgetting by (     ) % . The results highlight the practical advantage of combining textual priors with self‑supervised vibration representations for robust fault diagnosis under non‑stationary industrial conditions.
+
+# 1. Introduction
+
+  Deep learning techniques have achieved remarkable success in automated bearing fault diagnosis by learning directly from vibration signals [1,2]. **However, a fundamental challenge arises from domain shifts**: models are typically trained under a fixed set of conditions and assume training and test data share the same distribution [3]. In real industrial settings, machinery operates under *ever-changing conditions* – different bearing types, rotational speeds, loads, and fault modes can all alter the vibration signal characteristics. For instance, varying load conditions or bearing models introduce distinct vibration patterns as operating regimes change over time. Moreover, new fault types and continuous equipment upgrades may occur unpredictably during operation, violating the assumption that all fault scenarios are seen in advance. These **domain shifts** (due to changing loads, speeds) inevitably degrade the performance of conventional fault diagnosis models, which struggle to generalize beyond the conditions present in their training data [4,5].
+
+  Existing deep learning models trained on a single domain or single modality often suffer from **poor cross-domain generalization and catastrophic forgetting** [6]. A model tuned to one dataset or operating condition tends to underperform when deployed under different conditions. Naively fine-tuning such a model on new fault data can lead to catastrophic forgetting – the erosion of previously learned fault knowledge [7]. In other words, as the model adapts to new machine conditions, its accuracy on earlier fault types or domains can drastically decline. One could avoid forgetting by retraining from scratch whenever new data arises, but this is impractical in industry: full retraining demands extensive time and storage resources. To tackle these issues, researchers have explored both continual learning and transfer learning strategies.
+
+  **Continual learning** techniques for fault diagnosis aim to incrementally learn new faults or domains while retaining past knowledge – for example, using specialized network architectures or experience replay buffers that periodically rehearse old data [8,9]. At the same time, **transfer learning** approaches (including domain adaptation and domain generalization) are widely applied to align feature distributions between a source domain and a new target domain, thereby improving generalization to unseen conditions [10,11]. While these methods alleviate some effects of domain shift, they still face a critical limitation: they rely purely on *unimodal* sensor inputs (typically vibrations alone) and cannot leverage the rich contextual information that could guide more robust feature learning.
+
+  The incorporation of **multimodal data** presents a promising avenue to overcome these limitations. **By combining vibration signals with textual metadata – such as fault type descriptions, bearing specifications, or operating conditions – models can leverage multimodal fusion techniques as demonstrated in recent industrial applications [12].** This multimodal approach becomes particularly powerful when combined with **contrastive learning**, which has shown remarkable success in learning robust representations by maximizing agreement between matched pairs while distinguishing unmatched ones [13,14]. The recent success of **CLIP (Contrastive Language-Image Pre-training)** demonstrates this potential: by jointly training image and text encoders to predict which captions match which images through contrastive learning, CLIP achieves highly transferable representations that generalize across diverse visual tasks [15]. This paradigm suggests that similar benefits could be realized in fault diagnosis by aligning vibration signals with their corresponding textual descriptions.
+
+  **Research Gap:** Despite the potential of multimodal contrastive learning, fault diagnosis methods have not yet exploited this approach [16]. Existing works continue to train models on vibration signals alone, missing the opportunity to incorporate semantic knowledge from textual metadata that could enhance generalization. Furthermore, even in the broader machine learning community where CLIP-style frameworks exist, they typically employ a *symmetric* training strategy – using identical learning rates, temperature parameters, and optimization schedules for both modalities. This symmetric approach overlooks a crucial aspect of continual learning scenarios: **when domain shift occurs, the adaptation requirements differ fundamentally between modalities**. In fault diagnosis, when operating conditions change (e.g., new bearing types or speeds), the vibration encoder must learn entirely new signal patterns characteristic of the shifted domain. However, the text encoder's role remains to represent the same fault categories (inner race, outer race, ball faults) – semantic knowledge that stays consistent across domains. No prior work has recognized or addressed this asymmetric adaptation need in multimodal continual learning for fault diagnosis.
+
+  **Our Proposal:** In this paper, we introduce **TextVibCLIP**, a novel multimodal continual learning framework for bearing fault diagnosis that bridges vibration signals with textual metadata to address the above challenges. The core of TextVibCLIP is a *CLIP-inspired contrastive learning paradigm* that learns a joint embedding space for vibrations and text. We employ a **bidirectional InfoNCE loss** that encourages matching vibration–text pairs (e.g., a vibration time-series and its corresponding fault type description) to have similar embeddings, while pushing apart non-matching pairs. This cross-modal contrastive training compels the vibration encoder to capture fault-relevant features that align with semantic knowledge, providing a stable anchor for learning across domains.
+
+  Critically, we propose an **asymmetric continual learning strategy** tailored to the distinct roles of each modality under domain shift. Unlike conventional symmetric approaches, we introduce modality-specific temperature parameters in the InfoNCE loss and apply differential learning strategies: the text encoder is nearly frozen (minimal parameter updates) to preserve its semantic knowledge of fault types, while the vibration encoder undergoes substantial adaptation to learn new domain-specific signal patterns [17]. This asymmetric approach reflects the fundamental insight that semantic fault categories remain invariant across domains, whereas vibration patterns change significantly. Additionally, TextVibCLIP integrates a **replay-based mechanism** where a small set of examples from previous domains is stored and mixed with new domain data during training. This experience replay, combined with our asymmetric adaptation strategy, enables the model to incrementally learn new operating conditions while maintaining diagnostic accuracy on all previously seen domains.
+
+  **Contributions:** In summary, this work makes the following contributions to the field of intelligent fault diagnosis and continual learning. *First*, we propose a **multimodal continual-learning framework** (TextVibCLIP) that, to our knowledge, is the first to incorporate **vibration signals and textual metadata** in a unified model for fault diagnosis under domain shift. *Second*, we introduce a novel **asymmetric continual learning strategy** with modality-specific temperature parameters and learning rates, reflecting the different adaptation requirements of vibration and text encoders under domain shift. *Third*, we develop a **replay-based continual adaptation mechanism** that, when combined with our asymmetric strategy, allows TextVibCLIP to learn from sequentially arriving fault domains without catastrophic forgetting. Through extensive experiments, we validate that TextVibCLIP is highly robust to domain shifts: it maintains accurate fault diagnostic performance across varying bearing types, speeds, and fault conditions, significantly outperforming conventional single-domain or single-modal baselines. Together, these contributions offer a new approach by showing how **asymmetric multimodal continual learning** can enhance the generalization and practical deployment of fault diagnosis models in dynamic industrial environments.
+
+# 2. Related Work
+
+### 2.1 Domain Adaptation in Fault Diagnosis
+
+  The challenge of domain shift in bearing fault diagnosis has motivated extensive research in transfer learning and domain adaptation. When models trained on one operating condition encounter different bearing types, speeds, or loads, their performance significantly degrades [4,5]. To address this, Guo et al. [10] pioneered deep transfer learning using Maximum Mean Discrepancy (MMD) to align feature distributions between source and target domains. Subsequently, adversarial domain adaptation approaches have gained prominence. Domain Adversarial Neural Networks (DANN) [18] learn domain-invariant features through adversarial training, where a domain discriminator is fooled by the feature extractor. Building on this, structured DANN variants have been proposed specifically for bearing fault diagnosis [24], incorporating relatedness matrices to capture intrinsic similarity structures among fault types.
+
+  More sophisticated approaches combine multiple adaptation strategies. Chen et al. [25] proposed residual deep subdomain adaptation networks that align distributions at the class level rather than globally, achieving finer-grained adaptation. Recent work has explored multi-source domain adaptation [26], recognizing that industrial settings often involve multiple source domains. However, these methods face fundamental limitations: they operate on single-modal vibration data and assume a fixed source-target scenario rather than continuous adaptation. **Our work transcends these limitations by leveraging multimodal information as domain-invariant anchors and enabling continuous adaptation to sequentially arriving domains.**
+
+### 2.2 Continual Learning for Sequential Fault Diagnosis
+
+  While domain adaptation handles fixed source-target scenarios, real industrial environments require models to continuously learn from new domains without forgetting previous knowledge. Catastrophic forgetting [7] poses a significant challenge when models sequentially learn new operating conditions or fault types. In the fault diagnosis domain, several continual learning frameworks have been developed. Zhang et al. [27] proposed an adaptive feature consolidation residual network that incrementally learns new fault types while preserving knowledge through elastic weight consolidation. Their approach dynamically adjusts the importance weights of network parameters based on Fisher information.
+
+  Li et al. [8] took a bio-inspired approach with their vaccine-enhanced artificial immune continual learning method, maintaining a memory buffer of critical samples that are periodically replayed during training on new domains. Similarly, Wang et al. [28] developed a collaborative self-attention framework that facilitates knowledge transfer between old and new tasks through attention mechanisms. More recently, continual learning has been applied to handle evolving fault conditions [19], where new fault severities or types emerge over time. These methods demonstrate the feasibility of incremental learning in fault diagnosis but remain limited to single-modal approaches. **Our framework advances continual learning by introducing cross-modal semantic anchors that provide stable reference points across domain shifts, fundamentally changing how knowledge is preserved and transferred.**
+
+### 2.3 Contrastive and Multimodal Learning
+
+  Contrastive learning has emerged as a powerful paradigm for learning robust representations by maximizing agreement between positive pairs while pushing apart negative ones. In fault diagnosis, contrastive approaches have shown promise for learning domain-invariant features. Zhang et al. [13] applied contrastive learning to vibration images, while Wei et al. [14] developed self-supervised frameworks for machinery fault diagnosis. Time-series specific methods like T-Loss [20] and TS-TCC [21] have adapted contrastive learning for temporal data, incorporating specialized augmentations and temporal consistency constraints.
+
+  The success of multimodal contrastive learning in computer vision, exemplified by CLIP [15] and ALIGN [22], suggests untapped potential for industrial applications. CLIP's ability to align visual and textual representations through large-scale contrastive training enables remarkable zero-shot transfer capabilities. In industrial contexts, multimodal approaches have primarily focused on sensor fusion—combining vibration with acoustic emission [23] or temperature readings [29]. Recent work has begun exploring vision-language models for industrial applications [12], but **vibration-text alignment remains unexplored**. Furthermore, existing multimodal frameworks employ symmetric training where all modalities are treated equally. This overlooks the fundamental asymmetry in continual learning: semantic knowledge (text) remains invariant while sensory patterns (vibration) change with domains. **Our asymmetric training strategy, inspired by temperature scheduling research [17], addresses this gap by differentially adapting each modality based on its role in continual learning.**
+
+### 2.4 Research Gap and Our Contributions
+
+Table 1 positions our work relative to existing approaches.
+
+                                                    **Table 1: Comparison with existing methods**
+
+| Method Category | Representative Works | Key Features | Limitations |
+| --- | --- | --- | --- |
+| Domain Adaptation | DANN [18], Subdomain Adaptation [25] | Aligns source-target distributions | Single-modal, fixed domains |
+| Continual Learning | Vaccine-enhanced [8], Feature Consolidation [27] | Sequential learning with replay/regularization | Single-modal, no semantic anchors |
+| Contrastive Learning | T-Loss [20], TS-TCC [21] | Self-supervised feature learning | Within-modality only |
+| Multimodal Fusion | Vibration-Acoustic [23], Industrial V-L [12] | Multiple data sources | Symmetric training, no continual learning |
+| **TextVibCLIP (Ours)** | - | Vibration-text alignment, asymmetric continual learning | - |
+
+[1] L. Wen, X. Li, L. Gao, and Y. Zhang, "A new convolutional neural network-based data-driven fault diagnosis method," IEEE Trans. Ind. Electron., vol. 65, no. 7, pp. 5990-5998, Jul. 2018.
+
+[2] H. Shao, H. Jiang, Y. Lin, and X. Li, "A novel method for intelligent fault diagnosis of rolling bearings using ensemble deep auto-encoders," Mech. Syst. Signal Process., vol. 102, pp. 278-297, Mar. 2018.
+
+[3] D. Neupane and J. Seok, "Bearing fault detection and diagnosis using case western reserve university dataset with deep learning approaches: A review," IEEE Access, vol. 8, pp. 93155-93178, 2020.
+
+[4] W. Zhang, G. Peng, C. Li, Y. Chen, and Z. Zhang, "A new deep learning model for fault diagnosis with good anti-noise and domain adaptation ability on raw vibration signals," Sensors, vol. 17, no. 2, p. 425, 2017.
+
+[5] S. Xing, Y. Lei, and S. Wang, "Distribution-invariant deep belief network for intelligent fault diagnosis of machines under new working conditions," IEEE Trans. Ind. Electron., vol. 68, no. 3, pp. 2617-2625, Mar. 2021.
+
+[6] C. Qian, J. Zhu, Y. Shen, Q. Jiang, and Q. Zhang, "Deep transfer learning in mechanical intelligent fault diagnosis: Application and challenge," Neural Process. Lett., vol. 54, no. 3, pp. 2509-2531, 2022.
+
+[7] J. Kirkpatrick et al., "Overcoming catastrophic forgetting in neural networks," Proc. Natl. Acad. Sci., vol. 114, no. 13, pp. 3521-3526, 2017.
+
+[8] D. Li et al., "Vaccine-enhanced artificial immune continual learning method for bearing fault diagnosis," IEEE Trans. Ind. Electron., vol. 69, no. 11, pp. 11586-11597, Nov. 2022.
+
+[9] Y. He et al., "Feature boosting based continual learning method for bearing fault diagnosis with incremental fault types," Eng. Appl. Artif. Intell., vol. 133, p. 108212, 2024.
+
+[10] L. Guo, Y. Lei, S. Xing, T. Yan, and N. Li, "Deep convolutional transfer learning network: A new method for intelligent fault diagnosis of machines with unlabeled data," IEEE Trans. Ind. Electron., vol. 66, no. 9, pp. 7316-7325, Sep. 2019.
+
+[11] B. Yang, Y. Lei, X. Li, and C. Roberts, "Deep targeted transfer learning along designable adaptation trajectory for fault diagnosis across different machines," IEEE Trans. Ind. Electron., vol. 70, no. 9, pp. 9463-9473, Sep. 2023.
+
+[12] K. Moenck, N. Meisen, T. Schürmann, and M. Pauly, "Industrial language-image dataset (ILID): Adapting vision foundation models for industrial settings," arXiv preprint arXiv:2406.09637, 2024.
+
+[13] W. Zhang, D. Chen, and Y. Kong, "Self-supervised joint learning fault diagnosis method based on three channel vibration images," Sensors, vol. 21, no. 14, p. 4774, 2021.
+
+[14] Y. Wei, X. Cai, J. Long, Z. Yang, and C. Li, "Self-supervised contrastive representation learning for machinery fault diagnosis," in Neural Computing for Advanced Applications, Communications in Computer and Information Science, vol. 1449, Springer, 2021.
+
+[15] A. Radford et al., "Learning transferable visual models from natural language supervision," arXiv preprint arXiv:2103.00020, 2021.
+
+[16] M. Fernandes, J. M. Corchado, and G. Marreiros, "Machine learning techniques applied to mechanical fault diagnosis and fault prognosis in the context of real industrial manufacturing use-cases: a systematic literature review," Appl. Intell., vol. 52, no. 12, pp. 14246-14280, 2022.
+
+[17] A. Kukleva, M. Böhle, B. Schiele, H. Kuehne, and C. Rupprecht, "Temperature schedules for self-supervised contrastive methods on long-tail data," in Proc. Int. Conf. Learning Representations (ICLR), 2023.
+
+[18] Y. Ganin et al., "Domain-adversarial training of neural networks," J. Mach. Learn. Res., vol. 17, no. 1, pp. 2096-2030, 2016.
+
+[19] H. Zhang et al., "Incremental novelty discovery for bearing fault diagnosis under continuous flow of unlabeled faults," ISA Trans., vol. 136, pp. 594-608, 2023.
+
+[20] J.-Y. Franceschi, A. Dieuleveut, and M. Jaggi, "Unsupervised scalable representation learning for multivariate time series," in Advances in Neural Information Processing Systems, vol. 32, 2019.
+
+[21] E. Eldele et al., "Time-series representation learning via temporal and contextual contrasting," in Proc. Int. Joint Conf. Artificial Intelligence (IJCAI), pp. 2352-2359, 2021.
+
+[22] C. Jia et al., "Scaling up visual and vision-language representation learning with noisy text supervision," in Proc. Int. Conf. Machine Learning (ICML), pp. 4904-4916, 2021.
+
+[23] A. Safaei, M. Safaei, and M. G. Ahsaee, "Using multi-sensor data fusion for vibration fault diagnosis of rolling element bearings by accelerometer and load cell," Inf. Fusion, vol. 18, pp. 1-8, Jul. 2014.
+
+[24] W. Zhang, X. Li, H. Ma, Z. Luo, and X. Li, "Structured domain adversarial neural network for transfer fault diagnosis of bearings under different working conditions," IEEE Trans. Instrum. Meas., vol. 70, pp. 1-13, 2021.
+
+[25] Z. Chen, J. Wu, C. Deng, C. Wang, and Y. Wang, "Residual deep subdomain adaptation network: A new method for intelligent fault diagnosis of bearings across multiple domains," Mech. Mach. Theory, vol. 169, p. 104635, 2022.
+
+[26] J. Tian, D. Han, H. R. Karimi, Y. Zhang, and P. Shi, "A universal multi-source domain adaptation method with unsupervised clustering for mechanical fault diagnosis under incomplete data," Neural Netw., vol. 173, p. 106167, 2024.
+
+[27] Y. Zhang, C. Shen, X. Zhong, K. Chen, W. Huang, and Z. Zhu, "Adaptive feature consolidation residual network for exemplar-free continuous diagnosis of rotating machinery with fault-type increments," Adv. Eng. Inform., vol. 62, p. 102715, 2024.
+
+[28] P. Wang, H. Xiong, and H. He, "Bearing fault diagnosis under various conditions using an incremental learning-based multi-task shared classifier," Knowl.-Based Syst., vol. 269, p. 110395, 2023.
+
+[29] S. Wan, T. Li, B. Fang, et al., "Bearing fault diagnosis based on multisensor information coupling and attentional feature fusion," IEEE Trans. Instrum. Meas., vol. 72, pp. 1-13, 2023.

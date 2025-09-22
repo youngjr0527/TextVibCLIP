@@ -1,0 +1,117 @@
+[문서 목적]
+이 문서는 TextVibCLIP 코드베이스에 적용된 "임베딩 공간 정렬" 중심 아키텍처 개편의 이론 배경, 설계 의도, 주요 변경점, 실행/평가 방법을 팀원이 쉽게 이해하도록 설명합니다. 코드 세부가 아닌 개념과 사용법을 위주로 정리했습니다.
+
+1) 배경과 핵심 문제
+- 임베딩 공간 불일치: 텍스트 임베딩은 언어 의미 공간, 진동 임베딩은 물리 신호 공간에 위치하여, 두 공간이 자연스럽게 정렬되지 않음. 대각선 1:1 InfoNCE만으로는 정렬 신호가 약하거나 노이즈로 작동.
+- 단일 양성(대각선) 한계: 같은 클래스를 공유하는 다수 양성 정보를 활용하지 못해 학습이 불안정.
+- 음성(negatives) 품질: 배치/큐가 작거나 분포가 좁으면 InfoNCE의 분모가 부실해 수렴 불안정.
+
+핵심 아이디어: "공유 의미 좌표계"를 먼저 만들고(프로토타입 앵커), 그 위에서 다중 양성 대조학습으로 정밀 정렬을 강화합니다.
+
+2) 이번 개편의 큰 그림
+- 클래스 프로토타입(learnable anchors) 도입: 각 클래스별 의미 중심을 학습 가능한 벡터로 유지하여, 텍스트/진동 임베딩이 같은 기준점으로 수렴하도록 유도.
+- 다중 양성 InfoNCE: 같은 클래스를 공유하는 모든 쌍을 양성으로 취급해 정렬 신호를 강화.
+- 2-Stage 학습: 도메인1에서 좌표계를 먼저 맞춘 후(워밍업), 본격 정렬 단계로 전환.
+- Procrustes 초기화: 클래스 중심 간 선형 사상으로 투사층을 좋은 출발점으로 정렬.
+- Residual Projection 스택: 공통공간 투사의 표현력을 강화.
+- Bilinear similarity head: 모달 간 비등방 상호작용을 학습.
+- Continual 정규화(RKD): 도메인 전이 중 관계(거리/각도) 보존으로 망각 완화.
+
+3) 주요 구성요소와 설계 의도
+[3-1] 클래스 프로토타입(anchors)
+- 무엇: 클래스 수(K)에 대한 프로토타입 행렬 C(K×D). L2 정규화 후 텍스트/진동 임베딩과의 CE 손실을 계산.
+- 업데이트: 배치별 텍스트/진동 평균으로 EMA(m≈0.99) 업데이트. 초기 1회는 텍스트 중심 평균으로 빠른 초기화 가능.
+- 효과: 두 모달을 같은 "의미 기준점"에 모아 공통 좌표계를 형성.
+- 토글/하이퍼:
+  - MODEL_CONFIG['prototypes']
+    - enabled: True/False
+    - tau: 프로토타입 로짓 스케일
+    - lambda_proto: 손실 가중치
+    - ema_momentum: EMA 계수
+    - init_from_text: 텍스트 평균으로 초기화 여부
+
+[3-2] 다중 양성 InfoNCE(Multi-positive)
+- 무엇: 같은 클래스는 모두 양성. 양성이 없는 행은 손실 평균에서 제외(안정화), 전행 무양성 시 대각선 대체 폴백.
+- 효과: 대각선 1쌍 대신 "클래스 집합"으로 정렬 → 표현 갭 평균화/완충.
+- 구현 포인트: 배치 라벨/리플레이 라벨로 positive mask 생성.
+
+[3-3] 2-Stage 학습(도메인1)
+- Stage-1(워밍업): 인코더 freeze, 투사/프로토타입만 학습. L_proto 중심(필요 시 약한 InfoNCE 혼합).
+- Stage-2: 진동 인코더 unfreeze(텍스트는 LoRA 최소), Multi-positive InfoNCE + Prototype CE 합성으로 정밀 정렬.
+- 설정: TRAINING_CONFIG['first_domain_stage1_epochs'] (기본 15)
+
+[3-4] Procrustes 초기화(도메인1 시작 시 1회)
+- 절차: 클래스 중심(텍스트/진동) μ_tk, μ_vk 추정 → SVD로 정규직교 R 산출 → 진동 투사층의 마지막 선형 가중치를 R^T로 초기화.
+- 효과: 투사층이 좋은 초기 사상에서 시작 → 초기 수렴 안정화.
+
+[3-5] Residual Projection 스택(선택)
+- 무엇: Pre-LN Residual MLP(GELU, Dropout) 스택으로 얕은 투사층을 대체.
+- 이유: 공통공간 곡률/비선형성 확보로 클래스 경계/정렬 품질 향상.
+- 토글/하이퍼: MODEL_CONFIG['residual_projection'] (enabled, num_layers, ffn_mult, dropout)
+
+[3-6] Bilinear similarity head(선택)
+- 무엇: s(i,j)=t_i^T W v_j로 상호작용 학습. 멀티-포지티브 마스크 기반 보조 대조 손실로 합산.
+- 이유: 모달 간 비등방/상관구조를 직접 학습해 코사인이 놓치는 상호작용을 보강.
+- 토글/하이퍼: MODEL_CONFIG['similarity'] (bilinear_enabled, lambda_bilinear)
+
+[3-7] Continual 정규화(RKD, 선택)
+- 무엇: 현재 배치 임베딩의 pairwise 코사인 분포를 리플레이 임베딩 분포와 정렬(MSE). 관계(거리/각도) 보존.
+- 이유: 도메인 이동 시에도 구조적 관계 보전 → 망각 완화.
+- 토글/하이퍼: MODEL_CONFIG['regularizers'] (rkd_enabled, lambda_rkd)
+- 비고: LwF 토글 자리만 마련(기본 off).
+
+4) 변경 파일과 영향 범위
+- configs/model_config.py
+  - prototypes/residual_projection/similarity/regularizers 블록 추가.
+  - TRAINING_CONFIG에 first_domain_stage1_epochs 추가.
+- src/textvib_model.py
+  - 프로토타입 테이블 + Prototype CE 손실.
+  - 멀티-포지티브 안정화(무양성 행 제외, 폴백).
+  - Residual Projection 스택(옵션).
+  - Bilinear similarity head(옵션).
+- src/continual_trainer.py
+  - 도메인1 Two-Stage 스케줄.
+  - Procrustes 초기화(도메인1 시작 시).
+  - Continual 단계에서 RKD 정규화 합산.
+
+호환성: 모든 기능은 설정 토글로 on/off 가능. off 시 기존 경로와 동일하게 작동.
+
+5) 실행 방법(예시)
+- 빠른 점검(UOS만, 짧은 학습):
+  python run_all_scenarios.py --quick_test --epochs 6 --skip_cwru
+
+- 전체 실험(기본 토글 on):
+  python run_all_scenarios.py --epochs 50
+
+- 토글 조정(예시):
+  - 모델 설정에서 prototypes.enabled=False → 프로토타입 손실 비활성화
+  - similarity.bilinear_enabled=False → bilinear 보조 손실 비활성화
+  - residual_projection.enabled=False → 기존 얕은 투사층 사용
+  - regularizers.rkd_enabled=False → RKD 비활성화
+
+(참고: 명령만 제시하며 실행은 각자 환경에서 수행하세요.)
+
+6) 평가/모니터링 포인트
+- Retrieval: Top-1/Top-5(양방향). 멀티-포지티브/프로토타입 활성 시 초기 향상 기대.
+- 분류/도메인 성능: 도메인별 Accuracy 평균, Forgetting.
+- 정렬 품질: 프로토타입-클래스 중심 거리, within-class 응집/ between-class 분리.
+- 안정성: 온도/로짓 폭, 프로토타입 노름/분산, RKD 손실 추이.
+
+7) 기대 효과(경험적 가이드)
+- 단기(몇 epoch): R@1 20%+, R@5 50%+ 가시권.
+- 중기(수렴 전): 도메인별 Acc 55–65% 범위(기존 28.6% 대비 유의 향상) 목표.
+- Continual: RKD on 시 평균 Forgetting 완화.
+
+8) 리스크와 대응
+- 프로토타입 드리프트: EMA(m∈[0.98, 0.995]) 상향, init_from_text 유지.
+- 배치에 동클래스 부족: 무양성 행 제외 로직으로 안정화(이미 반영).
+- 로짓 포화: τ 미세 조정(±10%), 투사 출력 LayerNorm/Dropout 사용.
+- 과적합/불안정: Stage-1 길이 확장, lambda_proto/lambda_bilinear/lambda_rkd 소폭 하향.
+
+9) 권장 아블레이션 순서
+(1) Proto only → (2) Proto + Multi-positive → (3) + Residual → (4) + Bilinear → (5) + RKD
+- 각 단계별로 평균 Accuracy/Forgetting/Top-5 비교표 저장.
+
+10) 요약 메시지
+- 이번 개편은 "공유 의미 좌표계(프로토타입) 형성 → 다중 양성 대조학습으로 정렬 강화 → 도메인 전이 시 관계 보존"이라는 일관된 철학으로 설계되었습니다. 모든 기능은 설정 토글로 제어되며, 기본값은 보수적 가중치로 안정성을 우선합니다. 성능 향상은 도메인1 워밍업에서의 좌표계 맞춤, Procrustes 초기화, Residual 투사, Bilinear 보조 신호, RKD 관계 보존의 누적 효과에서 기대됩니다.
+

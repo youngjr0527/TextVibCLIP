@@ -6,7 +6,7 @@ data_scenario2/
 
 # 데이터 파일들
 *.mat
-*.txt
+# *.txt
 *.csv
 *.json
 *.png
@@ -16,8 +16,6 @@ data_scenario2/
 # 학습 결과물들
 checkpoints/
 results/
-logs/
-plots/
 
 # Python 관련
 __pycache__/
@@ -61,12 +59,6 @@ Thumbs.db
 *.tmp
 *.bak
 *.log
-
-# 구버전 파일들
-old_files/
-
-# 외부 라이브러리
-TST/
 
 
 # 실험 관련 임시 파일들
