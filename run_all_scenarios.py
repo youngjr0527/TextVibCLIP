@@ -55,6 +55,7 @@ from src.data_cache import create_cached_domain_dataloaders, create_cached_first
 from src.textvib_model import create_textvib_model
 from src.utils import set_seed
 from src.visualization import create_visualizer
+from src.utils_diagnostics import compute_subset_overlap_ratio, evaluate_linear_probe, collect_embeddings, save_diagnostics_report
 from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, CWRU_DATA_CONFIG
 
 # 로깅 설정
@@ -126,8 +127,7 @@ class ExperimentResults:
     
     def __init__(self):
         self.scenario_results = {}
-        self.detailed_results = []
-        self.summary_results = []
+        self.all_results = []  
     
     def add_scenario_result(self, scenario_name: str, results: Dict):
         """시나리오 결과 추가"""
@@ -144,8 +144,7 @@ class ExperimentResults:
                     'Accuracy': results['final_accuracies'][domain_idx],
                     'Top1_Retrieval': results.get('final_top1_retrievals', [0] * len(results['domain_names']))[domain_idx],
                     'Top5_Retrieval': results.get('final_top5_retrievals', [0] * len(results['domain_names']))[domain_idx],
-                    'Samples_Per_Domain': results.get('samples_per_domain', 0),
-                    'Total_Training_Time': results.get('total_time', 0)
+                    # 관심 없는 필드 제거: Samples_Per_Domain, Total_Training_Time
                 }
                 # validation 메트릭 추가 저장(있을 경우)
                 val_accs = results.get('val_accuracies', [])
@@ -172,67 +171,49 @@ class ExperimentResults:
                 for k in ['v_within_var_mean', 'proto_between_mean_cosdist']:
                     if k in proto_stats:
                         row[k] = proto_stats[k]
-                self.detailed_results.append(row)
+                self.all_results.append(row)
         
-        # 요약 결과 추가 (시나리오별)
-        self.summary_results.append({
+        # 요약 결과를 동일 CSV의 마지막 행으로 추가 (도메인=ALL)
+        summary_row = {
             'Scenario': scenario_name,
+            'Domain_Index': 0,
+            'Domain_Name': 'ALL',
             'Shift_Type': results['shift_type'],
+            'Accuracy': None,
+            'Top1_Retrieval': None,
+            'Top5_Retrieval': None,
+            'Val_Accuracy': None,
+            'Val_Top1_Retrieval': None,
+            'Val_Top5_Retrieval': None,
+            'Best_Epoch': None,
             'Num_Domains': len(results['domain_names']),
             'Avg_Accuracy': results.get('average_accuracy', 0),
             'Avg_Forgetting': results.get('average_forgetting', 0),
-            'Avg_Top1_Retrieval': np.mean(results.get('final_top1_retrievals', [0])),
-            'Avg_Top5_Retrieval': np.mean(results.get('final_top5_retrievals', [0])),
-            'Total_Samples': results.get('total_samples', 0),
-            'Total_Time_Minutes': results.get('total_time', 0) / 60,
+            'Avg_Top1_Retrieval': np.mean(results.get('final_top1_retrievals', [0])) if len(results.get('final_top1_retrievals', [])) else 0,
+            'Avg_Top5_Retrieval': np.mean(results.get('final_top5_retrievals', [0])) if len(results.get('final_top5_retrievals', [])) else 0,
             'First_Domain_Epochs': results.get('first_domain_epochs', 0),
             'Remaining_Epochs': results.get('remaining_epochs', 0),
             'Batch_Size': results.get('batch_size', 0)
-        })
+        }
+        self.all_results.append(summary_row)
     
     def save_to_csv(self, output_dir: str):
-        """결과를 CSV 파일로 저장"""
+        """결과를 단일 CSV 파일로 저장 (detailed + summary 통합, 비교 파일 생성 안 함)"""
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         if not PANDAS_AVAILABLE:
             # pandas가 없으면 JSON으로 저장
-            detailed_path = os.path.join(output_dir, f'detailed_results_{timestamp}.json')
-            summary_path = os.path.join(output_dir, f'summary_results_{timestamp}.json')
-            
-            with open(detailed_path, 'w') as f:
-                json.dump(self.detailed_results, f, indent=2)
-            with open(summary_path, 'w') as f:
-                json.dump(self.summary_results, f, indent=2)
-            
-            return detailed_path, summary_path, None
+            all_path = os.path.join(output_dir, f'results_{timestamp}.json')
+            with open(all_path, 'w') as f:
+                json.dump(self.all_results, f, indent=2)
+            return all_path
         
-        # 1. 상세 결과 (도메인별)
-        detailed_df = pd.DataFrame(self.detailed_results)
-        detailed_path = os.path.join(output_dir, f'detailed_results_{timestamp}.csv')
-        detailed_df.to_csv(detailed_path, index=False)
-        
-        # 2. 요약 결과 (시나리오별)
-        summary_df = pd.DataFrame(self.summary_results)
-        summary_path = os.path.join(output_dir, f'summary_results_{timestamp}.csv')
-        summary_df.to_csv(summary_path, index=False)
-        
-        # 3. 비교 결과 (피벗 테이블)
-        pivot_path = None
-        if len(self.detailed_results) > 0:
-            try:
-                pivot_df = detailed_df.pivot_table(
-                    index=['Domain_Index', 'Domain_Name'],
-                    columns='Scenario',
-                    values=['Accuracy', 'Top1_Retrieval', 'Top5_Retrieval', 'Val_Accuracy', 'Val_Top1_Retrieval', 'Val_Top5_Retrieval'],
-                    aggfunc='first'
-                )
-                pivot_path = os.path.join(output_dir, f'comparison_results_{timestamp}.csv')
-                pivot_df.to_csv(pivot_path)
-            except Exception as e:
-                print(f"⚠️ 피벗 테이블 생성 실패: {e}")
-        
-        return detailed_path, summary_path, pivot_path
+        # 단일 CSV로 저장
+        all_df = pd.DataFrame(self.all_results)
+        all_path = os.path.join(output_dir, f'results_{timestamp}.csv')
+        all_df.to_csv(all_path, index=False)
+        return all_path
 
 
 def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.device, args, experiment_dir: str) -> Dict:
@@ -490,9 +471,10 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         logger.info(f"   평균 망각도: {final_metrics['average_forgetting']:.4f}")
         logger.info(f"   소요 시간: {total_time/60:.1f}분")
         
-        # 도메인별 임베딩 수집 (시각화용)
+        # 도메인별 임베딩 수집 (시각화용 + 선형 프로브 진단)
         logger.info("📊 시각화용 임베딩 수집 중...")
         domain_embeddings = {}
+        diag_rows: List[Dict[str, Any]] = []
         
         for domain in config['domain_order']:
             # 🚀 캐시된 데이터셋 사용 (고속화)
@@ -501,6 +483,19 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
                 dataset_type=config['dataset_type'],
                 domain_value=domain,
                 subset='test'
+            )
+            # 분할 데이터셋 참조 생성(중복 근사 계산용)
+            train_dataset = CachedBearingDataset(
+                data_dir=config['data_dir'],
+                dataset_type=config['dataset_type'],
+                domain_value=domain,
+                subset='train'
+            )
+            val_dataset = CachedBearingDataset(
+                data_dir=config['data_dir'],
+                dataset_type=config['dataset_type'],
+                domain_value=domain,
+                subset='val'
             )
             
             if len(test_dataset) > 0:
@@ -533,8 +528,35 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
                         'vib': torch.cat(vib_embeddings, dim=0),
                         'metadata': metadata_list
                     }
+            # 선형 프로브 진단(도메인별 test 분리 가능성)
+            try:
+                from torch.utils.data import DataLoader
+                test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False)
+                v_emb, v_lab = collect_embeddings(trainer.model, test_loader, device)
+                if v_emb.numel() > 0 and v_lab.numel() > 0:
+                    probe_acc = evaluate_linear_probe(v_emb, v_lab)
+                else:
+                    probe_acc = float('nan')
+            except Exception:
+                probe_acc = float('nan')
+            # 분할 경계 중복 근사(Train-Val, Val-Test)
+            overlap_tv = compute_subset_overlap_ratio(train_dataset, (0.0, 0.6), (0.6, 0.8)) if len(train_dataset) > 0 else float('nan')
+            overlap_vt = compute_subset_overlap_ratio(val_dataset, (0.6, 0.8), (0.8, 1.0)) if len(val_dataset) > 0 else float('nan')
+            diag_rows.append({
+                'Domain': domain,
+                'LinearProbe_Vib_TestAcc': probe_acc,
+                'Overlap_TrainVal_Approx': overlap_tv,
+                'Overlap_ValTest_Approx': overlap_vt,
+                'Num_Test_Samples': len(test_dataset)
+            })
         
         results['domain_embeddings'] = domain_embeddings
+        # 진단 리포트 저장
+        try:
+            diag_path = save_diagnostics_report(experiment_dir, config['name'], diag_rows)
+            logger.info(f"   ✅ 데이터 진단 리포트: {os.path.basename(diag_path)}")
+        except Exception as e:
+            logger.info(f"   ℹ️ 데이터 진단 리포트 스킵: {e}")
         
         return results
         
@@ -545,32 +567,11 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
 
 
 def print_final_summary(results: ExperimentResults, logger: logging.Logger):
-    """최종 결과 요약 출력"""
+    """최종 결과 요약 출력 (단일 CSV 저장 체계에 맞춰 간단 요약)"""
     logger.info("\n" + "="*80)
     logger.info("🎉 전체 시나리오 실험 완료!")
     logger.info("="*80)
-    
-    # 시나리오별 요약
-    for summary in results.summary_results:
-        logger.info(f"\n📊 {summary['Scenario']}:")
-        logger.info(f"   Shift Type: {summary['Shift_Type']}")
-        logger.info(f"   Domains: {summary['Num_Domains']}개")
-        logger.info(f"   Avg Accuracy: {summary['Avg_Accuracy']:.4f}")
-        logger.info(f"   Avg Forgetting: {summary['Avg_Forgetting']:.4f}")
-        logger.info(f"   Total Time: {summary['Total_Time_Minutes']:.1f}분")
-        logger.info(f"   Total Samples: {summary['Total_Samples']:,}개")
-    
-    # 비교 분석
-    if len(results.summary_results) >= 2:
-        uos_result = results.summary_results[0]
-        cwru_result = results.summary_results[1]
-        
-        logger.info(f"\n🔍 시나리오 비교:")
-        logger.info(f"   정확도 차이: {abs(uos_result['Avg_Accuracy'] - cwru_result['Avg_Accuracy']):.4f}")
-        logger.info(f"   망각도 차이: {abs(uos_result['Avg_Forgetting'] - cwru_result['Avg_Forgetting']):.4f}")
-        logger.info(f"   데이터 규모 비율: {uos_result['Total_Samples'] / cwru_result['Total_Samples']:.1f}:1")
-    
-    logger.info("="*80)
+    # 단일 CSV 저장으로 세부 비교는 CSV에서 확인하도록 간소화
 
 
 def parse_arguments():
@@ -707,13 +708,11 @@ def main():
         else:
             logger.error(f"❌ {scenario['name']} 실행 실패!")
     
-    # 결과 저장 (실험 폴더에)
+    # 결과 저장 (단일 CSV)
     logger.info("\n💾 결과 저장 중...")
     try:
-        detailed_path, summary_path, comparison_path = results.save_to_csv(experiment_dir)
-        logger.info(f"✅ 상세 결과: {detailed_path}")
-        logger.info(f"✅ 요약 결과: {summary_path}")
-        logger.info(f"✅ 비교 결과: {comparison_path}")
+        all_path = results.save_to_csv(experiment_dir)
+        logger.info(f"✅ 결과: {all_path}")
     except Exception as e:
         logger.error(f"❌ 결과 저장 실패: {str(e)}")
     

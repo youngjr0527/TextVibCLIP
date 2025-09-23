@@ -147,7 +147,7 @@ class BearingDataset(Dataset):
         self.windows_per_file = self._calculate_windows_per_file()
         self.total_windows = len(self.file_paths) * self.windows_per_file
         
-        logger.info(f"BearingDataset 초기화 완료 ({self.dataset_type.upper()}): "
+        logger.debug(f"BearingDataset 초기화 완료 ({self.dataset_type.upper()}): "
                    f"{len(self.file_paths)}개 파일, {self.windows_per_file}개 윈도우/파일, "
                    f"총 {self.total_windows}개 샘플, Domain: {domain_value}, Subset: {subset}")
 
@@ -257,8 +257,8 @@ class BearingDataset(Dataset):
         return labels
     
     def _generate_cwru_labels(self, metadata: Dict[str, Union[str, int]]) -> torch.Tensor:
-        """CWRU 라벨 생성 (1차원: bearing_condition)"""
-        bearing_condition_map = {'Normal': 0, 'B': 1, 'IR': 2, 'OR': 3}
+        """CWRU 라벨 생성 (1차원: bearing_condition) - H로 변경됨"""
+        bearing_condition_map = {'H': 0, 'B': 1, 'IR': 2, 'OR': 3}  
         
         # CWRU는 베어링 상태만 분류하므로 1차원 라벨
         label = torch.tensor([
@@ -277,7 +277,7 @@ class BearingDataset(Dataset):
             return 0
     
     def _calculate_windows_per_file(self) -> int:
-        """각 파일당 윈도우 수 계산"""
+        """각 파일당 윈도우 수 계산 (윈도우 레벨 분할 비율을 반영)"""
         if len(self.file_paths) == 0:
             return 0
         
@@ -296,11 +296,11 @@ class BearingDataset(Dataset):
             
             total_windows = len(windowed_signals)
             
-            # 🎯 CWRU 윈도우 분할 고려
-            if self.dataset_type == 'cwru' and hasattr(self, '_window_split_range'):
+            # 🎯 윈도우 분할 고려 (UOS/CWRU 공통): subset별 구간을 len에 반영
+            if hasattr(self, '_window_split_range'):
                 start_ratio, end_ratio = self._window_split_range
-                split_windows = int(total_windows * (end_ratio - start_ratio))
-                return max(1, split_windows)  # 최소 1개 윈도우
+                split_windows = int(round(total_windows * max(0.0, min(1.0, end_ratio - start_ratio))))
+                return max(1, split_windows)
             
             return total_windows
         except Exception as e:
@@ -320,10 +320,10 @@ class BearingDataset(Dataset):
     
     def _split_cwru_dataset(self) -> Tuple[List[str], List[Dict]]:
         """CWRU 데이터셋 분할 (개선된 전략)"""
-        # CWRU 특성: 도메인당 4개 파일 (Normal, B, IR, OR)
+        # CWRU 특성: 도메인당 4개 파일 (H, B, IR, OR)
         # 연구 목적에 맞는 분할 전략 적용
         
-        # 베어링 상태별 라벨 (Normal, B, IR, OR)
+        # 베어링 상태별 라벨 (H, B, IR, OR)
         bearing_labels = [metadata['bearing_condition'] for metadata in self.metadata_list]
         
         from collections import Counter
@@ -333,35 +333,78 @@ class BearingDataset(Dataset):
         # CWRU 특별 처리: 파일 수가 적으므로 적응적 분할
         total_files = len(self.file_paths)
         
-        if total_files <= 4:
-            # 도메인당 4개 파일인 경우 - 연구 목적에 맞게 분할
-            # 파일 순서: [Normal, B, IR, OR] (알파벳순)
+        if total_files <= 16:  # 4개 → 16개로 확장 (도메인당 최대 16개 파일 예상)
+            # 🎯 CRITICAL FIX: 파일 레벨 분할 (데이터 누수 완전 방지)
+            # 각 파일은 하나의 subset에만 속함 (시간적 독립성 보장)
             
-            # 🎯 CRITICAL FIX: CWRU도 파일 레벨 분할로 수정 (데이터 누수 방지)
-            # CWRU: 4개 파일 [Normal, B, IR, OR] - 각 클래스 1개씩
-            # 모든 클래스를 포함하면서도 파일 레벨에서 분할
+            logger.info("CWRU 파일 레벨 분할 적용 (데이터 누수 방지):")
+            logger.info(f"  총 {total_files}개 파일을 train/val/test로 분할")
+            logger.info(f"  각 파일은 하나의 subset에만 포함 (시간적 독립성 보장)")
             
-            # 🎯 CRITICAL FIX: CWRU 전체 윈도우 사용 (데이터 부족 해결)
-            # CWRU는 데이터가 적으므로 윈도우 분할 없이 전체 사용
+            # 🎯 결함 타입별 균등 분할 (stratified split)
+            try:
+                # 베어링 상태로 stratified split
+                files_train, files_temp, meta_train, meta_temp = train_test_split(
+                    self.file_paths, self.metadata_list,
+                    test_size=0.4,  # 40%를 val+test용으로
+                    stratify=bearing_labels,
+                    random_state=42
+                )
+                
+                # Temp를 val/test로 분할
+                temp_labels = [metadata['bearing_condition'] for metadata in meta_temp]
+                files_val, files_test, meta_val, meta_test = train_test_split(
+                    files_temp, meta_temp,
+                    test_size=0.5,  # temp의 50%씩 val/test로
+                    stratify=temp_labels,
+                    random_state=42
+                )
+                
+                logger.info("CWRU stratified 파일 분할 성공")
+                logger.info(f"  Train: {len(files_train)}개, Val: {len(files_val)}개, Test: {len(files_test)}개")
+                
+                # 분할 결과 로깅
+                for subset_name, (files, meta) in [('Train', (files_train, meta_train)), 
+                                                 ('Val', (files_val, meta_val)), 
+                                                 ('Test', (files_test, meta_test))]:
+                    subset_labels = [m['bearing_condition'] for m in meta]
+                    subset_dist = Counter(subset_labels)
+                    logger.info(f"  {subset_name} 클래스 분포: {dict(subset_dist)}")
+                
+            except ValueError as e:
+                # Stratify 실패 시 랜덤 분할
+                logger.warning(f"CWRU stratified split 실패 - 랜덤 분할 사용: {e}")
+                files_train, files_temp, meta_train, meta_temp = train_test_split(
+                    self.file_paths, self.metadata_list,
+                    test_size=0.4,
+                    random_state=42
+                )
+                
+                files_val, files_test, meta_val, meta_test = train_test_split(
+                    files_temp, meta_temp,
+                    test_size=0.5,
+                    random_state=42
+                )
+                
+                logger.info("CWRU 랜덤 파일 분할 적용")
             
-            logger.info("CWRU Domain-Incremental 전체 윈도우 사용:")
-            logger.info(f"  모든 subset에 모든 {total_files}개 파일의 전체 윈도우 포함")
-            logger.info(f"  윈도우 분할 없음 (데이터 부족으로 인한 최대 활용)")
+            # 요청된 subset 반환 (파일 레벨 분할)
+            if self.subset == 'train':
+                selected_files, selected_meta = files_train, meta_train
+            elif self.subset == 'val':
+                selected_files, selected_meta = files_val, meta_val
+            elif self.subset == 'test':
+                selected_files, selected_meta = files_test, meta_test
+            else:
+                raise ValueError(f"알 수 없는 subset: {self.subset}")
             
-            # 모든 파일을 모든 subset에 포함
-            selected_files = self.file_paths
-            selected_meta = self.metadata_list
+            # 🎯 윈도우 분할 정보 제거 (파일 레벨 분할이므로 불필요)
+            # self._window_split_range는 설정하지 않음
             
-            # 🎯 윈도우 분할 정보 제거 (전체 윈도우 사용)
-            # self._window_split_range 설정하지 않음 → 전체 윈도우 사용
-            
-            # 클래스 분포 확인 (모든 클래스가 모든 subset에 포함됨)
-            from collections import Counter
-            all_classes = [meta['bearing_condition'] for meta in self.metadata_list]
-            unique_classes = list(Counter(all_classes).keys())
-            
-            logger.info(f"  모든 subset 클래스: {unique_classes} ({len(unique_classes)}개)")
-            logger.info(f"  클래스별 파일 수: {dict(Counter(all_classes))}")
+            # 선택된 subset의 클래스 분포 확인
+            selected_labels = [meta['bearing_condition'] for meta in selected_meta]
+            selected_dist = Counter(selected_labels)
+            logger.info(f"  {self.subset} 클래스 분포: {dict(selected_dist)}")
             
             logger.info(f"CWRU {self.subset} subset: {len(selected_files)}개 파일 사용 (총 {total_files}개 중)")
             
@@ -440,20 +483,20 @@ class BearingDataset(Dataset):
         label_counts = Counter(combined_labels)
         min_samples = min(label_counts.values())
         
-        logger.info(f"UOS 데이터 라벨 분포: {dict(label_counts)}")
-        logger.info(f"최소 샘플 수: {min_samples}")
+        logger.debug(f"UOS 데이터 라벨 분포: {dict(label_counts)}")
+        logger.debug(f"최소 샘플 수: {min_samples}")
         
         # 🎯 CRITICAL FIX: 파일 레벨 분할로 복원 (데이터 누수 방지)
         # 윈도우 레벨 분할은 같은 베어링의 연속 신호를 train/val/test로 분할하여 
         # 심각한 데이터 누수를 야기함 → 100% 정확도의 원인
         
-        # 🎯 CRITICAL FIX: 윈도우 레벨 분할 (UOS 데이터 구조에 맞게)
-        # UOS/CWRU는 클래스별로 1개 파일만 존재하므로, 윈도우 레벨에서 분할해야 함
-        # 모든 파일을 모든 subset에 포함하되, 각 파일 내에서 윈도우를 분할
+        # 🎯 CRITICAL FIX: 윈도우 랜덤 분할 (데이터 누수 방지)
+        # UOS는 클래스별로 1개 파일만 있으므로, 윈도우를 랜덤하게 분할해야 함
+        # 시간 순서 분할 대신 랜덤 인덱스 분할로 데이터 누수 방지
         
-        logger.info("UOS Domain-Incremental 윈도우 레벨 분할:")
-        logger.info(f"  모든 subset에 모든 {len(self.file_paths)}개 파일 포함")
-        logger.info(f"  각 파일 내에서 윈도우 분할: Train 60%, Val 20%, Test 20%")
+        logger.debug("UOS 윈도우 랜덤 분할 (데이터 누수 방지):")
+        logger.debug(f"  모든 subset에 모든 {len(self.file_paths)}개 파일 포함")
+        logger.debug(f"  각 파일 내에서 윈도우 랜덤 분할: Train 60%, Val 20%, Test 20%")
         
         # 모든 파일을 모든 subset에 포함
         files_train = self.file_paths
@@ -463,13 +506,17 @@ class BearingDataset(Dataset):
         meta_val = self.metadata_list
         meta_test = self.metadata_list
         
-        # 윈도우 분할 정보 설정 (나중에 __getitem__에서 사용)
+        # 🎯 CRITICAL FIX: 랜덤 윈도우 인덱스 분할 (시간순 분할 대신)
+        # 각 파일의 윈도우들을 랜덤하게 섞어서 train/val/test로 분할
         if self.subset == 'train':
-            self._window_split_range = (0.0, 0.6)  # 각 파일의 처음 60%
+            self._window_split_type = 'random'
+            self._window_split_range = (0.0, 0.6)  # 랜덤 셔플된 윈도우의 처음 60%
         elif self.subset == 'val':
-            self._window_split_range = (0.6, 0.8)  # 각 파일의 60-80%
+            self._window_split_type = 'random'
+            self._window_split_range = (0.6, 0.8)  # 랜덤 셔플된 윈도우의 60-80%
         elif self.subset == 'test':
-            self._window_split_range = (0.8, 1.0)  # 각 파일의 80-100%
+            self._window_split_type = 'random'
+            self._window_split_range = (0.8, 1.0)  # 랜덤 셔플된 윈도우의 80-100%
         
         # 🎯 FIXED: Deep Groove Ball 7-클래스 분포 확인
         from collections import Counter
@@ -491,19 +538,19 @@ class BearingDataset(Dataset):
         class_distribution = Counter(actual_labels)
         unique_classes = list(class_distribution.keys())
         
-        logger.info(f"  Deep Groove Ball 7-클래스 분포: {dict(class_distribution)}")
-        logger.info(f"  클래스 수: {len(unique_classes)}개 (균형 확인)")
+        logger.debug(f"  Deep Groove Ball 7-클래스 분포: {dict(class_distribution)}")
+        logger.debug(f"  클래스 수: {len(unique_classes)}개 (균형 확인)")
         
         # 클래스 균형 검증
         counts = list(class_distribution.values())
         if counts and max(counts) == min(counts):
-            logger.info("  ✅ 완벽한 클래스 균형 달성!")
+            logger.debug("  ✅ 완벽한 클래스 균형 달성!")
         else:
-            logger.warning(f"  ⚠️ 클래스 불균형: 최대 {max(counts) if counts else 0}개, 최소 {min(counts) if counts else 0}개")
+            logger.info(f"  ⚠️ 클래스 불균형: 최대 {max(counts) if counts else 0}개, 최소 {min(counts) if counts else 0}개")
         
         # 분할 결과 로깅 (디버깅용)
-        logger.info(f"UOS {self.subset} 분할 결과:")
-        logger.info(f"  Train: {len(files_train)}개 파일, Val: {len(files_val)}개 파일, Test: {len(files_test)}개 파일")
+        logger.debug(f"UOS {self.subset} 분할 결과:")
+        logger.debug(f"  Train: {len(files_train)}개 파일, Val: {len(files_val)}개 파일, Test: {len(files_test)}개 파일")
         
         # 요청된 subset 반환 (파일 레벨 분할)
         if self.subset == 'train':
@@ -533,33 +580,15 @@ class BearingDataset(Dataset):
                 - 'labels': 라벨
                 - 'domain_key': 도메인 키
         """
-        # 🎯 CRITICAL FIX: 클래스 균형을 위한 인덱스 리매핑
-        # 기존 방식은 연속된 인덱스가 같은 파일에서 나와서 배치 내 클래스 불균형 야기
+        # 🎯 CRITICAL FIX: 단순한 인덱스 매핑 (이중 랜덤화 제거)
+        # 윈도우 랜덤 분할을 이미 적용했으므로 추가 셔플링 불필요
         
-        if not hasattr(self, '_index_mapping'):
-            # 인덱스 매핑 생성 (한 번만)
-            total_files = len(self.file_paths)
-            mapping = []
-            
-            # 모든 (파일, 윈도우) 쌍 생성
-            for file_idx in range(total_files):
-                for window_idx in range(self.windows_per_file):
-                    mapping.append((file_idx, window_idx))
-            
-            # 셔플하여 클래스 균형 확보
-            import random
-            random.seed(42)  # 재현 가능성
-            random.shuffle(mapping)
-            
-            self._index_mapping = mapping
-            logger.info(f"인덱스 매핑 생성 완료: {len(mapping)}개 (파일 {total_files}개 × 윈도우 {self.windows_per_file}개)")
+        total_files = len(self.file_paths)
+        windows_per_file = self.windows_per_file
         
-        # 셔플된 매핑에서 (파일, 윈도우) 인덱스 가져오기
-        if idx < len(self._index_mapping):
-            file_idx, window_idx = self._index_mapping[idx]
-        else:
-            # 범위 초과 시 마지막 매핑 사용
-            file_idx, window_idx = self._index_mapping[-1]
+        # 단순한 (파일, 윈도우) 매핑 (셔플링 제거)
+        file_idx = idx // windows_per_file
+        window_idx = idx % windows_per_file
         
         # 파일 인덱스가 범위를 벗어나면 마지막 파일 사용
         if file_idx >= len(self.file_paths):
@@ -594,25 +623,63 @@ class BearingDataset(Dataset):
                 # 캐시에서 로드
                 windowed_signals = self._file_windows_cache[file_idx]
             
-            # 🎯 CRITICAL FIX: 윈도우 레벨 분할 복원 (UOS 데이터 구조에 맞게)
-            # UOS/CWRU는 클래스별로 1개 파일만 있으므로 윈도우 레벨 분할이 필요
-            if hasattr(self, '_window_split_range'):
+            # 🎯 CRITICAL FIX: 랜덤 윈도우 분할 (데이터 누수 방지)
+            # UOS는 클래스별로 1개 파일만 있으므로 윈도우를 랜덤하게 분할
+            if hasattr(self, '_window_split_range') and hasattr(self, '_window_split_type'):
                 total_windows = len(windowed_signals)
-                start_ratio, end_ratio = self._window_split_range
-                start_idx = int(total_windows * start_ratio)
-                end_idx = int(total_windows * end_ratio)
                 
-                # 범위 내에서 윈도우 선택
-                valid_range = end_idx - start_idx
-                if valid_range > 0:
-                    adjusted_window_idx = start_idx + (window_idx % valid_range)
+                if self._window_split_type == 'random':
+                    # 🎯 랜덤 윈도우 인덱스 생성 (파일별로 고정 시드)
+                    if not hasattr(self, '_random_window_indices'):
+                        self._random_window_indices = {}
+                    
+                    if file_idx not in self._random_window_indices:
+                        # 파일별 고정 시드로 재현 가능한 랜덤 순서 생성
+                        import random
+                        file_seed = hash(f"{filepath}_{self.subset}") & 0xffffffff
+                        random.seed(file_seed)
+                        
+                        # 윈도우 인덱스를 랜덤하게 섞기
+                        indices = list(range(total_windows))
+                        random.shuffle(indices)
+                        self._random_window_indices[file_idx] = indices
+                        
+                        logger.debug(f"파일 {file_idx} 랜덤 윈도우 순서 생성: {total_windows}개 (시드: {file_seed})")
+                    
+                    # 랜덤 순서에서 subset별 범위 선택
+                    random_indices = self._random_window_indices[file_idx]
+                    start_ratio, end_ratio = self._window_split_range
+                    start_idx = int(len(random_indices) * start_ratio)
+                    end_idx = int(len(random_indices) * end_ratio)
+                    
+                    # 범위 내에서 윈도우 선택
+                    valid_range = end_idx - start_idx
+                    if valid_range > 0:
+                        range_window_idx = window_idx % valid_range
+                        actual_window_idx = random_indices[start_idx + range_window_idx]
+                    else:
+                        actual_window_idx = random_indices[start_idx] if random_indices else 0
+                    
+                    if actual_window_idx < len(windowed_signals):
+                        selected_signal = windowed_signals[actual_window_idx]
+                    else:
+                        selected_signal = windowed_signals[-1]
                 else:
-                    adjusted_window_idx = start_idx
-                
-                if adjusted_window_idx < len(windowed_signals):
-                    selected_signal = windowed_signals[adjusted_window_idx]
-                else:
-                    selected_signal = windowed_signals[-1]
+                    # 기존 시간순 분할 (fallback)
+                    start_ratio, end_ratio = self._window_split_range
+                    start_idx = int(total_windows * start_ratio)
+                    end_idx = int(total_windows * end_ratio)
+                    
+                    valid_range = end_idx - start_idx
+                    if valid_range > 0:
+                        adjusted_window_idx = start_idx + (window_idx % valid_range)
+                    else:
+                        adjusted_window_idx = start_idx
+                    
+                    if adjusted_window_idx < len(windowed_signals):
+                        selected_signal = windowed_signals[adjusted_window_idx]
+                    else:
+                        selected_signal = windowed_signals[-1]
             else:
                 # 기본 로직 (fallback)
                 if window_idx < len(windowed_signals):
