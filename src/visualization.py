@@ -62,7 +62,9 @@ class PaperVisualizer:
             'N204': 'o',      # 원형
             'NJ204': 's',     # 사각형
             '6204': '^',      # 삼각형
-            '30204': 'D'      # 다이아몬드
+            '30204': 'D',     # 다이아몬드
+            'deep_groove_ball': 'o',  # CWRU - 원형 (기본)
+            'SKF': 'o'        # CWRU 대체 - 원형
         }
         
         logger.info(f"PaperVisualizer 초기화 완료: {output_dir}")

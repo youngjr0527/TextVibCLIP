@@ -60,15 +60,15 @@ MODEL_CONFIG = {
         # 2048 → 1024 → 512 → 256 → 128 → Global Pool → 256 embedding
     },
     
-    # InfoNCE Loss - OPTIMIZED: Cross-Modal Projection 기반 최적화
+    # InfoNCE Loss - 안정적 학습을 위한 높은 온도
     'infonce': {
-        # First Domain Training (Domain 1) - 높은 온도로 안정화
-        'first_domain_temperature_text': 0.2,   # 0.05 → 0.2 (Cross-Modal 최적화)
-        'first_domain_temperature_vib': 0.2,    # 0.05 → 0.2 (Cross-Modal 최적화)
+        # First Domain Training (Domain 1) - 매우 높은 온도로 부드러운 학습
+        'first_domain_temperature_text': 0.5,   # 0.2 → 0.5 (부드러운 정렬)
+        'first_domain_temperature_vib': 0.5,    # 0.2 → 0.5 (부드러운 정렬)
         
-        # Continual Learning (Domain 2+) - 비대칭 설정
-        'continual_temperature_text': 0.07,  # 0.05 → 0.07 (text 안정성)
-        'continual_temperature_vib': 0.04,   # 0.03 → 0.04 (약 +30%)
+        # Continual Learning (Domain 2+) - 높은 온도 유지
+        'continual_temperature_text': 0.3,  # 0.07 → 0.3 (안정적 정렬)
+        'continual_temperature_vib': 0.2,   # 0.04 → 0.2 (안정적 적응)
 
         # First domain 온도 스케줄(선형): init → final
         'first_domain_temperature_text_init': 0.07,  # 0.05 → 0.07
@@ -134,45 +134,96 @@ MODEL_CONFIG = {
     'aux_classification': {
         'enabled': True,   # 🎯 CRITICAL FIX: Auxiliary loss 활성화 (supervised signal 강화)
         'num_classes': 7,  # UOS 7-클래스 지원 (H/B/IR/OR/L/U/M)
-        'loss_weight': 2.0,  # 5.0 → 2.0 (overfitting 방지)
-        'dropout': 0.2     # 0.05 → 0.2 (정규화 강화)
+        'loss_weight': 1.0,  # 5.0 → 1.0 (과적합 방지, InfoNCE와 균형)
+        'dropout': 0.2     # 0.1 → 0.2 (과적합 방지 강화)
     }
 }
 
-# 학습 파라미터
+    # 첫 번째 도메인 전용 학습 설정 (Foundation Learning)
+FIRST_DOMAIN_CONFIG = {
+    # 🎯 Foundation Learning: Auxiliary Head 중심 + 텍스트-진동 정렬
+    'num_epochs': 15,           # 25 → 15 (과적합 방지)
+    'learning_rate': 1e-4,      # 3e-4 → 1e-4 (안정적 학습)
+    'weight_decay': 1e-4,       # 1e-5 → 1e-4 (정규화 강화)
+    'aux_weight': 10.0,         # 2.0 → 10.0 (Auxiliary Head 중심)
+    'patience': 5,              # 8 → 5 (더 엄격한 조기 종료)
+    'min_epoch': 3,             # 5 → 3 (최소 에포크 감소)
+    
+    # 파라미터 그룹 LR 멀티플라이어 (적극적 학습)
+    'lora_lr_mult': 3.0,
+    'proj_lr_mult': 5.0,        # 높은 projection 학습률
+    'vib_lr_mult': 2.0,         # 높은 vibration 학습률
+    
+    # 스케줄러 설정
+    'scheduler_type': 'cosine', # Cosine annealing (안정적 감소)
+    'eta_min': 1e-6,
+    
+    # Two-stage 학습
+    'stage1_epochs': 8,         # Projection/prototypes 먼저 학습
+}
+
+# Continual Learning 전용 설정 (Adaptation Learning) 
+CONTINUAL_CONFIG = {
+    # 🎯 Adaptation Learning: Auxiliary Head 중심 빠른 적응
+    'num_epochs': 6,            # 8 → 6 (더 빠른 적응)
+    'learning_rate': 5e-5,      # 1e-4 → 5e-5 (더 보존적)
+    'weight_decay': 2e-4,       # 1e-4 → 2e-4 (과적합 방지 강화)
+    'aux_weight': 5.0,          # 0.5 → 5.0 (Auxiliary Head 중심)
+    'patience': 2,              # 3 → 2 (더 엄격한 조기 종료)
+    'min_epoch': 2,             # 최소 적응 학습 유지
+    
+    # 파라미터 그룹 LR 멀티플라이어 (보존적 학습)
+    'lora_lr_mult': 1.0,        # 텍스트 안정화
+    'proj_lr_mult': 2.0,        # 적당한 projection 적응
+    'vib_lr_mult': 3.0,         # 진동 위주 적응
+    
+    # 스케줄러 설정
+    'scheduler_type': 'step',   # Step LR (안정적)
+    'step_size': 3,
+    'gamma': 0.8,
+    
+    # Replay 설정
+    'replay_buffer_size': 500,
+    'replay_ratio': 0.6,
+    'replay_every_n': 1,
+    'replay_selection': 'balanced',
+    'replay_boost_domains': [1000, 1200],
+    'replay_boost_ratio': 0.7
+}
+
+# 기존 TRAINING_CONFIG (하위 호환성)
 TRAINING_CONFIG = {
-    # 기본 학습 설정
-    'batch_size': 32,  # 실용적 배치 크기 (31개 negative samples)
-    'num_epochs': 100,  # 50 → 100: 더 충분한 학습
-    'learning_rate': 3e-4,  # 표준 contrastive learning 학습률
+    # 기본 설정 (FIRST_DOMAIN_CONFIG 기반)
+    'batch_size': 32,
+    'num_epochs': 25,
+    'learning_rate': 3e-4,
     'weight_decay': 1e-5,
     'warmup_steps': 1000,
     
     # Continual Learning 설정
-    'replay_buffer_size': 500,  # 도메인당 저장할 embedding 수
-    'replay_ratio': 0.6,  # 새 데이터 vs replay 데이터 비율
-    'replay_every_n': 1,  # 몇 배치마다 replay를 섞을지 (작은 에포크에서는 1 권장)
-    'replay_selection': 'balanced',  # replay 샘플 선택 전략: 'random' | 'balanced' | 'representative'
+    'replay_buffer_size': 500,
+    'replay_ratio': 0.6,
+    'replay_every_n': 1,
+    'replay_selection': 'balanced',
     
     # Early stopping
-    'patience': 12,
+    'patience': 8,
     'min_epoch_per_domain': 5,
     'min_delta': 1e-4,
     
     # 체크포인트
     'save_interval': 5,
     'checkpoint_dir': 'checkpoints',
-    # Gradient accumulation to reduce memory footprint
     'grad_accum_steps': 1,
 
-    # 파라미터 그룹 LR 멀티플라이어 (텍스트 LoRA/프로젝션 가속)
+    # 파라미터 그룹 LR 멀티플라이어
     'lora_lr_mult': 3.0,
-    'proj_lr_mult': 5.0,  # 3.0 → 5.0 (continual learning에서 projection 학습 강화)
-    'vib_lr_mult': 2.0,   # 1.0 → 2.0 (vibration encoder 학습 강화)
+    'proj_lr_mult': 5.0,
+    'vib_lr_mult': 2.0,
 
     # First-domain two-stage schedule
-    'first_domain_stage1_epochs': 8,  # Stage-1: encoders freeze, projection/prototypes only
-    # 도메인별 리플레이 부스팅(중간 도메인 안정화)
+    'first_domain_stage1_epochs': 8,
+    # 도메인별 리플레이 부스팅
     'replay_boost_domains': [1000, 1200],
     'replay_boost_ratio': 0.7
 }

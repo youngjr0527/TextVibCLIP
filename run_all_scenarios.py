@@ -528,6 +528,9 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
                         'vib': torch.cat(vib_embeddings, dim=0),
                         'metadata': metadata_list
                     }
+                    logger.info(f"   📊 도메인 {domain} 임베딩 수집: {len(text_embeddings)}개 샘플")
+                else:
+                    logger.warning(f"   ⚠️ 도메인 {domain}: 임베딩 수집 실패")
             # 선형 프로브 진단(도메인별 test 분리 가능성)
             try:
                 from torch.utils.data import DataLoader
@@ -769,27 +772,64 @@ def main():
             # 3. Encoder Alignment 시각화 (첫 번째 도메인만)
             if 'domain_embeddings' in scenario_result:
                 domain_embeddings = scenario_result['domain_embeddings']
+                
+                logger.info(f"   📊 Domain embeddings 확인: {len(domain_embeddings)}개 도메인")
+                for domain_key, domain_data in domain_embeddings.items():
+                    logger.info(f"     - 도메인 {domain_key}: text={len(domain_data.get('text', []))}, vib={len(domain_data.get('vib', []))}")
+                
                 first_domain = list(domain_embeddings.keys())[0] if domain_embeddings else None
                 
                 if first_domain and 'text' in domain_embeddings[first_domain] and 'vib' in domain_embeddings[first_domain]:
-                    # 실제 메타데이터에서 라벨 사용
-                    text_emb = domain_embeddings[first_domain]['text'][:100]
-                    vib_emb = domain_embeddings[first_domain]['vib'][:100]
-                    meta = domain_embeddings[first_domain].get('metadata', [])[:len(text_emb)]
-                    labels = [m.get('bearing_condition', 'H') for m in meta]
-                    types = [m.get('bearing_type', '6204') for m in meta]
-                    
-                    alignment_path = visualizer.create_encoder_alignment_plot(
-                        text_embeddings=text_emb,
-                        vib_embeddings=vib_emb,
-                        labels=labels,
-                        bearing_types=types,
-                        domain_name=first_domain,
-                        save_name=f"encoder_alignment_{scenario_name}"
-                    )
-                    if alignment_path:
-                        figure_count += 1
-                        logger.info(f"   ✅ Encoder alignment 시각화: {os.path.basename(alignment_path)}")
+                    try:
+                        # 실제 메타데이터에서 라벨 사용
+                        text_emb = domain_embeddings[first_domain]['text'][:100]
+                        vib_emb = domain_embeddings[first_domain]['vib'][:100]
+                        meta = domain_embeddings[first_domain].get('metadata', [])[:len(text_emb)]
+                        
+                        # CWRU와 UOS의 메타데이터 구조 차이 고려
+                        if scenario_name.startswith('CWRU'):
+                            # CWRU: bearing_condition이 'H', 'B', 'IR', 'OR' (H = Healthy)
+                            labels = [m.get('bearing_condition', 'H') for m in meta]
+                            types = [m.get('bearing_type', 'deep_groove_ball') for m in meta]
+                        else:
+                            # UOS: bearing_condition이 상태 (H, B, IR, OR, L, U, M)
+                            labels = [m.get('bearing_condition', 'H') for m in meta]
+                            types = [m.get('bearing_type', '6204') for m in meta]
+                        
+                        logger.info(f"   📊 Alignment 시각화 데이터: {len(text_emb)}개 샘플, 첫 도메인={first_domain}")
+                        logger.info(f"      라벨 분포: {set(labels)}")
+                        
+                        # 도메인명 형식 통일 (UOS: 600RPM -> 600, CWRU: 0HP -> 0)
+                        domain_display = str(first_domain).replace('RPM', '').replace('HP', '')
+                        
+                        alignment_path = visualizer.create_encoder_alignment_plot(
+                            text_embeddings=text_emb,
+                            vib_embeddings=vib_emb,
+                            labels=labels,
+                            bearing_types=types,
+                            domain_name=domain_display,
+                            save_name=f"encoder_alignment_{scenario_name}_{domain_display}"
+                        )
+                        if alignment_path:
+                            figure_count += 1
+                            logger.info(f"   ✅ Encoder alignment 시각화: {os.path.basename(alignment_path)}")
+                        else:
+                            logger.warning(f"   ⚠️ Encoder alignment 시각화 생성 실패: {scenario_name}")
+                            
+                    except Exception as e:
+                        logger.error(f"   ❌ Encoder alignment 시각화 오류 ({scenario_name}): {e}")
+                        logger.exception("상세 오류:")
+                else:
+                    if not first_domain:
+                        logger.warning(f"   ⚠️ {scenario_name}: 첫 번째 도메인이 없습니다")
+                    elif first_domain not in domain_embeddings:
+                        logger.warning(f"   ⚠️ {scenario_name}: 도메인 {first_domain} 데이터가 없습니다")
+                    elif 'text' not in domain_embeddings[first_domain]:
+                        logger.warning(f"   ⚠️ {scenario_name}: 도메인 {first_domain}에 text 임베딩이 없습니다")
+                    elif 'vib' not in domain_embeddings[first_domain]:
+                        logger.warning(f"   ⚠️ {scenario_name}: 도메인 {first_domain}에 vib 임베딩이 없습니다")
+            else:
+                logger.warning(f"   ⚠️ {scenario_name}: domain_embeddings가 없습니다")
         
         logger.info(f"✅ 논문용 Figure {figure_count}개 생성 완료!")
         
