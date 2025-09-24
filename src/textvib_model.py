@@ -599,7 +599,7 @@ class TextVibCLIP(nn.Module):
                             if self.prototypes_initialized.item() == 0:
                                 self.prototypes_initialized.fill_(1)
 
-        # 🎯 CRITICAL FIX: CWRU 전용 강화된 Auxiliary Classification
+        # 🎯 CRITICAL FIX: 도메인별 차별화된 Auxiliary Classification
         aux_cfg = MODEL_CONFIG.get('aux_classification', {'enabled': False})
         if aux_cfg.get('enabled', False):
             aux_labels = batch.get('labels', None)
@@ -610,8 +610,20 @@ class TextVibCLIP(nn.Module):
                     if hasattr(self.vibration_encoder, 'use_aux_head') and self.vibration_encoder.use_aux_head:
                         logits_cls = self.vibration_encoder.aux_head(vib_embeddings)
                         ce_loss = F.cross_entropy(logits_cls, main_class)
-                        loss = loss + float(aux_cfg.get('loss_weight', 1.0)) * ce_loss
+                        
+                        # 🎯 도메인별 차별화된 가중치 적용
+                        if self.is_continual_mode:
+                            # Continual: 약한 auxiliary loss
+                            from configs.model_config import CONTINUAL_CONFIG
+                            aux_weight = CONTINUAL_CONFIG.get('aux_weight', 0.5)
+                        else:
+                            # First domain: 강한 auxiliary loss
+                            from configs.model_config import FIRST_DOMAIN_CONFIG
+                            aux_weight = FIRST_DOMAIN_CONFIG.get('aux_weight', 2.0)
+                        
+                        loss = loss + aux_weight * ce_loss
                         loss_components['aux_ce'] = ce_loss
+                        loss_components['aux_weight'] = aux_weight
                 elif aux_labels.dim() == 1:
                     # 🎯 CWRU: 강화된 직접 분류 (contrastive learning 보완)
                     if hasattr(self.vibration_encoder, 'use_aux_head') and self.vibration_encoder.use_aux_head:

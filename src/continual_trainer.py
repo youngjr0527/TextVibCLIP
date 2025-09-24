@@ -21,7 +21,7 @@ from .replay_buffer import ReplayBuffer
 from .data_loader import create_domain_dataloaders, create_combined_dataloader, create_first_domain_dataloader
 from .data_cache import create_cached_first_domain_dataloader
 from .utils import setup_amp_and_scaler
-from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG, CWRU_DATA_CONFIG, SEQUENTIAL_ALIGNMENT_CONFIG
+from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG, CWRU_DATA_CONFIG, SEQUENTIAL_ALIGNMENT_CONFIG, FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +140,18 @@ class ContinualTrainer:
                 batch_size=self.batch_size
             )
         
+        # 🎯 FIRST DOMAIN 전용 설정 적용
         if num_epochs is None:
-            num_epochs = self.num_epochs
+            num_epochs = FIRST_DOMAIN_CONFIG['num_epochs']
+        
+        # First domain 전용 하이퍼파라미터 적용
+        original_lr = self.learning_rate
+        original_wd = self.weight_decay
+        self.learning_rate = FIRST_DOMAIN_CONFIG['learning_rate']
+        self.weight_decay = FIRST_DOMAIN_CONFIG['weight_decay']
+        
+        logger.info(f"🎯 First Domain 전용 설정 적용:")
+        logger.info(f"   에포크: {num_epochs}, 학습률: {self.learning_rate:.1e}, Weight Decay: {self.weight_decay:.1e}")
         
         # 모델을 첫 번째 도메인 학습 모드로 설정
         self.model.switch_to_first_domain_mode()  # First domain mode (LoRA 활성화)
@@ -380,7 +390,7 @@ class ContinualTrainer:
                             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                         self.scaler.step(optimizer)
                         self.scaler.update()
-                        scheduler.step()  # 🎯 FIXED: optimizer step과 함께 호출
+                        # scheduler.step()은 에포크 끝에서 호출
                 else:
                     results = self.model(batch)
                     loss = results['loss'] / self.grad_accum_steps
@@ -423,7 +433,7 @@ class ContinualTrainer:
                                 })
                             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                         optimizer.step()
-                        scheduler.step()  # 🎯 FIXED: optimizer step과 함께 호출
+                        # scheduler.step()은 에포크 끝에서 호출
                 
                 epoch_loss += loss.item()
                 num_batches += 1
@@ -435,6 +445,9 @@ class ContinualTrainer:
             
             avg_epoch_loss = epoch_loss / num_batches
             epoch_losses.append(avg_epoch_loss)
+            
+            # 🎯 FIXED: 에포크 끝에서 scheduler step
+            scheduler.step()
             
             logger.info(f"First Domain Epoch {epoch+1} 완료: Avg Loss = {avg_epoch_loss:.4f}")
         
@@ -526,6 +539,16 @@ class ContinualTrainer:
             Dict[str, Any]: 학습 결과 및 메트릭
         """
         logger.info("=== Remaining Domains Training 시작 (800~1600 RPM) ===")
+        
+        # 🎯 CONTINUAL 전용 설정 적용
+        self.num_epochs = CONTINUAL_CONFIG['num_epochs']
+        self.learning_rate = CONTINUAL_CONFIG['learning_rate']  
+        self.weight_decay = CONTINUAL_CONFIG['weight_decay']
+        self.patience = CONTINUAL_CONFIG['patience']
+        
+        logger.info(f"🎯 Continual Domain 전용 설정 적용:")
+        logger.info(f"   에포크: {self.num_epochs}, 학습률: {self.learning_rate:.1e}")
+        logger.info(f"   Weight Decay: {self.weight_decay:.1e}, Patience: {self.patience}")
         
         # 데이터로더 준비
         if domain_dataloaders is None:
@@ -814,11 +837,14 @@ class ContinualTrainer:
             logger.info(f"Domain {domain_value} Epoch {epoch+1}: "
                        f"Loss = {avg_epoch_loss:.4f}, Val Acc = {val_acc:.4f}")
             
-            # Early stopping (최소 에포크 보장)
-            min_ep = int(TRAINING_CONFIG.get('min_epoch_per_domain', 0))
+            # 🎯 CONTINUAL 전용 Early stopping 설정
+            min_ep = int(CONTINUAL_CONFIG.get('min_epoch', 2))
+            patience_threshold = int(CONTINUAL_CONFIG.get('patience', 3))
+            
             # 도메인별 오버라이드가 있으면 반영
             override_key = f'min_epoch_{domain_value}'
             min_ep = int(MODEL_CONFIG.get('training_overrides', {}).get(override_key, min_ep))
+            
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 best_epoch = epoch + 1
@@ -830,8 +856,8 @@ class ContinualTrainer:
             else:
                 patience_counter += 1
                 
-                if (epoch + 1) >= min_ep and patience_counter >= TRAINING_CONFIG['patience']:
-                    logger.info(f"Early stopping at epoch {epoch+1}")
+                if (epoch + 1) >= min_ep and patience_counter >= patience_threshold:
+                    logger.info(f"Early stopping at epoch {epoch+1} (patience: {patience_threshold})")
                     break
         
         # 도메인 학습 완료
@@ -1790,9 +1816,10 @@ class ContinualTrainer:
     def _create_optimizer(self) -> torch.optim.Optimizer:
         """First domain training용 optimizer 생성 (파라미터 그룹 분리)"""
         base_lr = self.learning_rate
-        lora_mult = float(TRAINING_CONFIG.get('lora_lr_mult', 3.0))
-        proj_mult = float(TRAINING_CONFIG.get('proj_lr_mult', 3.0))
-        vib_mult  = float(TRAINING_CONFIG.get('vib_lr_mult', 1.0))
+        # 🎯 FIRST DOMAIN 전용 설정 사용
+        lora_mult = float(FIRST_DOMAIN_CONFIG.get('lora_lr_mult', 3.0))
+        proj_mult = float(FIRST_DOMAIN_CONFIG.get('proj_lr_mult', 5.0))
+        vib_mult  = float(FIRST_DOMAIN_CONFIG.get('vib_lr_mult', 2.0))
 
         params = []
         seen = set()
@@ -1844,15 +1871,23 @@ class ContinualTrainer:
         return optim.AdamW(params)
     
     def _create_scheduler(self, optimizer, total_steps):
-        """학습률 스케줄러 생성 (단일 구현)"""
-        from torch.optim.lr_scheduler import CosineAnnealingLR
-        return CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
+        """학습률 스케줄러 생성 - 과적합 방지용"""
+        from torch.optim.lr_scheduler import StepLR
+        # 과적합 방지를 위한 단계별 학습률 감소
+        return StepLR(optimizer, step_size=5, gamma=0.8)  # 5 에포크마다 20% 감소
     
     def _create_continual_optimizer(self) -> torch.optim.Optimizer:
         """Continual learning용 optimizer 생성 (Vibration + Text projection + 온도)"""
-        base_lr = self.learning_rate
-        proj_mult = float(TRAINING_CONFIG.get('proj_lr_mult', 5.0))
-        vib_mult = float(TRAINING_CONFIG.get('vib_lr_mult', 2.0))
+        # 🎯 CONTINUAL 전용 설정 적용
+        base_lr = CONTINUAL_CONFIG['learning_rate']
+        self.weight_decay = CONTINUAL_CONFIG['weight_decay']  # Weight decay도 업데이트
+        
+        proj_mult = float(CONTINUAL_CONFIG.get('proj_lr_mult', 2.0))
+        vib_mult = float(CONTINUAL_CONFIG.get('vib_lr_mult', 3.0))
+        
+        logger.info(f"🎯 Continual Domain 전용 설정 적용:")
+        logger.info(f"   학습률: {base_lr:.1e}, Weight Decay: {self.weight_decay:.1e}")
+        logger.info(f"   LR 배수 - Proj: {proj_mult}x, Vib: {vib_mult}x")
         
         params = []
         seen = set()
