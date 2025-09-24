@@ -21,7 +21,7 @@ from .replay_buffer import ReplayBuffer
 from .data_loader import create_domain_dataloaders, create_combined_dataloader, create_first_domain_dataloader
 from .data_cache import create_cached_first_domain_dataloader
 from .utils import setup_amp_and_scaler
-from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG, CWRU_DATA_CONFIG, SEQUENTIAL_ALIGNMENT_CONFIG, FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG
+from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG, CWRU_DATA_CONFIG, FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,8 @@ class ContinualTrainer:
         self.max_grad_norm = max_grad_norm
         os.makedirs(save_dir, exist_ok=True)
         
-        # AMP 설정
-        self.scaler, self.use_amp = setup_amp_and_scaler(device, use_amp)
+        self.use_amp = False
+        self.scaler = None
         
         # 모델 초기화
         if model is None:
@@ -180,118 +180,10 @@ class ContinualTrainer:
         if num_epochs is not None and stage1_epochs > max(1, num_epochs - 1):
             stage1_epochs = max(1, num_epochs // 2)
         
-        # 순차 정렬(앵커→반대) 모드가 켜져 있으면 별도 루프 사용
-        self.seqalign_artifacts = {}
-        if SEQUENTIAL_ALIGNMENT_CONFIG.get('enabled', False):
-            anchor = SEQUENTIAL_ALIGNMENT_CONFIG.get('anchor', 'vib')
-            stageA = int(SEQUENTIAL_ALIGNMENT_CONFIG.get('stageA_epochs', 0))
-            stageB = int(SEQUENTIAL_ALIGNMENT_CONFIG.get('stageB_epochs', 0))
-            total_seq_epochs = max(0, stageA) + max(0, stageB)
-            remaining = max(0, (num_epochs or 0) - total_seq_epochs)
-            phases = []
-            if stageA > 0:
-                phases.append(('A', stageA))
-            if stageB > 0:
-                phases.append(('B', stageB))
-            if remaining > 0:
-                phases.append(('N', remaining))
-
-            current_epoch = 0
-            for phase, p_epochs in phases:
-                logger.info(f"[SeqAlign] Phase {phase} for {p_epochs} epochs (anchor={anchor})")
-                # freeze 설정
-                if phase == 'A':
-                    if anchor == 'vib':
-                        for p in self.model.vibration_encoder.parameters(): p.requires_grad = True
-                        for p in self.model.text_encoder.parameters(): p.requires_grad = False
-                    else:
-                        for p in self.model.text_encoder.parameters(): p.requires_grad = True
-                        for p in self.model.vibration_encoder.parameters(): p.requires_grad = False
-                    MODEL_CONFIG['prototypes']['update_mode_continual'] = 'text_only'
-                elif phase == 'B':
-                    if anchor == 'vib':
-                        for p in self.model.vibration_encoder.parameters(): p.requires_grad = False
-                        for p in self.model.text_encoder.parameters(): p.requires_grad = True
-                    else:
-                        for p in self.model.text_encoder.parameters(): p.requires_grad = False
-                        for p in self.model.vibration_encoder.parameters(): p.requires_grad = True
-                    MODEL_CONFIG['prototypes']['update_mode_continual'] = 'frozen'
-                else:
-                    for p in self.model.text_encoder.parameters(): p.requires_grad = True
-                    for p in self.model.vibration_encoder.parameters(): p.requires_grad = True
-
-                for ep in range(p_epochs):
-                    epoch = current_epoch
-                    current_epoch += 1
-                    # 기존 바디 재사용 (온도 스케줄 간소화)
-                    epoch_loss = 0.0
-                    num_batches = 0
-                    for batch_idx, batch in enumerate(first_domain_dataloader):
-                        batch = self._move_batch_to_device(batch)
-                        if (batch_idx % self.grad_accum_steps) == 0:
-                            optimizer.zero_grad(set_to_none=True)
-                        if self.use_amp:
-                            with torch.cuda.amp.autocast():
-                                results = self.model(batch)
-                                loss = results['loss'] / self.grad_accum_steps
-                            self.scaler.scale(loss).backward()
-                        if (batch_idx + 1) % self.grad_accum_steps == 0:
-                            if self.max_grad_norm > 0:
-                                self.scaler.unscale_(optimizer)
-                                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                            self.scaler.step(optimizer)
-                            self.scaler.update()
-                            scheduler.step()  # 🎯 FIXED: optimizer step과 함께 호출
-                    else:
-                        results = self.model(batch)
-                        loss = results['loss'] / self.grad_accum_steps
-                        loss.backward()
-                        if (batch_idx + 1) % self.grad_accum_steps == 0:
-                            if self.max_grad_norm > 0:
-                                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                            optimizer.step()
-                            scheduler.step()  # 🎯 FIXED: optimizer step과 함께 호출
-                        epoch_loss += loss.item()
-                        num_batches += 1
-                    avg_epoch_loss = epoch_loss / num_batches
-                    last_avg_epoch_loss = avg_epoch_loss
-                    epoch_losses.append(avg_epoch_loss)
-                    logger.info(f"[SeqAlign {phase}] Epoch {ep+1}/{p_epochs}: Avg Loss={avg_epoch_loss:.4f}")
-
-                # Phase 종료 시 정렬 시각화 및 스칼라 메트릭 기록
-                try:
-                    domain_dataloaders = create_domain_dataloaders(
-                        data_dir=self.data_dir,
-                        domain_order=self.domain_order,
-                        dataset_type=self.dataset_type,
-                        batch_size=self.batch_size
-                    )
-                    viz = self._create_first_domain_alignment_visualization(
-                        domain_dataloaders, self.domain_order[0]
-                    )
-                    # Scalar alignment metrics on val loader of first domain
-                    val_loader = domain_dataloaders[self.domain_order[0]]['val']
-                    align_metrics = self._compute_alignment_scalar_metrics(val_loader)
-                    # Save CSV
-                    import pandas as _pd
-                    metrics_path = os.path.join(self.save_dir, f'seqalign_phase{phase}_metrics.csv')
-                    _pd.DataFrame([align_metrics]).to_csv(metrics_path, index=False)
-                    self.seqalign_artifacts[f'phase_{phase}'] = {
-                        'alignment_plot': viz.get('save_path', ''),
-                        'metrics_csv': metrics_path,
-                        'metrics': align_metrics
-                    }
-                    logger.info(f"[SeqAlign {phase}] 정렬 메트릭 저장: {os.path.basename(metrics_path)}")
-                except Exception as e:
-                    logger.info(f"[SeqAlign {phase}] 정렬 메트릭/시각화 생성 스킵: {e}")
-
-            # 복원
-            for p in self.model.text_encoder.parameters(): p.requires_grad = True
-            for p in self.model.vibration_encoder.parameters(): p.requires_grad = True
-        else:
-            for epoch in range(num_epochs):
-                # 첫 도메인 온도 스케줄(선형): init -> final
-                inf_cfg = MODEL_CONFIG.get('infonce', {})
+        # 🎯 SIMPLIFIED: 표준 학습 루프 시작
+        for epoch in range(num_epochs):
+            # 첫 도메인 온도 스케줄(선형): init -> final (간소화)
+            inf_cfg = MODEL_CONFIG.get('infonce', {})
             t_text_init = float(inf_cfg.get('first_domain_temperature_text_init',
                                             inf_cfg.get('first_domain_temperature_text', 0.10)))
             t_text_final = float(inf_cfg.get('first_domain_temperature_text_final',
@@ -344,96 +236,19 @@ class ContinualTrainer:
                 if (batch_idx % self.grad_accum_steps) == 0:
                     optimizer.zero_grad(set_to_none=True)
                 
-                if self.use_amp:
-                    with torch.cuda.amp.autocast():
-                        results = self.model(batch)
-                        loss = results['loss'] / self.grad_accum_steps
-                    
-                    # Backward pass with AMP + grad accumulation
-                    self.scaler.scale(loss).backward()
-                    
-                    if (batch_idx + 1) % self.grad_accum_steps == 0:
-                        # Gradient clipping 및 grad norm 측정 준비를 위한 unscale (사이클 끝에서만)
-                        if self.max_grad_norm > 0:
-                            self.scaler.unscale_(optimizer)
-                            # 디버그: grad norm 측정 (텍스트 LoRA, 진동 인코더)
-                            try:
-                                text_lora_params = [
-                                    p for n, p in self.model.text_encoder.distilbert.named_parameters()
-                                    if ('lora_' in n) and p.requires_grad and (p.grad is not None)
-                                ]
-                            except Exception:
-                                text_lora_params = []
-                            vib_params = [
-                                p for p in self.model.vibration_encoder.parameters()
-                                if p.requires_grad and (p.grad is not None)
-                            ]
-                            def _global_grad_norm(params):
-                                if not params:
-                                    return 0.0
-                                import math
-                                total = 0.0
-                                for p in params:
-                                    if p.grad is not None:
-                                        param_norm = p.grad.data.float().norm(2).item()
-                                        total += param_norm * param_norm
-                                return math.sqrt(total)
-                            grad_norm_text = _global_grad_norm(text_lora_params)
-                            grad_norm_vib = _global_grad_norm(vib_params)
-                            if batch_idx % 50 == 0:
-                                self.debug_grad_norms.append({
-                                    'epoch': epoch + 1,
-                                    'batch': batch_idx,
-                                    'text_lora': float(grad_norm_text),
-                                    'vib': float(grad_norm_vib)
-                                })
-                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                        self.scaler.step(optimizer)
-                        self.scaler.update()
-                        # scheduler.step()은 에포크 끝에서 호출
-                else:
-                    results = self.model(batch)
-                    loss = results['loss'] / self.grad_accum_steps
-                    
-                    # Backward pass
-                    loss.backward()
-                    
-                    if (batch_idx + 1) % self.grad_accum_steps == 0:
-                        # Gradient clipping 및 grad norm 측정 (사이클 끝에서만)
-                        if self.max_grad_norm > 0:
-                            try:
-                                text_lora_params = [
-                                    p for n, p in self.model.text_encoder.distilbert.named_parameters()
-                                    if ('lora_' in n) and p.requires_grad and (p.grad is not None)
-                                ]
-                            except Exception:
-                                text_lora_params = []
-                            vib_params = [
-                                p for p in self.model.vibration_encoder.parameters()
-                                if p.requires_grad and (p.grad is not None)
-                            ]
-                            def _global_grad_norm(params):
-                                if not params:
-                                    return 0.0
-                                import math
-                                total = 0.0
-                                for p in params:
-                                    if p.grad is not None:
-                                        param_norm = p.grad.data.float().norm(2).item()
-                                        total += param_norm * param_norm
-                                return math.sqrt(total)
-                            grad_norm_text = _global_grad_norm(text_lora_params)
-                            grad_norm_vib = _global_grad_norm(vib_params)
-                            if batch_idx % 50 == 0:
-                                self.debug_grad_norms.append({
-                                    'epoch': epoch + 1,
-                                    'batch': batch_idx,
-                                    'text_lora': float(grad_norm_text),
-                                    'vib': float(grad_norm_vib)
-                                })
-                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                        optimizer.step()
-                        # scheduler.step()은 에포크 끝에서 호출
+                # 표준 학습 루프
+                results = self.model(batch)
+                loss = results['loss'] / self.grad_accum_steps
+                
+                # Backward pass
+                loss.backward()
+                
+                if (batch_idx + 1) % self.grad_accum_steps == 0:
+                    # Gradient clipping (간소화)
+                    if self.max_grad_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                    optimizer.step()
+                    # scheduler.step()은 에포크 끝에서 호출
                 
                 epoch_loss += loss.item()
                 num_batches += 1
@@ -772,50 +587,28 @@ class ContinualTrainer:
                 # Forward pass
                 optimizer.zero_grad()
                 
-                if self.use_amp:
-                    with torch.cuda.amp.autocast():
-                        results = self.model(combined_batch)
-                        loss = results['loss']
-                        # RKD/LwF 정규화 (continual 단계에서만 의미 있음)
-                        reg_loss = self._compute_regularizers(combined_batch, results)
-                        if reg_loss is not None:
-                            loss = loss + reg_loss
-                            try:
-                                epoch_rkd_sum += float(reg_loss.detach().item())
-                                epoch_rkd_count += 1
-                            except Exception:
-                                pass
-                    
-                    # Backward pass with AMP
-                    self.scaler.scale(loss).backward()
-                    
-                    # Gradient clipping
-                    if self.max_grad_norm > 0:
-                        self.scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                    
-                    self.scaler.step(optimizer)
-                    self.scaler.update()
-                else:
-                    results = self.model(combined_batch)
-                    loss = results['loss']
-                    reg_loss = self._compute_regularizers(combined_batch, results)
-                    if reg_loss is not None:
-                        loss = loss + reg_loss
-                        try:
-                            epoch_rkd_sum += float(reg_loss.detach().item())
-                            epoch_rkd_count += 1
-                        except Exception:
-                            pass
-                    
-                    # Backward pass
-                    loss.backward()
-                    
-                    # Gradient clipping
-                    if self.max_grad_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                    
-                    optimizer.step()
+                # 표준 학습
+                results = self.model(combined_batch)
+                loss = results['loss']
+                
+                # 정규화 (비활성화됨)
+                reg_loss = self._compute_regularizers(combined_batch, results)
+                if reg_loss is not None:
+                    loss = loss + reg_loss
+                    try:
+                        epoch_rkd_sum += float(reg_loss.detach().item())
+                        epoch_rkd_count += 1
+                    except Exception:
+                        pass
+                
+                # Backward pass
+                loss.backward()
+                
+                # Gradient clipping
+                if self.max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                
+                optimizer.step()
                 
                 epoch_loss += loss.item()
                 num_batches += 1
@@ -881,150 +674,16 @@ class ContinualTrainer:
         }
 
     def _compute_prototype_alignment_stats(self, dataloader: DataLoader) -> Dict[str, float]:
-        """프로토타입 정렬 통계 계산(Validation 기준):
-        - 클래스별 텍스트/진동 평균 임베딩과 프로토타입 간 코사인 거리
-        - 진동 within-class 분산 평균
-        - 프로토타입 간 평균 코사인 거리(분리도)
-        """
-        stats: Dict[str, float] = {}
-        model = self.model
-        if not getattr(model, 'use_prototypes', False) or not hasattr(model, 'prototypes'):
-            return stats
-        model.eval()
-        all_t = []
-        all_v = []
-        all_y = []
-        with torch.no_grad():
-            for batch in dataloader:
-                batch = self._move_batch_to_device(batch)
-                out = model(batch, return_embeddings=True)
-                t = F.normalize(out['text_embeddings'], p=2, dim=1)
-                v = F.normalize(out['vib_embeddings'], p=2, dim=1)
-                labels = batch.get('labels', None)
-                if labels is None:
-                    continue
-                if labels.dim() == 2:
-                    y = labels[:, 0]
-                elif labels.dim() == 1:
-                    y = labels
-                else:
-                    continue
-                all_t.append(t.detach().cpu())
-                all_v.append(v.detach().cpu())
-                all_y.append(y.detach().cpu())
-        if not all_t:
-            return stats
-        import torch as _torch
-        t_all = _torch.cat(all_t, dim=0)
-        v_all = _torch.cat(all_v, dim=0)
-        y_all = _torch.cat(all_y, dim=0)
-        C = F.normalize(model.prototypes.detach().cpu(), p=2, dim=1)
-        num_classes = C.size(0)
-        # 클래스별 통계
-        within_vars = []
-        for k in range(num_classes):
-            m = (y_all == k)
-            if m.any():
-                t_mean = t_all[m].mean(dim=0, keepdim=True)
-                v_mean = v_all[m].mean(dim=0, keepdim=True)
-                c_k = C[k:k+1]
-                # 코사인 거리 = 1 - 코사인유사도
-                stats[f'class_{k}_t_proto_cosdist'] = float(1.0 - F.cosine_similarity(t_mean, c_k).item())
-                stats[f'class_{k}_v_proto_cosdist'] = float(1.0 - F.cosine_similarity(v_mean, c_k).item())
-                within_var_v = v_all[m].var(dim=0, unbiased=False).mean().item()
-                stats[f'class_{k}_v_within_var'] = float(within_var_v)
-                within_vars.append(within_var_v)
-        if within_vars:
-            stats['v_within_var_mean'] = float(sum(within_vars) / len(within_vars))
-        # 프로토타입 간 평균 코사인 거리(분리도)
-        if num_classes > 1:
-            iu = _torch.triu_indices(num_classes, num_classes, offset=1)
-            sims = (C @ C.t())[iu[0], iu[1]]
-            stats['proto_between_mean_cosdist'] = float(1.0 - sims.mean().item())
-        return stats
+        """프로토타입 비활성화로 빈 딕셔너리 반환"""
+        return {}
 
     def compute_prototype_alignment_stats_for_domains(self, domain_dataloaders: Dict) -> Dict[Union[int, str], Dict[str, float]]:
-        """도메인별 validation 로더로 프로토타입 정렬 통계 계산"""
-        results: Dict[Union[int, str], Dict[str, float]] = {}
-        for domain_value, loaders in domain_dataloaders.items():
-            if 'val' not in loaders:
-                continue
-            stats = self._compute_prototype_alignment_stats(loaders['val'])
-            results[domain_value] = stats
-        return results
+        """프로토타입 비활성화로 빈 딕셔너리 반환"""
+        return {}
 
     def _compute_regularizers(self, batch: Dict, results: Dict) -> Optional[torch.Tensor]:
-        """관계 지식 증류(RKD) 및 LwF 보조 항 계산.
-        - RKD: 배치 내 pairwise 거리/각도 매트릭스를 이전(리플레이) 임베딩과 정렬
-        - LwF: 이전 로짓(가능 시)과 현재 로짓의 KL
-        현재는 간결 버전(RKD)만 활성(설정 토글)하며, 리플레이 임베딩이 전달된 경우에만 계산.
-        """
-        reg_cfg = MODEL_CONFIG.get('regularizers', {})
-        rkd_enabled = bool(reg_cfg.get('rkd_enabled', False))
-        lambda_rkd = float(reg_cfg.get('lambda_rkd', 0.0))
-        coral_enabled = bool(reg_cfg.get('coral_enabled', False))
-        lambda_coral = float(reg_cfg.get('lambda_coral', 0.0))
-        any_enabled = (rkd_enabled and lambda_rkd > 0.0) or (coral_enabled and lambda_coral > 0.0)
-        if not any_enabled:
-            return None
-        # 리플레이 임베딩이 없는 경우 skip
-        rt = batch.get('replay_text_embeddings', None)
-        rv = batch.get('replay_vib_embeddings', None)
-        if rt is None or rv is None or rt.numel() == 0 or rv.numel() == 0:
-            return None
-        # 현재 임베딩 (정규화 상태)
-        t = results.get('text_embeddings', None)
-        v = results.get('vib_embeddings', None)
-        if t is None or v is None:
-            return None
-        t = F.normalize(t, p=2, dim=1)
-        v = F.normalize(v, p=2, dim=1)
-        rt = F.normalize(rt, p=2, dim=1)
-        rv = F.normalize(rv, p=2, dim=1)
-        total_reg = None
-        if rkd_enabled and lambda_rkd > 0.0:
-            # 거리 기반 RKD: 현재 쌍wise 코사인 거리 분포 vs 리플레이 분포
-            def _pairwise_cos(x):
-                s = torch.matmul(x, x.t())
-                return s
-            # 텍스트/진동 각각 계산 후 평균
-            s_t = _pairwise_cos(t)
-            s_v = _pairwise_cos(v)
-            s_rt = _pairwise_cos(rt)
-            s_rv = _pairwise_cos(rv)
-            # 상삼각 추출
-            def _upper_tri(a):
-                n = a.size(0)
-                if n <= 1:
-                    return a.new_zeros(1)
-                iu = torch.triu_indices(n, n, offset=1, device=a.device)
-                return a[iu[0], iu[1]]
-            ut, uv = _upper_tri(s_t), _upper_tri(s_v)
-            urt, urv = _upper_tri(s_rt), _upper_tri(s_rv)
-            # 평균/분산 정규화 후 L2 차이
-            def _norm_vec(x):
-                if x.numel() == 0:
-                    return x
-                return (x - x.mean()) / (x.std(unbiased=False) + 1e-6)
-            ut, uv, urt, urv = map(_norm_vec, [ut, uv, urt, urv])
-            loss_t = F.mse_loss(ut, urt.expand_as(ut)[:ut.numel()]) if ut.numel() > 0 and urt.numel() > 0 else t.new_zeros(1)
-            loss_v = F.mse_loss(uv, urv.expand_as(uv)[:uv.numel()]) if uv.numel() > 0 and urv.numel() > 0 else v.new_zeros(1)
-            total_reg = (lambda_rkd * 0.5 * (loss_t + loss_v)) if total_reg is None else total_reg + (lambda_rkd * 0.5 * (loss_t + loss_v))
-
-        if coral_enabled and lambda_coral > 0.0:
-            # CORAL: 공분산 정렬 (Sun & Saenko, 2016)
-            def _covariance(x):
-                n = x.size(0)
-                xm = x - x.mean(dim=0, keepdim=True)
-                return (xm.t() @ xm) / max(1, n - 1)
-            cov_v = _covariance(v)
-            cov_rv = _covariance(rv)
-            coral_v = F.mse_loss(cov_v, cov_rv)
-            # 텍스트 쪽도 약하게(옵션): 현재는 진동 쪽만 적용
-            reg_coral = lambda_coral * coral_v
-            total_reg = reg_coral if total_reg is None else total_reg + reg_coral
-
-        return total_reg
+        """모든 정규화 기법이 비활성화되어 있으므로 None 반환"""
+        return None
 
     def _procrustes_init_vib_projection(self, dataloader: DataLoader, max_batches: int = 50) -> None:
         """도메인1에서 클래스 중심(텍스트/진동) 기반 정규직교 Procrustes로 vib projection 마지막층 초기화.

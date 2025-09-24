@@ -251,33 +251,6 @@ class TextVibCLIP(nn.Module):
         self.text_projection = self._build_projection(embedding_dim)
         self.vibration_projection = self._build_projection(embedding_dim)
 
-        # Prototypes (class anchors) for shared semantic space
-        proto_cfg = MODEL_CONFIG.get('prototypes', {})
-        self.use_prototypes = bool(proto_cfg.get('enabled', False))
-        self.prototype_tau = float(proto_cfg.get('tau', 0.1))
-        self.prototype_lambda = float(proto_cfg.get('lambda_proto', 0.5))
-        self.prototype_lambda_continual = float(proto_cfg.get('continual_lambda', self.prototype_lambda))
-        self.prototype_ema_m = float(proto_cfg.get('ema_momentum', 0.99))
-        self.prototype_init_from_text = bool(proto_cfg.get('init_from_text', True))
-
-        # 클래스 수는 UOS의 7을 기본으로 사용 (CWRU 4는 하위 부분집합으로 처리)
-        aux_cfg = MODEL_CONFIG.get('aux_classification', {})
-        self.num_classes = int(aux_cfg.get('num_classes', 7))
-
-        if self.use_prototypes:
-            # 학습 가능한 프로토타입 테이블 (K, D)
-            proto = torch.randn(self.num_classes, embedding_dim) * (1.0 / (embedding_dim ** 0.5))
-            self.prototypes = nn.Parameter(proto)
-            # 지연 초기화/EMA 플래그 및 버퍼
-            self.register_buffer('prototypes_initialized', torch.tensor(0, dtype=torch.uint8))
-            self.register_buffer('prototype_counts', torch.zeros(self.num_classes, dtype=torch.long))
-
-        # Bilinear similarity head (optional)
-        sim_cfg = MODEL_CONFIG.get('similarity', {})
-        self.use_bilinear = bool(sim_cfg.get('bilinear_enabled', False))
-        self.lambda_bilinear = float(sim_cfg.get('lambda_bilinear', 0.0))
-        if self.use_bilinear:
-            self.bilinear_W = nn.Parameter(torch.eye(embedding_dim))
         
         # InfoNCE Loss 설정
         if domain_stage == 'first_domain':
@@ -292,17 +265,6 @@ class TextVibCLIP(nn.Module):
         # Continual learning 상태 관리
         self.is_continual_mode = (domain_stage == 'continual')
 
-        # Domain-conditioned affine normalization (FiLM-lite) on vibration projection output
-        dcfg = MODEL_CONFIG.get('domain_conditioning', {'enabled': False})
-        self.domain_cond_enabled = bool(dcfg.get('enabled', False))
-        if self.domain_cond_enabled:
-            num_domains = int(dcfg.get('num_domains', 6))
-            self.domain_gamma = nn.Embedding(num_domains, embedding_dim)
-            self.domain_beta = nn.Embedding(num_domains, embedding_dim)
-            # init near identity
-            nn.init.constant_(self.domain_gamma.weight, float(dcfg.get('scale_init', 0.0)))
-            nn.init.constant_(self.domain_beta.weight, float(dcfg.get('bias_init', 0.0)))
-            self.domain_cond_reg_weight = float(dcfg.get('reg_weight', 1e-3))
         
         logger.info(f"TextVibCLIP 초기화 완료: {domain_stage} stage")
 
@@ -384,32 +346,7 @@ class TextVibCLIP(nn.Module):
         
         # 🎯 CRITICAL FIX: Cross-Modal Projection 적용
         text_embeddings = F.normalize(self.text_projection(text_embeddings), p=2, dim=1)
-        vib_embeddings = self.vibration_projection(vib_embeddings)
-        # Domain-conditioned FiLM
-        if self.domain_cond_enabled:
-            # 우선 배치의 'rpm' 텐서 사용, 없으면 metadata에서 rotating_speed 사용
-            rpm_to_idx = {600:0, 800:1, 1000:2, 1200:3, 1400:4, 1600:5}
-            if 'rpm' in batch:
-                # 배치 텐서: shape (B,)
-                rpm_tensor = batch['rpm']
-                if hasattr(rpm_tensor, 'detach'):
-                    rpm_list = rpm_tensor.detach().cpu().tolist()
-                else:
-                    rpm_list = list(rpm_tensor)
-                domain_idx_list = [rpm_to_idx.get(int(r), 0) for r in rpm_list]
-            else:
-                domain_idx_list = []
-                for m in batch.get('metadata', []):
-                    rpm = m.get('rotating_speed') or m.get('domain_key') or m.get('rpm')
-                    if isinstance(rpm, (list, tuple)):
-                        rpm = rpm[0]
-                    domain_idx_list.append(rpm_to_idx.get(int(rpm) if rpm is not None else 600, 0))
-            if domain_idx_list:
-                domain_idx = torch.tensor(domain_idx_list, device=vib_embeddings.device, dtype=torch.long)
-                gamma = torch.tanh(self.domain_gamma(domain_idx)) + 1.0  # around 1.0
-                beta = self.domain_beta(domain_idx)  # around 0.0
-                vib_embeddings = gamma * vib_embeddings + beta
-        vib_embeddings = F.normalize(vib_embeddings, p=2, dim=1)
+        vib_embeddings = F.normalize(self.vibration_projection(vib_embeddings), p=2, dim=1)
         
         # 🎯 FIXED: 표준 contrastive learning (diagonal pairs only)
         # 각 text-vibration 쌍은 배치 내에서 대각선 위치에서만 매칭
@@ -519,85 +456,7 @@ class TextVibCLIP(nn.Module):
                     'total': loss
                 }
 
-        # Bilinear similarity auxiliary loss (optional)
-        if self.use_bilinear and self.lambda_bilinear > 0.0:
-            # s_ij = t_i^T W v_j, 멀티-포지티브 마스크 기반 InfoNCE와 동일한 형태로 사용
-            batch_labels = batch.get('labels', None)
-            t = F.normalize(text_embeddings, p=2, dim=1)
-            v = F.normalize(vib_embeddings, p=2, dim=1)
-            logits_bi = torch.matmul(torch.matmul(t, self.bilinear_W), v.t())
-            if batch_labels is not None:
-                if batch_labels.dim() == 2:
-                    cls = batch_labels[:, 0]
-                elif batch_labels.dim() == 1:
-                    cls = batch_labels
-                else:
-                    cls = torch.arange(t.size(0), device=t.device)
-                pos_mask = (cls.unsqueeze(1) == cls.unsqueeze(0))
-            else:
-                # 대각선만 포지티브
-                pos_mask = torch.eye(t.size(0), dtype=torch.bool, device=t.device)
-            # 온도는 text 방향 것을 사용
-            bi_loss = self.infonce_loss._class_based_infonce_loss(logits_bi, pos_mask, self.infonce_loss.temperature_text)
-            loss = loss + self.lambda_bilinear * bi_loss
-            loss_components['bilinear'] = bi_loss
 
-        # Prototype alignment loss (optional)
-        if self.use_prototypes:
-            proto_loss = None
-            labels_for_proto = batch.get('labels', None)
-            if labels_for_proto is not None:
-                # 라벨 정규화: UOS (B,2) => 첫번째 열, CWRU (B,1) => 열 0, 1D => 그대로
-                if labels_for_proto.dim() == 2:
-                    class_labels = labels_for_proto[:, 0]
-                elif labels_for_proto.dim() == 1:
-                    class_labels = labels_for_proto
-                else:
-                    class_labels = None
-
-                if class_labels is not None:
-                    class_labels = class_labels.clamp(min=0, max=self.num_classes - 1)
-                    # 프로토타입 정규화 후 로짓 계산
-                    proto_norm = F.normalize(self.prototypes, p=2, dim=1)
-                    logits_text_proto = torch.matmul(text_embeddings, proto_norm.t()) / self.prototype_tau
-                    logits_vib_proto = torch.matmul(vib_embeddings, proto_norm.t()) / self.prototype_tau
-                    ce_text = F.cross_entropy(logits_text_proto, class_labels)
-                    ce_vib = F.cross_entropy(logits_vib_proto, class_labels)
-                    proto_loss = (ce_text + ce_vib) * 0.5
-                    lambda_proto = self.prototype_lambda_continual if self.is_continual_mode else self.prototype_lambda
-                    loss = loss + lambda_proto * proto_loss
-                    loss_components['proto_ce'] = proto_loss
-
-                    # 초기화(텍스트 기반 평균) 및 EMA 업데이트 (학습 시에만)
-                    if self.training:
-                        with torch.no_grad():
-                            # 배치 클래스별 평균 (텍스트/진동 평균을 함께 사용)
-                            unique_classes = class_labels.unique()
-                            for cls in unique_classes.tolist():
-                                mask = (class_labels == cls)
-                                if mask.any():
-                                    mean_t = text_embeddings[mask].mean(dim=0)
-                                    mean_v = vib_embeddings[mask].mean(dim=0)
-                                    # 업데이트 모드에 따라 평균 선택
-                                    update_mode = MODEL_CONFIG.get('prototypes', {}).get('update_mode_continual', 'both') if self.is_continual_mode else 'both'
-                                    if update_mode == 'frozen' and self.is_continual_mode:
-                                        mean_tv = F.normalize(self.prototypes.data[cls], p=2, dim=0)
-                                    elif update_mode == 'text_only' and self.is_continual_mode:
-                                        mean_tv = F.normalize(mean_t, p=2, dim=0)
-                                    else:
-                                        mean_tv = F.normalize(0.5 * (mean_t + mean_v), p=2, dim=0)
-
-                                    if (self.prototypes_initialized.item() == 0) and self.prototype_init_from_text:
-                                        # 최초 한 번 텍스트 기반으로 더 강하게 초기화
-                                        self.prototypes.data[cls] = mean_tv
-                                    else:
-                                        # EMA 업데이트
-                                        current = F.normalize(self.prototypes.data[cls], p=2, dim=0)
-                                        updated = self.prototype_ema_m * current + (1.0 - self.prototype_ema_m) * mean_tv
-                                        self.prototypes.data[cls] = F.normalize(updated, p=2, dim=0)
-
-                            if self.prototypes_initialized.item() == 0:
-                                self.prototypes_initialized.fill_(1)
 
         # 🎯 CRITICAL FIX: 도메인별 차별화된 Auxiliary Classification
         aux_cfg = MODEL_CONFIG.get('aux_classification', {'enabled': False})

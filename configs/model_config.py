@@ -22,28 +22,6 @@ MODEL_CONFIG = {
         }
     },
     
-    # Prototypes (class anchors) for shared semantic space - 단순화
-    'prototypes': {
-        'enabled': False,          # 🎯 SIMPLIFIED: 프로토타입 비활성화 (복잡성 제거)
-        'tau': 0.12,
-        'lambda_proto': 0.25,
-        'ema_momentum': 0.995,
-        'init_from_text': True,
-        'continual_lambda': 0.1,
-        'update_mode_continual': 'text_only'
-    },
-
-    # Attribute prototypes (RPM disentangling) - 비활성화
-    'attributes': {
-        'rpm_prototypes': {
-            'enabled': False,        # 🎯 SIMPLIFIED: 속성 프로토타입 비활성화
-            'num_domains': 6,
-            'tau': 0.12,
-            'lambda_attr': 0.1,
-            'ema_momentum': 0.995,
-            'update_mode_continual': 'text_only'
-        }
-    },
     
     # Vibration Encoder (1D-CNN) - 2048 최적화 아키텍처
     'vibration_encoder': {
@@ -91,45 +69,6 @@ MODEL_CONFIG = {
         'dropout': 0.1
     },
 
-    # Similarity head options - 단순화
-    'similarity': {
-        'bilinear_enabled': False,   # 🎯 SIMPLIFIED: Bilinear 비활성화
-        'lambda_bilinear': 0.15
-    },
-
-    # Domain-conditioned affine normalization on vib projection (FiLM-lite) - 단순화
-    'domain_conditioning': {
-        'enabled': False,            # 🎯 SIMPLIFIED: 도메인 컨디셔닝 비활성화
-        'num_domains': 6,
-        'scale_init': 0.0,
-        'bias_init': 0.0,
-        'reg_weight': 1e-3
-    },
-
-    # 도메인별 동적 하이퍼파라미터 오버라이드(continual 구간)
-    'domain_overrides': {
-        1000: {
-            'continual_temperature_vib': 0.045,
-            'continual_lambda_proto': 0.08
-        },
-        1200: {
-            'continual_temperature_vib': 0.05,
-            'continual_lambda_proto': 0.05,
-            'proto_update_mode': 'frozen',
-            'lambda_rkd': 0.35,
-            'min_epoch': 6
-        }
-    },
-
-    # Regularizers for continual learning - 단순화
-    'regularizers': {
-        'rkd_enabled': False,        # 🎯 SIMPLIFIED: RKD 비활성화
-        'lambda_rkd': 0.2,
-        'lwf_enabled': False,
-        'lambda_lwf': 0.0,
-        'coral_enabled': False,      # 🎯 SIMPLIFIED: CORAL 비활성화
-        'lambda_coral': 0.05
-    },
     # Auxiliary classification for first domain bootstrapping
     'aux_classification': {
         'enabled': True,   # 🎯 CRITICAL FIX: Auxiliary loss 활성화 (supervised signal 강화)
@@ -228,15 +167,6 @@ TRAINING_CONFIG = {
     'replay_boost_ratio': 0.7
 }
 
-# Sequential alignment 설정 (First domain용) - 단순화
-SEQUENTIAL_ALIGNMENT_CONFIG = {
-    'enabled': False,         # 🎯 SIMPLIFIED: 순차 정렬 비활성화 (복잡성 제거)
-    'anchor': 'vib',
-    'stageA_epochs': 6,
-    'stageB_epochs': 6,
-    'use_infonce_stageA': False,
-    'use_infonce_stageB': True
-}
 
 # 데이터 설정
 DATA_CONFIG = {
@@ -297,9 +227,3 @@ EVAL_CONFIG = {
     'max_fast_eval_batches': 10
 }
 
-# 디바이스 설정
-DEVICE_CONFIG = {
-    'use_cuda': True,
-    'gpu_id': 2,
-    'mixed_precision': False,  # 🎯 AMP 비활성화 (수치 안정성)
-}
