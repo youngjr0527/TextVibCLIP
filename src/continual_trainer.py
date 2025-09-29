@@ -838,17 +838,16 @@ class ContinualTrainer:
         """단일 도메인 성능 평가 (retrieval 메트릭 포함)"""
         self.model.eval()
         
-        # 🎯 CRITICAL FIX: 모든 데이터셋에 Auxiliary Head 평가 우선 적용
-        # Auxiliary head가 있으면 직접 분류 성능 측정 (더 안정적)
+        # 🎯 CRITICAL FIX: CWRU는 무조건 Auxiliary Head 평가만 사용
+        if hasattr(self, 'dataset_type') and self.dataset_type == 'cwru':
+            return self._evaluate_auxiliary_classification(dataloader)
+        
+        # 🎯 UOS는 Auxiliary Head 우선, 실패 시 Zero-shot 평가
         if hasattr(self.model.vibration_encoder, 'aux_head') and self.model.vibration_encoder.use_aux_head:
             aux_results = self._evaluate_auxiliary_classification(dataloader)
             # Auxiliary head 결과가 유효하면 우선 사용
             if aux_results['accuracy'] > 0.0:
                 return aux_results
-        
-        # 🎯 FALLBACK: CWRU 전용 직접 분류 평가 (하위 호환성)
-        if hasattr(self, 'dataset_type') and self.dataset_type == 'cwru':
-            return self._evaluate_cwru_direct_classification(dataloader)
         
         all_text_embeddings = []
         all_vib_embeddings = []

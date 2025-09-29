@@ -777,9 +777,17 @@ def main():
                 for domain_key, domain_data in domain_embeddings.items():
                     logger.info(f"     - 도메인 {domain_key}: text={len(domain_data.get('text', []))}, vib={len(domain_data.get('vib', []))}")
                 
-                first_domain = list(domain_embeddings.keys())[0] if domain_embeddings else None
+                # 🎯 FIXED: 시나리오별 첫 도메인 올바른 선택
+                if scenario_name.startswith('CWRU'):
+                    first_domain = 0  # CWRU 첫 도메인은 0 (0HP)
+                else:
+                    first_domain = 600  # UOS 첫 도메인은 600 (600RPM)
                 
-                if first_domain and 'text' in domain_embeddings[first_domain] and 'vib' in domain_embeddings[first_domain]:
+                # domain_embeddings에서 실제 키 확인
+                available_keys = list(domain_embeddings.keys())
+                logger.info(f"   🔍 사용 가능한 도메인 키: {available_keys}")
+                
+                if first_domain in domain_embeddings and 'text' in domain_embeddings[first_domain] and 'vib' in domain_embeddings[first_domain]:
                     try:
                         # 실제 메타데이터에서 라벨 사용
                         text_emb = domain_embeddings[first_domain]['text'][:100]
