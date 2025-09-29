@@ -88,8 +88,8 @@ class ScenarioConfig_v2:
         'shift_type': 'Varying Load',
         'first_domain_epochs': 15,
         'remaining_epochs': 6,
-        'batch_size': 16,           # CWRU는 더 큰 배치
-        'replay_buffer_size': 200,
+        'batch_size': 4,            # 16 → 4 (극소 데이터 대응)
+        'replay_buffer_size': 50,   # 200 → 50 (작은 버퍼)
         'patience': 5
     }
 
