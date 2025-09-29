@@ -38,15 +38,15 @@ MODEL_CONFIG = {
         # 2048 → 1024 → 512 → 256 → 128 → Global Pool → 256 embedding
     },
     
-    # InfoNCE Loss - 안정적 학습을 위한 높은 온도
+    # InfoNCE Loss - 균형 잡힌 온도 설정
     'infonce': {
-        # First Domain Training (Domain 1) - 매우 높은 온도로 부드러운 학습
-        'first_domain_temperature_text': 0.5,   # 0.2 → 0.5 (부드러운 정렬)
-        'first_domain_temperature_vib': 0.5,    # 0.2 → 0.5 (부드러운 정렬)
+        # First Domain Training (Domain 1) - 적당한 온도로 효과적 정렬
+        'first_domain_temperature_text': 0.2,   # 0.5 → 0.2 (더 강한 정렬)
+        'first_domain_temperature_vib': 0.2,    # 0.5 → 0.2 (더 강한 정렬)
         
-        # Continual Learning (Domain 2+) - 높은 온도 유지
-        'continual_temperature_text': 0.3,  # 0.07 → 0.3 (안정적 정렬)
-        'continual_temperature_vib': 0.2,   # 0.04 → 0.2 (안정적 적응)
+        # Continual Learning (Domain 2+) - 안정적 온도
+        'continual_temperature_text': 0.15,  # 0.3 → 0.15 (적당한 정렬)
+        'continual_temperature_vib': 0.1,   # 0.2 → 0.1 (적당한 적응)
 
         # First domain 온도 스케줄(선형): init → final
         'first_domain_temperature_text_init': 0.07,  # 0.05 → 0.07
@@ -80,13 +80,13 @@ MODEL_CONFIG = {
 
     # 첫 번째 도메인 전용 학습 설정 (Foundation Learning)
 FIRST_DOMAIN_CONFIG = {
-    # 🎯 Foundation Learning: Auxiliary Head 중심 + 텍스트-진동 정렬
-    'num_epochs': 15,           # 25 → 15 (과적합 방지)
-    'learning_rate': 1e-4,      # 3e-4 → 1e-4 (안정적 학습)
-    'weight_decay': 1e-4,       # 1e-5 → 1e-4 (정규화 강화)
-    'aux_weight': 10.0,         # 2.0 → 10.0 (Auxiliary Head 중심)
-    'patience': 5,              # 8 → 5 (더 엄격한 조기 종료)
-    'min_epoch': 3,             # 5 → 3 (최소 에포크 감소)
+    # 🎯 Foundation Learning: InfoNCE와 Auxiliary Head 균형
+    'num_epochs': 15,           # 충분한 기초 학습
+    'learning_rate': 2e-4,      # 1e-4 → 2e-4 (적당한 학습률)
+    'weight_decay': 5e-5,       # 1e-4 → 5e-5 (정규화 완화)
+    'aux_weight': 2.0,          # 10.0 → 2.0 (InfoNCE와 균형)
+    'patience': 8,              # 5 → 8 (충분한 학습 기회)
+    'min_epoch': 5,             # 3 → 5 (최소 기초 학습 보장)
     
     # 파라미터 그룹 LR 멀티플라이어 (적극적 학습)
     'lora_lr_mult': 3.0,

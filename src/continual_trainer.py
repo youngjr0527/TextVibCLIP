@@ -156,12 +156,6 @@ class ContinualTrainer:
         # 모델을 첫 번째 도메인 학습 모드로 설정
         self.model.switch_to_first_domain_mode()  # First domain mode (LoRA 활성화)
 
-        # Procrustes 초기화: 도메인1에서 클래스 중심 정렬로 vibration projection 마지막 층 정렬
-        try:
-            self._procrustes_init_vib_projection(first_domain_dataloader)
-            logger.info("✅ Procrustes 초기화 완료 (vibration_projection)")
-        except Exception as e:
-            logger.warning(f"⚠️ Procrustes 초기화 스킵: {e}")
         
         # Optimizer 설정 (Text LoRA + Vibration full)
         optimizer = self._create_optimizer()
@@ -338,8 +332,7 @@ class ContinualTrainer:
             'avg_loss': avg_loss_safe,
             'domain_performances': first_domain_performance,
             'grad_norms_summary': grad_summary,
-            'alignment_visualization': alignment_results,  # 시각화 결과 추가
-            'seqalign': self.seqalign_artifacts
+            'alignment_visualization': alignment_results
         }
     
     def train_remaining_domains(self, domain_dataloaders: Optional[Dict] = None) -> Dict[str, Any]:
@@ -685,71 +678,7 @@ class ContinualTrainer:
         """모든 정규화 기법이 비활성화되어 있으므로 None 반환"""
         return None
 
-    def _procrustes_init_vib_projection(self, dataloader: DataLoader, max_batches: int = 50) -> None:
-        """도메인1에서 클래스 중심(텍스트/진동) 기반 정규직교 Procrustes로 vib projection 마지막층 초기화.
-        Args:
-            dataloader: 첫 도메인 train 로더
-            max_batches: 사용 배치 수 제한(속도/안정성)
-        """
-        if dataloader is None:
-            return
-        device = self.device
-        self.model.eval()
-        embedding_dim = self.model.embedding_dim
-        # 클래스 수 추정 (설정에서)
-        num_classes = int(MODEL_CONFIG.get('aux_classification', {}).get('num_classes', 7))
-        # 누적 합/카운트
-        sum_text = torch.zeros(num_classes, embedding_dim, device=device)
-        sum_vib = torch.zeros(num_classes, embedding_dim, device=device)
-        count = torch.zeros(num_classes, dtype=torch.long, device=device)
-        with torch.no_grad():
-            for b_idx, batch in enumerate(dataloader):
-                if b_idx >= max_batches:
-                    break
-                batch = self._move_batch_to_device(batch)
-                out = self.model(batch, return_embeddings=True)
-                text_emb = F.normalize(out['text_embeddings'], p=2, dim=1)
-                vib_emb = F.normalize(out['vib_embeddings'], p=2, dim=1)
-                labels = batch.get('labels', None)
-                if labels is None:
-                    continue
-                if labels.dim() == 2:
-                    cls = labels[:, 0]
-                elif labels.dim() == 1:
-                    cls = labels
-                else:
-                    continue
-                cls = cls.clamp(min=0, max=num_classes - 1)
-                # 배치 내 클래스별 평균 누적
-                for c in cls.unique().tolist():
-                    m = (cls == c)
-                    if m.any():
-                        sum_text[c] += text_emb[m].mean(dim=0)
-                        sum_vib[c] += vib_emb[m].mean(dim=0)
-                        count[c] += 1
-        # 유효 클래스 필터
-        valid = count > 0
-        if valid.sum() < 2:
-            # 의미있는 정렬 불가
-            return
-        mu_t = F.normalize(sum_text[valid] / count[valid].float().unsqueeze(1), p=2, dim=1)  # (K', D)
-        mu_v = F.normalize(sum_vib[valid] / count[valid].float().unsqueeze(1), p=2, dim=1)  # (K', D)
-        # A^T B = (mu_v)^T (mu_t)
-        cov = torch.matmul(mu_v.t(), mu_t)  # (D, D)
-        # SVD
-        try:
-            U, S, Vh = torch.linalg.svd(cov)
-        except RuntimeError:
-            U, S, Vh = torch.svd(cov)  # 호환 경로
-        R = torch.matmul(U, Vh)  # (D, D), orthonormal
-        # 마지막 linear layer에 주입 (y = x W^T + b) 이므로 weight = R^T, bias=0
-        last_linear = self.model.vibration_projection[3]
-        assert isinstance(last_linear, nn.Linear)
-        with torch.no_grad():
-            last_linear.weight.copy_(R.t())
-            if last_linear.bias is not None:
-                last_linear.bias.zero_()
-        self.model.train()
+    # 🎯 REMOVED: Procrustes 초기화 제거 (ResidualMLP와 호환되지 않음)
     
     def _collect_domain_embeddings(self, dataloader: DataLoader) -> Optional[Dict]:
         """현재 도메인 데이터의 임베딩 수집 (🎯 라벨 정보 포함)"""
