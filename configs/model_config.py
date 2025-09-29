@@ -130,6 +130,30 @@ CONTINUAL_CONFIG = {
     'replay_boost_ratio': 0.7
 }
 
+# CWRU 전용 설정 (극소 데이터 대응)
+CWRU_SPECIFIC_CONFIG = {
+    # 🎯 극소 데이터 대응: 과적합 방지 극대화
+    'num_epochs': 3,            # 매우 짧은 학습
+    'learning_rate': 1e-5,      # 매우 낮은 학습률
+    'weight_decay': 1e-3,       # 강한 정규화
+    'aux_weight': 1.0,          # 약한 auxiliary (ranking 중심)
+    'patience': 1,              # 즉시 조기 종료
+    'min_epoch': 1,             # 최소 1 에포크
+    
+    # 매우 보존적 학습
+    'lora_lr_mult': 0.5,
+    'proj_lr_mult': 1.0,
+    'vib_lr_mult': 1.5,
+    
+    # 간단한 스케줄러
+    'scheduler_type': 'constant',
+    
+    # 최소 Replay
+    'replay_buffer_size': 100,
+    'replay_ratio': 0.3,
+    'replay_every_n': 3
+}
+
 # 기존 TRAINING_CONFIG (하위 호환성)
 TRAINING_CONFIG = {
     # 기본 설정 (FIRST_DOMAIN_CONFIG 기반)
