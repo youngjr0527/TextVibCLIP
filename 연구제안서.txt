@@ -11,6 +11,26 @@
 
 연구의 목표는 continual learning 전략을 통해 이전 도메인의 지식을 보존하면서 새로운 베어링 유형과 회전 속도 조건을 순차적으로 학습하는 모델을 개발하는 것이다. 특히, 진동-텍스트 contrastive learning으로 형성된 **multimodal embedding space**은 각 도메인의 고유한 특성을 유지하며, 도메인 전환 시 성능 저하를 최소화한다. 이를 통해 운용 조건이 변화하는 실제 산업 현장에 적용 가능한 **robust diagnosis model**을 제공한다.  LoRA (Low-Rank Adaptation)를 encoders에 도입하여 parameter-efficient adaptation을 실현하며, 첫 domain에서는 standard joint training, subsequent domains에서 LoRA + replay buffer를 활용한다.
 
+### **실제 산업 사용 시나리오**
+
+TextVibCLIP 모델의 핵심 가치는 **실제 산업 현장에서의 활용 방식**에 있다. 모델이 배포된 후 산업 분야의 사용자가 새로운 진동 신호를 받게 되면, 다음과 같은 추론 과정을 거친다:
+
+1. **새로운 진동 신호 입력**: 미지의 베어링 상태를 가진 진동 신호 수신
+2. **진동 임베딩 생성**: Vibration encoder를 통해 진동 신호를 임베딩 공간에 매핑
+3. **후보 텍스트 준비**: 가능한 모든 진단 설명 텍스트들을 후보군으로 준비
+   - "Healthy bearing condition observed"
+   - "Ball element defect detected" 
+   - "Inner race fault observed"
+   - "Outer race defect detected"
+   - "Mechanical looseness detected"
+   - "Rotor unbalance detected"
+   - "Shaft misalignment detected"
+4. **텍스트 임베딩 생성**: Text encoder를 통해 모든 후보 텍스트들을 임베딩 공간에 매핑
+5. **유사도 계산 및 선택**: 진동 임베딩과 각 텍스트 임베딩 간의 cosine similarity를 계산하여 가장 높은 유사도를 가진 텍스트를 선택
+6. **진단 결과 출력**: 선택된 텍스트가 해당 진동 신호에 대한 최종 진단 결과
+
+이러한 **similarity-based retrieval 방식**은 기존의 고정된 분류 방식과 달리, 유연하고 해석 가능한 진단을 제공하며, 새로운 고장 유형이나 설명 방식이 추가되어도 쉽게 확장할 수 있다는 장점이 있다.
+
 ---
 
 ## 배경 및 관련 연구

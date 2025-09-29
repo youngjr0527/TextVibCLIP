@@ -8,6 +8,7 @@
 - **Domain-Incremental Learning**: 클래스는 고정, 도메인만 순차적 변화
 - **Multimodal Contrastive Learning**: 진동 신호 + 텍스트 메타데이터
 - **Asymmetric Continual Adaptation**: Text encoder freeze + Vibration encoder adaptation
+- **Similarity-based Retrieval**: 실제 사용 시 후보 텍스트 중 최고 유사도 선택
 - **두 가지 시나리오**: UOS (Varying Speed), CWRU (Varying Load)
 
 ---
@@ -65,6 +66,53 @@ Input:
 ### Continual Learning 전략
 - **Domain 1**: Text LoRA + Vibration 동시 학습
 - **Domain 2+**: Text freeze + Vibration adaptation + Replay buffer
+
+---
+
+## 🎯 **실제 산업 사용 시나리오**
+
+TextVibCLIP의 핵심 가치는 **실제 산업 현장에서의 활용 방식**에 있습니다. 모델이 배포된 후의 추론 과정은 다음과 같습니다:
+
+### **추론 프로세스**:
+
+```python
+# 산업 현장에서의 실제 사용
+def diagnose_bearing_fault(new_vibration_signal):
+    # 1. 새로운 진동 신호 입력
+    vibration_embedding = vibration_encoder(new_vibration_signal)
+    
+    # 2. 가능한 모든 진단 텍스트 후보군 준비
+    candidate_texts = [
+        "Healthy bearing condition observed",
+        "Ball element defect detected", 
+        "Inner race fault observed",
+        "Outer race defect detected",
+        "Mechanical looseness detected",
+        "Rotor unbalance detected",
+        "Shaft misalignment detected"
+    ]
+    
+    # 3. 각 후보 텍스트를 임베딩 공간에 매핑
+    text_embeddings = text_encoder(candidate_texts)
+    
+    # 4. 유사도 계산 및 최고 매칭 선택
+    similarities = cosine_similarity(vibration_embedding, text_embeddings)
+    best_match_index = argmax(similarities)
+    
+    # 5. 최종 진단 결과
+    diagnosis = candidate_texts[best_match_index]
+    confidence = similarities[best_match_index]
+    
+    return diagnosis, confidence
+```
+
+### **핵심 장점**:
+- **유연성**: 새로운 설명 방식이나 고장 유형 추가 시 쉬운 확장
+- **해석 가능성**: 자연어 설명으로 직관적인 진단 결과
+- **신뢰도 제공**: 유사도 점수로 진단 신뢰도 정량화
+- **Zero-shot 확장**: 학습하지 않은 새로운 텍스트 설명도 활용 가능
+
+이러한 **similarity-based retrieval 방식**은 기존의 고정된 분류 체계와 달리, 실제 산업 현장의 다양하고 동적인 요구사항에 유연하게 대응할 수 있습니다.
 
 ---
 

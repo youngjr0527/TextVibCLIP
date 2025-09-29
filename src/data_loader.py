@@ -333,73 +333,28 @@ class BearingDataset(Dataset):
         # CWRU 특별 처리: 파일 수가 적으므로 적응적 분할
         total_files = len(self.file_paths)
         
-        if total_files <= 16:  # 4개 → 16개로 확장 (도메인당 최대 16개 파일 예상)
-            # 🎯 CRITICAL FIX: 파일 레벨 분할 (데이터 누수 완전 방지)
-            # 각 파일은 하나의 subset에만 속함 (시간적 독립성 보장)
+        if total_files <= 4:  # 16개 → 4개로 복원 (균형 잡힌 CWRU 대응)
+            # 🎯 CRITICAL FIX: 윈도우 레벨 분할 (4개 파일에서는 파일 분할 불가)
+            # 각 파일의 윈도우를 랜덤하게 분할하여 모든 클래스를 모든 subset에 포함
             
-            logger.info("CWRU 파일 레벨 분할 적용 (데이터 누수 방지):")
-            logger.info(f"  총 {total_files}개 파일을 train/val/test로 분할")
-            logger.info(f"  각 파일은 하나의 subset에만 포함 (시간적 독립성 보장)")
+            logger.info("CWRU 윈도우 레벨 분할 적용 (4개 파일 → 모든 클래스 포함):")
+            logger.info(f"  모든 subset에 모든 {total_files}개 파일 포함")
+            logger.info(f"  각 파일 내에서 윈도우 랜덤 분할: Train 60%, Val 20%, Test 20%")
             
-            # 🎯 결함 타입별 균등 분할 (stratified split)
-            try:
-                # 베어링 상태로 stratified split
-                files_train, files_temp, meta_train, meta_temp = train_test_split(
-                    self.file_paths, self.metadata_list,
-                    test_size=0.4,  # 40%를 val+test용으로
-                    stratify=bearing_labels,
-                    random_state=42
-                )
-                
-                # Temp를 val/test로 분할
-                temp_labels = [metadata['bearing_condition'] for metadata in meta_temp]
-                files_val, files_test, meta_val, meta_test = train_test_split(
-                    files_temp, meta_temp,
-                    test_size=0.5,  # temp의 50%씩 val/test로
-                    stratify=temp_labels,
-                    random_state=42
-                )
-                
-                logger.info("CWRU stratified 파일 분할 성공")
-                logger.info(f"  Train: {len(files_train)}개, Val: {len(files_val)}개, Test: {len(files_test)}개")
-                
-                # 분할 결과 로깅
-                for subset_name, (files, meta) in [('Train', (files_train, meta_train)), 
-                                                 ('Val', (files_val, meta_val)), 
-                                                 ('Test', (files_test, meta_test))]:
-                    subset_labels = [m['bearing_condition'] for m in meta]
-                    subset_dist = Counter(subset_labels)
-                    logger.info(f"  {subset_name} 클래스 분포: {dict(subset_dist)}")
-                
-            except ValueError as e:
-                # Stratify 실패 시 랜덤 분할
-                logger.warning(f"CWRU stratified split 실패 - 랜덤 분할 사용: {e}")
-                files_train, files_temp, meta_train, meta_temp = train_test_split(
-                    self.file_paths, self.metadata_list,
-                    test_size=0.4,
-                    random_state=42
-                )
-                
-                files_val, files_test, meta_val, meta_test = train_test_split(
-                    files_temp, meta_temp,
-                    test_size=0.5,
-                    random_state=42
-                )
-                
-                logger.info("CWRU 랜덤 파일 분할 적용")
+            # 모든 파일을 모든 subset에 포함
+            selected_files = self.file_paths
+            selected_meta = self.metadata_list
             
-            # 요청된 subset 반환 (파일 레벨 분할)
+            # 🎯 랜덤 윈도우 분할 설정 (UOS와 동일)
             if self.subset == 'train':
-                selected_files, selected_meta = files_train, meta_train
+                self._window_split_type = 'random'
+                self._window_split_range = (0.0, 0.6)
             elif self.subset == 'val':
-                selected_files, selected_meta = files_val, meta_val
+                self._window_split_type = 'random'
+                self._window_split_range = (0.6, 0.8)
             elif self.subset == 'test':
-                selected_files, selected_meta = files_test, meta_test
-            else:
-                raise ValueError(f"알 수 없는 subset: {self.subset}")
-            
-            # 🎯 윈도우 분할 정보 제거 (파일 레벨 분할이므로 불필요)
-            # self._window_split_range는 설정하지 않음
+                self._window_split_type = 'random'
+                self._window_split_range = (0.8, 1.0)
             
             # 선택된 subset의 클래스 분포 확인
             selected_labels = [meta['bearing_condition'] for meta in selected_meta]
