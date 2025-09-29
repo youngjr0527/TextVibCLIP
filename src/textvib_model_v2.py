@@ -121,11 +121,13 @@ class TextVibCLIP_v2(nn.Module):
     
     def __init__(self, 
                  domain_stage: str = 'first_domain',
-                 embedding_dim: int = 256):
+                 embedding_dim: int = 256,
+                 dataset_type: str = 'uos'):
         super().__init__()
         
         self.domain_stage = domain_stage
         self.embedding_dim = embedding_dim
+        self.dataset_type = dataset_type.lower()
         self.is_continual_mode = (domain_stage == 'continual')
         
         # 기존 인코더들 재활용
@@ -155,24 +157,40 @@ class TextVibCLIP_v2(nn.Module):
         # 🎯 앙상블 가중치 (추론 시 사용)
         self.ensemble_weight = nn.Parameter(torch.tensor(0.7))  # 진동 위주
         
-        # 🎯 보조 분류 헤드 (안정적 학습)
+        # 🎯 보조 분류 헤드 (데이터셋별 클래스 수)
         aux_cfg = MODEL_CONFIG.get('aux_classification', {})
         self.use_aux = aux_cfg.get('enabled', True)
         if self.use_aux:
-            num_classes = aux_cfg.get('num_classes', 7)
+            # 데이터셋별 클래스 수 설정
+            if self.dataset_type == 'cwru':
+                num_classes = 4  # CWRU: H, B, IR, OR
+            else:
+                num_classes = 7  # UOS: H, B, IR, OR, L, U, M
+            
+            # 데이터셋별 차별화된 분류기 구조
+            if self.dataset_type == 'cwru':
+                # CWRU: 매우 강한 정규화
+                dropout_rate = 0.7
+                hidden_dim = embedding_dim // 4  # 더 작은 hidden
+            else:
+                # UOS: 표준 정규화
+                dropout_rate = 0.2
+                hidden_dim = embedding_dim // 2
             
             self.text_classifier = nn.Sequential(
-                nn.Dropout(0.2),
-                nn.Linear(embedding_dim, embedding_dim // 2),
+                nn.Dropout(dropout_rate),
+                nn.Linear(embedding_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(embedding_dim // 2, num_classes)
+                nn.Dropout(dropout_rate * 0.5),
+                nn.Linear(hidden_dim, num_classes)
             )
             
             self.vib_classifier = nn.Sequential(
-                nn.Dropout(0.2),
-                nn.Linear(embedding_dim, embedding_dim // 2), 
+                nn.Dropout(dropout_rate),
+                nn.Linear(embedding_dim, hidden_dim), 
                 nn.ReLU(),
-                nn.Linear(embedding_dim // 2, num_classes)
+                nn.Dropout(dropout_rate * 0.5),
+                nn.Linear(hidden_dim, num_classes)
             )
         
         logger.info(f"TextVibCLIP v2 초기화 완료: {domain_stage} stage")
@@ -390,17 +408,18 @@ class TextVibCLIP_v2(nn.Module):
         return checkpoint
 
 
-def create_textvib_model_v2(domain_stage: str = 'first_domain') -> TextVibCLIP_v2:
+def create_textvib_model_v2(domain_stage: str = 'first_domain', dataset_type: str = 'uos') -> TextVibCLIP_v2:
     """
     TextVibCLIP v2 모델 생성
     
     Args:
         domain_stage: 'first_domain' 또는 'continual'
+        dataset_type: 'uos' 또는 'cwru'
         
     Returns:
         TextVibCLIP_v2: 새로운 ranking-based 모델
     """
-    model = TextVibCLIP_v2(domain_stage=domain_stage)
+    model = TextVibCLIP_v2(domain_stage=domain_stage, dataset_type=dataset_type)
     
     # 파라미터 정보 출력
     param_info = model.get_trainable_parameters()

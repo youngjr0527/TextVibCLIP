@@ -101,6 +101,25 @@ FIRST_DOMAIN_CONFIG = {
     'stage1_epochs': 8,         # Projection/prototypes 먼저 학습
 }
 
+# CWRU 첫 번째 도메인 전용 설정 (극소 데이터 대응)
+CWRU_FIRST_DOMAIN_CONFIG = {
+    # 🎯 CWRU Foundation: 극도로 보수적 학습
+    'num_epochs': 3,            # 5 → 3 (극도로 짧은 학습)
+    'learning_rate': 5e-5,      # 1e-4 → 5e-5 (매우 낮은 학습률)
+    'weight_decay': 5e-3,       # 1e-3 → 5e-3 (매우 강한 정규화)
+    'aux_weight': 0.1,          # 0.5 → 0.1 (ranking 거의 전용)
+    'patience': 1,              # 3 → 1 (즉시 조기 종료)
+    'min_epoch': 1,             # 2 → 1 (최소 1 에포크)
+    
+    # 매우 보존적 학습
+    'lora_lr_mult': 0.5,
+    'proj_lr_mult': 1.0,
+    'vib_lr_mult': 1.0,
+    
+    'scheduler_type': 'constant',  # 스케줄러 없음
+    'stage1_epochs': 1
+}
+
 # Continual Learning 전용 설정 (Adaptation Learning) 
 CONTINUAL_CONFIG = {
     # 🎯 Adaptation Learning: Auxiliary Head 중심 빠른 적응
@@ -133,25 +152,25 @@ CONTINUAL_CONFIG = {
 # CWRU 전용 설정 (극소 데이터 대응)
 CWRU_SPECIFIC_CONFIG = {
     # 🎯 극소 데이터 대응: 과적합 방지 극대화
-    'num_epochs': 3,            # 매우 짧은 학습
-    'learning_rate': 1e-5,      # 매우 낮은 학습률
-    'weight_decay': 1e-3,       # 강한 정규화
-    'aux_weight': 1.0,          # 약한 auxiliary (ranking 중심)
+    'num_epochs': 2,            # 3 → 2 (극도로 짧은 학습)
+    'learning_rate': 1e-6,      # 1e-5 → 1e-6 (극도로 낮은 학습률)
+    'weight_decay': 1e-2,       # 1e-3 → 1e-2 (극도로 강한 정규화)
+    'aux_weight': 0.05,         # 1.0 → 0.05 (ranking 거의 전용)
     'patience': 1,              # 즉시 조기 종료
     'min_epoch': 1,             # 최소 1 에포크
     
-    # 매우 보존적 학습
-    'lora_lr_mult': 0.5,
-    'proj_lr_mult': 1.0,
-    'vib_lr_mult': 1.5,
+    # 극도로 보존적 학습
+    'lora_lr_mult': 0.1,
+    'proj_lr_mult': 0.5,
+    'vib_lr_mult': 1.0,
     
     # 간단한 스케줄러
     'scheduler_type': 'constant',
     
     # 최소 Replay
-    'replay_buffer_size': 100,
-    'replay_ratio': 0.3,
-    'replay_every_n': 3
+    'replay_buffer_size': 20,   # 100 → 20 (극소 버퍼)
+    'replay_ratio': 0.1,       # 0.3 → 0.1 (최소 replay)
+    'replay_every_n': 5        # 3 → 5 (가끔만 replay)
 }
 
 # 기존 TRAINING_CONFIG (하위 호환성)
@@ -210,7 +229,7 @@ DATA_CONFIG = {
     'max_text_length': 128,
 }
 
-# CWRU 데이터 설정
+# CWRU 데이터 설정 (데이터 증강 강화)
 CWRU_DATA_CONFIG = {
     'data_dir': 'data_scenario2',
     'dataset_type': 'cwru',
@@ -218,10 +237,10 @@ CWRU_DATA_CONFIG = {
     'validation_split': 0.2,
     'test_split': 0.2,
     
-    # 데이터 전처리 (UOS와 통일)
+    # 데이터 전처리 (UOS와 통일 유지)
     'signal_normalization': 'standardize',
-    'window_size': 2048,  # UOS와 동일 (통일된 아키텍처)
-    'overlap_ratio': 0.5,  # UOS와 동일 (일관성)
+    'window_size': 2048,  # UOS와 동일 (아키텍처 일관성)
+    'overlap_ratio': 0.8,  # 0.5 → 0.8 (겹침 증가로 샘플 증가)
     
     # 텍스트 생성
     'max_text_length': 128,

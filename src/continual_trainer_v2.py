@@ -19,7 +19,7 @@ from .textvib_model_v2 import TextVibCLIP_v2, create_textvib_model_v2
 from .replay_buffer import ReplayBuffer
 from .data_loader import create_domain_dataloaders, create_first_domain_dataloader
 from .data_cache import create_cached_first_domain_dataloader
-from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG, CWRU_DATA_CONFIG, FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG, CWRU_SPECIFIC_CONFIG
+from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG, CWRU_DATA_CONFIG, FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG, CWRU_SPECIFIC_CONFIG, CWRU_FIRST_DOMAIN_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +56,9 @@ class ContinualTrainer_v2:
         self.max_grad_norm = max_grad_norm
         os.makedirs(save_dir, exist_ok=True)
         
-        # 모델 초기화
+        # 모델 초기화 (데이터셋 타입 전달)
         if model is None:
-            self.model = create_textvib_model_v2('first_domain')
+            self.model = create_textvib_model_v2('first_domain', dataset_type)
         else:
             self.model = model
         
@@ -109,14 +109,23 @@ class ContinualTrainer_v2:
                 batch_size=self.batch_size
             )
         
-        # First domain 전용 설정 적용
+        # 데이터셋별 First domain 설정 적용
+        if self.dataset_type == 'cwru':
+            # CWRU: 극소 데이터 전용 설정
+            config = CWRU_FIRST_DOMAIN_CONFIG
+            logger.info("🎯 CWRU 극소 데이터 전용 First Domain 설정 적용")
+        else:
+            # UOS: 표준 First Domain 설정
+            config = FIRST_DOMAIN_CONFIG
+            logger.info("🎯 UOS 표준 First Domain 설정 적용")
+        
         if num_epochs is None:
-            num_epochs = FIRST_DOMAIN_CONFIG['num_epochs']
+            num_epochs = config['num_epochs']
         
-        self.learning_rate = FIRST_DOMAIN_CONFIG['learning_rate']
-        self.weight_decay = FIRST_DOMAIN_CONFIG['weight_decay']
+        self.learning_rate = config['learning_rate']
+        self.weight_decay = config['weight_decay']
         
-        logger.info(f"First Domain 설정: 에포크={num_epochs}, LR={self.learning_rate:.1e}")
+        logger.info(f"First Domain 설정: 에포크={num_epochs}, LR={self.learning_rate:.1e}, WD={self.weight_decay:.1e}")
         
         # 모델을 첫 번째 도메인 모드로 설정
         self.model.switch_to_first_domain_mode()
