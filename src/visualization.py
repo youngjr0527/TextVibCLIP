@@ -67,6 +67,26 @@ class PaperVisualizer:
             'U': 'P',
             'L': 'X'
         }
+
+        # UOS 7-클래스 색상/마커 (조합 라벨: H_H,H_B,H_IR,H_OR,L_H,U_H,M_H)
+        self.uos_colors = {
+            'H_H': '#1f77b4',  # blue
+            'H_B': '#ff7f0e',  # orange
+            'H_IR': '#2ca02c', # green
+            'H_OR': '#d62728', # red
+            'L_H': '#9467bd',  # purple
+            'U_H': '#8c564b',  # brown
+            'M_H': '#e377c2'   # pink
+        }
+        self.uos_markers = {
+            'H_H': 'o',
+            'H_B': 's',
+            'H_IR': '^',
+            'H_OR': 'D',
+            'L_H': 'v',
+            'U_H': 'P',
+            'M_H': 'X'
+        }
         
         # 베어링 타입별 마커
         self.bearing_markers = {
@@ -118,6 +138,12 @@ class PaperVisualizer:
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle(f'Encoder Alignment Analysis - {domain_name}', fontsize=16, fontweight='bold')
         
+        # 스타일 선택 헬퍼 (UOS 7클래스 vs CWRU 4클래스)
+        def _style_for(cond: str):
+            if cond in self.uos_colors:
+                return self.uos_colors[cond], self.uos_markers[cond]
+            return self.bearing_colors.get(cond, self.colors['neutral']), self.condition_markers.get(cond, 'o')
+
         # 1. 베어링 상태별 분포 (Text만) - 좌상단
         ax2 = axes[0, 0]
         text_mask = np.array(modality_labels) == 'Text'
@@ -126,10 +152,11 @@ class PaperVisualizer:
         
         for condition in np.unique(text_conditions):
             mask = text_conditions == condition
+            color, marker = _style_for(condition)
             ax2.scatter(text_coords[mask, 0], text_coords[mask, 1],
-                        c=self.bearing_colors.get(condition, self.colors['neutral']),
+                        c=color,
                         alpha=0.85, s=70, label=f'{condition}',
-                        marker=self.condition_markers.get(condition, 'o'),
+                        marker=marker,
                         edgecolors='white', linewidth=0.8)
         
         ax2.set_title('Text Embeddings - Bearing Conditions', fontweight='bold')
@@ -144,10 +171,11 @@ class PaperVisualizer:
         
         for condition in np.unique(vib_conditions):
             mask = vib_conditions == condition
+            color, marker = _style_for(condition)
             ax3.scatter(vib_coords[mask, 0], vib_coords[mask, 1],
-                        c=self.bearing_colors.get(condition, self.colors['neutral']),
+                        c=color,
                         alpha=0.85, s=70, label=f'{condition}',
-                        marker=self.condition_markers.get(condition, 'o'),
+                        marker=marker,
                         edgecolors='white', linewidth=0.8)
         
         ax3.set_title('Vibration Embeddings - Bearing Conditions', fontweight='bold')
