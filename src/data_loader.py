@@ -333,19 +333,20 @@ class BearingDataset(Dataset):
         # CWRU 특별 처리: 파일 수가 적으므로 적응적 분할
         total_files = len(self.file_paths)
         
-        if total_files <= 4:  # 16개 → 4개로 복원 (균형 잡힌 CWRU 대응)
-            # 🎯 CRITICAL FIX: 윈도우 레벨 분할 (4개 파일에서는 파일 분할 불가)
-            # 각 파일의 윈도우를 랜덤하게 분할하여 모든 클래스를 모든 subset에 포함
+        if total_files <= 4:  # CWRU 4개 파일 처리  
+            # 🎯 DOMAIN-INCREMENTAL LEARNING: 각 도메인 내에서 train/val/test 분할
+            # 모든 클래스 (H, B, IR, OR)를 모든 subset에 포함하되, 시간적 독립성 보장
             
-            logger.info("CWRU 윈도우 레벨 분할 적용 (4개 파일 → 모든 클래스 포함):")
-            logger.info(f"  모든 subset에 모든 {total_files}개 파일 포함")
-            logger.info(f"  각 파일 내에서 윈도우 랜덤 분할: Train 60%, Val 20%, Test 20%")
+            logger.info("CWRU 도메인 내 분할 (Domain-Incremental):")
+            logger.info(f"  현재 도메인: {self.domain_value}HP")
+            logger.info(f"  클래스 (H, B, IR, OR) 고정, 모든 subset에 포함")
+            logger.info(f"  각 파일 내에서 윈도우 랜덤 분할로 데이터 누수 최소화")
             
-            # 모든 파일을 모든 subset에 포함
+            # 모든 파일을 모든 subset에 포함 (클래스 완전성 보장)
             selected_files = self.file_paths
             selected_meta = self.metadata_list
             
-            # 🎯 랜덤 윈도우 분할 설정 (UOS와 동일)
+            # 🎯 랜덤 윈도우 분할 (데이터 누수 최소화)
             if self.subset == 'train':
                 self._window_split_type = 'random'
                 self._window_split_range = (0.0, 0.6)

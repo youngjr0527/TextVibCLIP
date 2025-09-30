@@ -13,7 +13,7 @@ import argparse
 from datetime import datetime
 
 from src.continual_trainer import ContinualTrainer
-from src.textvib_model import create_textvib_model
+from src.textvib_model_v2 import create_textvib_model_v2 as create_textvib_model
 from src.data_loader import create_domain_dataloaders
 
 # 로깅 설정
