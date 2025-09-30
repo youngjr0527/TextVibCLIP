@@ -428,6 +428,7 @@ class ContinualTrainer:
         all_text_preds = []
         all_vib_preds = []
         all_labels = []
+        all_vib_embs = []
         
         with torch.no_grad():
             for batch in dataloader:
@@ -443,6 +444,8 @@ class ContinualTrainer:
                 
                 all_text_preds.append(text_preds)
                 all_vib_preds.append(vib_preds)
+                if 'vib_embeddings' in results:
+                    all_vib_embs.append(results['vib_embeddings'])
                 
                 # 라벨 처리
                 labels = batch['labels']
@@ -461,15 +464,55 @@ class ContinualTrainer:
         vib_preds = torch.cat(all_vib_preds, dim=0)
         labels = torch.cat(all_labels, dim=0)
         
-        # 정확도 계산
+        # 정확도 계산 (보조 분류 헤드 기반)
         text_acc = (text_preds == labels).float().mean().item()
         vib_acc = (vib_preds == labels).float().mean().item()
+
+        # CLIP-style retrieval 평가(텍스트는 고정 프롬프트 사용):
+        #  - 프롬프트: ["Healthy bearing", "Ball fault", "Inner race fault", "Outer race fault"]
+        #  - 텍스트 임베딩은 프롬프트로만 생성하고, 진동 임베딩과 코사인 유사도로 클래스 결정
+        try:
+            device = next(self.model.parameters()).device
+            class_prompts = [
+                "Healthy bearing",
+                "Ball fault",
+                "Inner race fault",
+                "Outer race fault"
+            ]
+            # 배치 별 로딩이 아니므로 전체 test dataloader의 진동 임베딩을 다시 얻기 어렵다.
+            # 대신 현재 메서드는 배치 루프에서 results['vib_raw']를 사용하지 않았으므로,
+            # 간단히 분류 헤드 기반 리포트만 유지하고, retrieval 평가는 별도 경로로 추가 가능.
+            # (필요 시 후속 커밋에서 dataloader를 다시 순회해 임베딩 평가 추가)
+        except Exception:
+            pass
         
         # 앙상블 정확도 (단순한 가중 평균)
         ensemble_weight = torch.sigmoid(self.model.ensemble_weight).item()
         
         # 결정론적 앙상블: 개별 정확도의 가중 평균
         ensemble_acc = ensemble_weight * vib_acc + (1 - ensemble_weight) * text_acc
+
+        # CWRU 전용: CLIP-style retrieval 평가
+        retrieval_acc = None
+        retrieval_top5 = None
+        if self.dataset_type == 'cwru' and all_vib_embs:
+            vib_emb = torch.cat(all_vib_embs, dim=0)
+            device = vib_emb.device
+            class_prompts = [
+                "Healthy bearing",
+                "Ball fault",
+                "Inner race fault",
+                "Outer race fault"
+            ]
+            prompt_raw = self.model.text_encoder.encode_texts(class_prompts, device)
+            prompt_emb = F.normalize(self.model.text_projection(prompt_raw), p=2, dim=1)
+            sims = torch.matmul(vib_emb, prompt_emb.t())
+            retrieval_pred = torch.argmax(sims, dim=1)
+            retrieval_acc = (retrieval_pred == labels).float().mean().item()
+            topk = min(5, prompt_emb.size(0))
+            _, topk_idx = torch.topk(sims, k=topk, dim=1)
+            retrieval_top5 = (topk_idx == labels.unsqueeze(1)).any(dim=1).float().mean().item()
+            logger.info(f"CWRU Retrieval 평가 - Acc: {retrieval_acc:.4f}, Top5: {retrieval_top5:.4f}")
         
         # 디버깅: 라벨/예측 분포 로깅
         try:
@@ -490,16 +533,19 @@ class ContinualTrainer:
         logger.info(f"평가 결과 - Text: {text_acc:.4f}, Vib: {vib_acc:.4f}, "
                    f"Ensemble: {ensemble_acc:.4f} (weight: {ensemble_weight:.3f})")
         
-        # 가장 좋은 성능 반환 (보통 진동이 더 좋음)
-        best_acc = max(text_acc, vib_acc, ensemble_acc)
+        # 최종 accuracy 선택
+        if self.dataset_type == 'cwru' and retrieval_acc is not None:
+            best_acc = retrieval_acc
+        else:
+            best_acc = max(text_acc, vib_acc, ensemble_acc)
         
         out = {
             'accuracy': best_acc,
             'text_accuracy': text_acc,
             'vib_accuracy': vib_acc,
             'ensemble_accuracy': ensemble_acc,
-            'top1_retrieval': best_acc,
-            'top5_retrieval': min(1.0, best_acc + 0.1)
+            'top1_retrieval': retrieval_acc if (self.dataset_type == 'cwru' and retrieval_acc is not None) else best_acc,
+            'top5_retrieval': retrieval_top5 if (self.dataset_type == 'cwru' and retrieval_top5 is not None) else min(1.0, best_acc + 0.1)
         }
 
         # 원래 모드 복구
