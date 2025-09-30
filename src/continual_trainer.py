@@ -421,6 +421,8 @@ class ContinualTrainer:
     
     def _evaluate_single_domain(self, dataloader: DataLoader) -> Dict[str, float]:
         """단일 도메인 성능 평가 (Dual-Head 방식)"""
+        # 평가 모드 전환 상태 저장 및 전환
+        was_training = self.model.training
         self.model.eval()
         
         all_text_preds = []
@@ -449,6 +451,9 @@ class ContinualTrainer:
                 all_labels.append(labels)
         
         if not all_text_preds:
+            # 원래 모드 복구
+            if was_training:
+                self.model.train()
             return {'accuracy': 0.0, 'top1_retrieval': 0.0, 'top5_retrieval': 0.0}
         
         # 결합
@@ -466,13 +471,29 @@ class ContinualTrainer:
         # 결정론적 앙상블: 개별 정확도의 가중 평균
         ensemble_acc = ensemble_weight * vib_acc + (1 - ensemble_weight) * text_acc
         
+        # 디버깅: 라벨/예측 분포 로깅
+        try:
+            max_class = int(max(labels.max().item(), text_preds.max().item(), vib_preds.max().item())) if labels.numel() > 0 else -1
+            num_classes = max_class + 1
+            def histo(t: torch.Tensor):
+                if t.numel() == 0 or num_classes <= 0:
+                    return {}
+                c = torch.bincount(t.detach().cpu(), minlength=num_classes)
+                return {int(i): int(v) for i, v in enumerate(c)}
+            label_hist = histo(labels)
+            text_hist = histo(text_preds)
+            vib_hist = histo(vib_preds)
+            logger.info(f"샘플 {labels.numel()}개 | 라벨분포 {label_hist} | Text예측 {text_hist} | Vib예측 {vib_hist}")
+        except Exception:
+            pass
+
         logger.info(f"평가 결과 - Text: {text_acc:.4f}, Vib: {vib_acc:.4f}, "
                    f"Ensemble: {ensemble_acc:.4f} (weight: {ensemble_weight:.3f})")
         
         # 가장 좋은 성능 반환 (보통 진동이 더 좋음)
         best_acc = max(text_acc, vib_acc, ensemble_acc)
         
-        return {
+        out = {
             'accuracy': best_acc,
             'text_accuracy': text_acc,
             'vib_accuracy': vib_acc,
@@ -480,6 +501,12 @@ class ContinualTrainer:
             'top1_retrieval': best_acc,
             'top5_retrieval': min(1.0, best_acc + 0.1)
         }
+
+        # 원래 모드 복구
+        if was_training:
+            self.model.train()
+
+        return out
     
     def _evaluate_all_domains(self, domain_dataloaders: Dict) -> Dict[int, Dict[str, float]]:
         """모든 도메인 성능 평가"""

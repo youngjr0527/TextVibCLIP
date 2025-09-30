@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 import logging
 import warnings
 from transformers import DistilBertTokenizer
+import hashlib
 
 # Warning 억제
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -333,41 +334,49 @@ class BearingDataset(Dataset):
         # CWRU 특별 처리: 파일 수가 적으므로 적응적 분할
         total_files = len(self.file_paths)
         
-        if total_files <= 20:  # CWRU 처리 (4-20개 파일)  
-            # 🎯 DOMAIN-INCREMENTAL LEARNING: 각 도메인 내에서 train/val/test 분할
-            # 모든 클래스 (H, B, IR, OR)를 모든 subset에 포함하되, 시간적 독립성 보장
-            
-            logger.info("CWRU 도메인 내 분할 (Domain-Incremental):")
+        if total_files <= 20:  # CWRU 처리 (4-20개 파일)
+            # 🎯 DOMAIN-INCREMENTAL LEARNING: 각 도메인 내에서 train/val/test를 "파일 단위"로 완전 분리
+            # prepare_cwru_no_leakage.py가 생성한 파일 네이밍 규칙(_train_, _val_, _test_)을 활용
+
+            logger.info("CWRU 도메인 내 분할 (Domain-Incremental, 파일 단위 분리):")
             logger.info(f"  현재 도메인: {self.domain_value}HP")
-            logger.info(f"  클래스 (H, B, IR, OR) 고정, 모든 subset에 포함")
-            logger.info(f"  각 파일 내에서 윈도우 랜덤 분할로 데이터 누수 최소화")
-            
-            # 모든 파일을 모든 subset에 포함 (클래스 완전성 보장)
-            selected_files = self.file_paths
-            selected_meta = self.metadata_list
-            
-            # 🎯 랜덤 윈도우 분할 (데이터 누수 최소화)
-            if self.subset == 'train':
-                self._window_split_type = 'random'
-                self._window_split_range = (0.0, 0.6)
-            elif self.subset == 'val':
-                self._window_split_type = 'random'
-                self._window_split_range = (0.6, 0.8)
-            elif self.subset == 'test':
-                self._window_split_type = 'random'
-                self._window_split_range = (0.8, 1.0)
-            
+
+            subset_token_map = {
+                'train': '_train_',
+                'val': '_val_',
+                'test': '_test_'
+            }
+            token = subset_token_map.get(self.subset, '_train_')
+
+            filtered_indices = []
+            for idx, fp in enumerate(self.file_paths):
+                name = os.path.basename(fp).lower()
+                if token in name:
+                    filtered_indices.append(idx)
+
+            # 만약 토큰 매칭이 전혀 없으면(예외 상황), 안전하게 전체 파일 사용하되 경고
+            if len(filtered_indices) == 0:
+                logger.warning(f"CWRU {self.subset}: 해당 토큰 {token} 로 매칭되는 파일이 없습니다. 임시로 전체 파일 사용.")
+                selected_files = self.file_paths
+                selected_meta = self.metadata_list
+            else:
+                selected_files = [self.file_paths[i] for i in filtered_indices]
+                selected_meta = [self.metadata_list[i] for i in filtered_indices]
+
+            # 윈도우는 서브셋 간 중복 방지를 위해 파일로 분리되었으므로, 각 파일 내 전체 윈도우 사용(0.0~1.0)
+            self._window_split_type = 'random'
+            self._window_split_range = (0.0, 1.0)
+
             # 선택된 subset의 클래스 분포 확인
             selected_labels = [meta['bearing_condition'] for meta in selected_meta]
             selected_dist = Counter(selected_labels)
             logger.info(f"  {self.subset} 클래스 분포: {dict(selected_dist)}")
-            
             logger.info(f"CWRU {self.subset} subset: {len(selected_files)}개 파일 사용 (총 {total_files}개 중)")
-            
+
             # 실제 선택된 파일명 로깅 (디버깅용)
             file_names = [os.path.basename(f) for f in selected_files]
             logger.info(f"CWRU {self.subset} 파일들: {file_names}")
-            
+
             return selected_files, selected_meta
             
         else:
@@ -592,7 +601,14 @@ class BearingDataset(Dataset):
                     if file_idx not in self._random_window_indices:
                         # 파일별 고정 시드로 재현 가능한 랜덤 순서 생성
                         import random
-                        file_seed = hash(f"{filepath}_{self.subset}") & 0xffffffff
+                        # CWRU: 서브셋 간 공통 순열(파일 경로만 기반) → 윈도우 겹침 방지
+                        # UOS: 기존 동작 유지(서브셋 포함 시드)
+                        if self.dataset_type == 'cwru':
+                            hash_src = filepath
+                        else:
+                            hash_src = f"{filepath}_{self.subset}"
+                        md5 = hashlib.md5(hash_src.encode('utf-8')).hexdigest()
+                        file_seed = int(md5[:8], 16)
                         random.seed(file_seed)
                         
                         # 윈도우 인덱스를 랜덤하게 섞기
