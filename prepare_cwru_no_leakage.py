@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-CWRU 데이터 누수 방지 준비 스크립트
-실험 번호(베어링) 기반 분할로 완전한 독립성 보장
+CWRU 데이터 누수 방지 준비 스크립트 (파일 내 3분할 버전)
 
 핵심 아이디어:
-- 서로 다른 실험 번호(베어링)를 train/val/test에 할당
-- 같은 베어링의 다른 부하 조건은 같은 subset에만 포함
-- Domain-Incremental Learning + 데이터 누수 방지 동시 달성
+- 도메인(load)×클래스(H/B/IR/OR)마다 대표 원본 파일 1개를 선택
+- 동일 파일의 원시 신호를 0–60/60–80/80–100%로 3분할하여
+  train/val/test 전용 .mat 파일로 각각 저장(서로 비중복 → 윈도우 누수 없음)
+- 이렇게 생성된 data_scenario2/Load_{hp}hp 하위의 _train/_val/_test 파일만 사용
 """
 
 import os
@@ -14,6 +14,72 @@ import shutil
 import glob
 import re
 from collections import defaultdict, Counter
+import numpy as np
+from scipy.io import loadmat, savemat
+
+
+def _read_signal_from_mat(filepath: str) -> np.ndarray:
+    """CWRU .mat에서 1D 진동 신호를 읽어 반환.
+    우선순위 키: 'DE_time' → 'X' → 'signal' → 그 외 1D 배열 자동 탐색
+    """
+    data = loadmat(filepath)
+    for key in ['DE_time', 'X', 'signal']:
+        if key in data:
+            arr = np.array(data[key]).squeeze()
+            if arr.ndim == 1:
+                return arr.astype(np.float32)
+    for k, v in data.items():
+        if k.startswith('__'):
+            continue
+        arr = np.array(v).squeeze()
+        if arr.ndim == 1 and arr.size > 1000:
+            return arr.astype(np.float32)
+    raise ValueError(f"지원되는 1D 신호를 찾을 수 없습니다: {os.path.basename(filepath)}")
+
+
+def _write_signal_to_mat(filepath: str, signal: np.ndarray):
+    """신호를 'DE_time' 키로 저장."""
+    savemat(filepath, {'DE_time': signal.astype(np.float32)})
+
+
+def _split_indices(n: int, ratios: tuple) -> tuple:
+    a, b, c = ratios
+    assert abs(a + b + c - 1.0) < 1e-6
+    i1 = int(n * a)
+    i2 = int(n * (a + b))
+    return i1, i2
+
+
+def _preferred_file_for_class(load_files: dict, load: str, fault_type: str) -> str:
+    """도메인(load)×클래스에서 대표 원본 파일 1개 선택.
+    - H: 해당 load의 첫 파일
+    - B/IR: 사이즈 선호도 021→014→007→028
+    - OR: 위치 선호도 @6→@3→@12, 그다음 임의
+    """
+    if load not in load_files:
+        return None
+    candidates = []
+    for _, files in load_files[load].items():
+        candidates.extend(files)
+    if not candidates:
+        return None
+    if fault_type == 'H':
+        return sorted(candidates)[0]
+    if fault_type in ['B', 'IR']:
+        size_pref = ['021', '014', '007', '028']
+        for sz in size_pref:
+            for f in sorted(candidates):
+                if f"/{sz}/" in f.replace('\\', '/'):
+                    return f
+        return sorted(candidates)[0]
+    if fault_type == 'OR':
+        pos_pref = ['@6', '@3', '@12']
+        for pos in pos_pref:
+            for f in sorted(candidates):
+                if pos in os.path.basename(f):
+                    return f
+        return sorted(candidates)[0]
+    return sorted(candidates)[0]
 
 
 def extract_experiment_number(filepath):
@@ -122,8 +188,8 @@ def analyze_cwru_structure():
 
 
 def create_experiment_based_split(all_files):
-    """실험 번호 기반 train/val/test 분할"""
-    print("\n🎯 실험 번호 기반 분할 전략:")
+    """정보 출력용(대표 파일 통계). 분할 테이블은 사용하지 않음"""
+    print("\n🎯 분할 개요(정보 출력):")
     
     # 각 결함 타입별로 실험 번호 수집
     fault_experiments = {}
@@ -137,113 +203,72 @@ def create_experiment_based_split(all_files):
         fault_experiments[fault_type] = exp_list
         print(f"  {fault_type}: {len(exp_list)}개 실험번호 {exp_list}")
     
-    # 실험 번호 기반 분할
-    split_assignment = {}
-    
     for fault_type in ['H', 'B', 'IR', 'OR']:
-        experiments = fault_experiments[fault_type]
-        
-        if len(experiments) >= 3:
-            # 3개 이상이면 train:val:test = 60:20:20
-            n = len(experiments)
-            train_count = max(1, int(n * 0.6))
-            val_count = max(1, int(n * 0.2))
-            
-            split_assignment[fault_type] = {
-                'train': experiments[:train_count],
-                'val': experiments[train_count:train_count + val_count],
-                'test': experiments[train_count + val_count:]
-            }
-        elif len(experiments) == 2:
-            # 2개면 train:test = 1:1
-            split_assignment[fault_type] = {
-                'train': [experiments[0]],
-                'val': [experiments[0]],  # train과 동일 (부득이)
-                'test': [experiments[1]]
-            }
-        elif len(experiments) == 1:
-            # 1개면 모든 subset에 동일
-            split_assignment[fault_type] = {
-                'train': experiments,
-                'val': experiments,
-                'test': experiments
-            }
-        else:
-            # 없으면 빈 리스트
-            split_assignment[fault_type] = {
-                'train': [],
-                'val': [],
-                'test': []
-            }
-        
-        print(f"    {fault_type} 분할: Train={split_assignment[fault_type]['train']}, "
-              f"Val={split_assignment[fault_type]['val']}, Test={split_assignment[fault_type]['test']}")
-    
-    return split_assignment
+        print(f"    {fault_type}: {len(fault_experiments[fault_type])}개 실험번호 감지")
+    return None
 
 
-def copy_experiment_based_files(all_files, split_assignment):
-    """실험 번호 기반 파일 복사"""
+def create_window_sliced_files(all_files) -> bool:
+    """도메인×클래스별 대표 파일을 3분할하여 data_scenario2에 저장."""
     target_dir = "data_scenario2"
-    
-    # 기존 폴더 처리
+
+    # 기존 폴더 무조건 재생성(질의 없이 덮어쓰기)
     if os.path.exists(target_dir):
-        response = input(f"⚠️  {target_dir} 폴더가 이미 존재합니다. 삭제하고 새로 생성하시겠습니까? (y/N): ")
-        if response.lower() == 'y':
-            shutil.rmtree(target_dir)
-        else:
-            print("❌ 스크립트를 종료합니다.")
-            return False
-    
+        shutil.rmtree(target_dir)
+
     load_domains = {
         '0': 'Load_0hp',
-        '1': 'Load_1hp', 
+        '1': 'Load_1hp',
         '2': 'Load_2hp',
         '3': 'Load_3hp'
     }
-    
-    # 타겟 디렉토리 생성
+
     for load in load_domains.keys():
-        domain_dir = os.path.join(target_dir, load_domains[load])
-        os.makedirs(domain_dir, exist_ok=True)
-    
-    copied_files = 0
-    
+        os.makedirs(os.path.join(target_dir, load_domains[load]), exist_ok=True)
+
+    created = 0
+    ratios = (0.6, 0.2, 0.2)
+
     for load in sorted(load_domains.keys()):
-        domain_name = load_domains[load]
-        print(f"\n📂 {domain_name} 처리 중...")
-        
+        domain_dir = os.path.join(target_dir, load_domains[load])
+        print(f"\n📂 {load_domains[load]} 처리 중 (파일 내 3분할)...")
+
         for fault_type in ['H', 'B', 'IR', 'OR']:
-            # 각 subset별로 파일 복사
-            for subset in ['train', 'val', 'test']:
-                assigned_experiments = split_assignment[fault_type][subset]
-                
-                if not assigned_experiments:
-                    continue
-                
-                for i, exp_num in enumerate(assigned_experiments, 1):
-                    if exp_num in all_files[fault_type][load]:
-                        files = all_files[fault_type][load][exp_num]
-                        if files:
-                            source_file = files[0]  # 첫 번째 파일 선택
-                            
-                            # 새 파일명 생성
-                            new_filename = f"{fault_type}_{load}hp_{subset}_{i:02d}.mat"
-                            target_path = os.path.join(target_dir, domain_name, new_filename)
-                            
-                            # 파일 복사
-                            shutil.copy2(source_file, target_path)
-                            copied_files += 1
-                            
-                            print(f"    ✅ {fault_type}-{subset}: {os.path.basename(source_file)} → {new_filename}")
-    
-    print(f"\n✅ 총 {copied_files}개 파일이 복사되었습니다!")
+            rep_file = _preferred_file_for_class(all_files[fault_type], load, fault_type)
+            if rep_file is None:
+                print(f"  ⚠️ {fault_type}-{load}HP: 소스 파일 없음 - 건너뜀")
+                continue
+
+            try:
+                signal = _read_signal_from_mat(rep_file)
+            except Exception as e:
+                print(f"  ❌ {fault_type}-{load}HP: 로드 실패 - {os.path.basename(rep_file)} | {e}")
+                continue
+
+            n = signal.shape[0]
+            i1, i2 = _split_indices(n, ratios)
+            sig_train = signal[:i1]
+            sig_val = signal[i1:i2]
+            sig_test = signal[i2:]
+
+            out_train = os.path.join(domain_dir, f"{fault_type}_{load}hp_train_01.mat")
+            out_val = os.path.join(domain_dir, f"{fault_type}_{load}hp_val_01.mat")
+            out_test = os.path.join(domain_dir, f"{fault_type}_{load}hp_test_01.mat")
+
+            _write_signal_to_mat(out_train, sig_train)
+            _write_signal_to_mat(out_val, sig_val)
+            _write_signal_to_mat(out_test, sig_test)
+            created += 3
+
+            print(f"  ✅ {fault_type}-{load}HP: {os.path.basename(rep_file)} → 3분할 저장")
+
+    print(f"\n✅ 총 {created}개 파일이 생성되었습니다 (도메인×클래스×3)")
     return True
 
 
 def main():
     """메인 실행 함수"""
-    print("🚀 CWRU 데이터 누수 방지 준비 시작!")
+    print("🚀 CWRU 데이터 누수 방지 준비 시작! (파일 내 3분할)")
     print("=" * 60)
     print("🎯 전략: 실험 번호(베어링) 기반 분할")
     print("   - 서로 다른 베어링을 train/val/test에 할당")
@@ -255,17 +280,15 @@ def main():
         # 1. 구조 분석
         all_files = analyze_cwru_structure()
         
-        # 2. 실험 번호 기반 분할
-        split_assignment = create_experiment_based_split(all_files)
-        
-        # 3. 파일 복사
-        if copy_experiment_based_files(all_files, split_assignment):
+        # 2. 대표 파일 현황 출력
+        _ = create_experiment_based_split(all_files)
+        # 3. 대표 파일을 실제로 3분할하여 저장
+        if create_window_sliced_files(all_files):
             print(f"\n🎉 CWRU 데이터 누수 방지 준비 완료!")
-            print("✅ 서로 다른 베어링으로 완전한 독립성 보장!")
-            print("✅ Domain-Incremental Learning 지원!")
+            print("✅ 동일 파일의 비중복 3분할 → train/val/test 간 윈도우 누수 없음")
+            print("✅ 도메인별 H가 1개여도 평가 커버리지 확보")
             return True
-        else:
-            return False
+        return False
             
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")

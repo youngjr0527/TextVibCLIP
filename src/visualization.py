@@ -46,15 +46,26 @@ class PaperVisualizer:
             'background': '#F8F9FA'    # 라이트 그레이
         }
         
-        # 베어링 상태별 색상 매핑
+        # 베어링 상태별 색상 매핑 (더 강하게 구분되는 팔레트)
         self.bearing_colors = {
-            'H': self.colors['success'],    # Healthy - 그린
-            'B': self.colors['primary'],    # Ball fault - 블루
-            'IR': self.colors['secondary'],  # Inner race - 레드
-            'OR': self.colors['warning'],   # Outer race - 오렌지
-            'M': self.colors['accent'],     # Misalignment - 옐로우
-            'U': '#9B59B6',                 # Unbalance - 퍼플
-            'L': '#8E44AD'                  # Looseness - 다크퍼플
+            'H': '#2ca02c',   # 선명한 그린
+            'B': '#1f77b4',   # 선명한 블루
+            'IR': '#d62728',  # 선명한 레드
+            'OR': '#ff7f0e',  # 선명한 오렌지
+            'M': self.colors['accent'],
+            'U': '#9B59B6',
+            'L': '#8E44AD'
+        }
+
+        # 베어링 상태별 마커 (모양으로도 구분)
+        self.condition_markers = {
+            'H': 'o',   # 원
+            'B': 's',   # 사각형
+            'IR': '^',  # 삼각형
+            'OR': 'D',  # 다이아몬드
+            'M': 'v',
+            'U': 'P',
+            'L': 'X'
         }
         
         # 베어링 타입별 마커
@@ -97,14 +108,13 @@ class PaperVisualizer:
         all_embeddings = np.concatenate([text_np, vib_np], axis=0)
         modality_labels = ['Text'] * len(text_np) + ['Vibration'] * len(vib_np)
         condition_labels = labels + labels  # 두 번 반복 (text + vib)
-        type_labels = bearing_types + bearing_types
         
         # t-SNE 차원 축소
         logger.info("t-SNE 차원 축소 실행 중...")
         tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(all_embeddings)//4))
         embeddings_2d = tsne.fit_transform(all_embeddings)
         
-        # 서브플롯 생성 (2x2 layout)
+        # 서브플롯 생성 (2x2 layout) - 마지막(우하단) 축은 사용하지 않음 → 3개 플롯
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle(f'Encoder Alignment Analysis - {domain_name}', fontsize=16, fontweight='bold')
         
@@ -133,9 +143,10 @@ class PaperVisualizer:
         for condition in np.unique(text_conditions):
             mask = text_conditions == condition
             ax2.scatter(text_coords[mask, 0], text_coords[mask, 1],
-                       c=self.bearing_colors.get(condition, self.colors['neutral']),
-                       alpha=0.8, s=70, label=f'{condition}', 
-                       edgecolors='white', linewidth=0.8)
+                        c=self.bearing_colors.get(condition, self.colors['neutral']),
+                        alpha=0.85, s=70, label=f'{condition}',
+                        marker=self.condition_markers.get(condition, 'o'),
+                        edgecolors='white', linewidth=0.8)
         
         ax2.set_title('Text Embeddings - Bearing Conditions', fontweight='bold')
         ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -150,37 +161,18 @@ class PaperVisualizer:
         for condition in np.unique(vib_conditions):
             mask = vib_conditions == condition
             ax3.scatter(vib_coords[mask, 0], vib_coords[mask, 1],
-                       c=self.bearing_colors.get(condition, self.colors['neutral']),
-                       alpha=0.8, s=70, label=f'{condition}',
-                       edgecolors='white', linewidth=0.8)
+                        c=self.bearing_colors.get(condition, self.colors['neutral']),
+                        alpha=0.85, s=70, label=f'{condition}',
+                        marker=self.condition_markers.get(condition, 'o'),
+                        edgecolors='white', linewidth=0.8)
         
         ax3.set_title('Vibration Embeddings - Bearing Conditions', fontweight='bold')
         ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         ax3.grid(True, alpha=0.3)
         
-        # 4. 베어링 타입별 분포 (Text + Vibration)
+        # 4번째 축은 사용하지 않음 (3개 플롯만 표시)
         ax4 = axes[1, 1]
-        for type_name in np.unique(type_labels):
-            mask = np.array(type_labels) == type_name
-            marker = self.bearing_markers.get(type_name, 'o')
-            
-            # Text와 Vibration을 다른 색상으로
-            text_type_mask = mask & (np.array(modality_labels) == 'Text')
-            vib_type_mask = mask & (np.array(modality_labels) == 'Vibration')
-            
-            if np.any(text_type_mask):
-                ax4.scatter(embeddings_2d[text_type_mask, 0], embeddings_2d[text_type_mask, 1],
-                           c=self.colors['primary'], alpha=0.7, s=70, marker=marker,
-                           label=f'{type_name} (Text)', edgecolors='white', linewidth=0.8)
-            
-            if np.any(vib_type_mask):
-                ax4.scatter(embeddings_2d[vib_type_mask, 0], embeddings_2d[vib_type_mask, 1],
-                           c=self.colors['secondary'], alpha=0.7, s=70, marker=marker,
-                           label=f'{type_name} (Vib)', edgecolors='black', linewidth=0.8)
-        
-        ax4.set_title('Bearing Types - Text vs Vibration', fontweight='bold')
-        ax4.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
-        ax4.grid(True, alpha=0.3)
+        ax4.axis('off')
         
         # 레이아웃 조정 및 저장
         plt.tight_layout()
@@ -383,6 +375,93 @@ class PaperVisualizer:
         plt.close()
         
         logger.info(f"Domain shift robustness 시각화 저장 완료: {save_path}")
+        return save_path
+
+    def create_similarity_diagnostics_plot(self,
+                                           vib_embeddings: Any,
+                                           labels: List[str],
+                                           prompt_embeddings: Any,
+                                           domain_name: str,
+                                           save_name: str = "similarity_diagnostics") -> str:
+        """진동 임베딩과 클래스 프로토타입 간 유사도/마진 분포 시각화
+        Args:
+            vib_embeddings: (N, D) torch.Tensor 또는 np.ndarray
+            labels: 길이 N의 클래스 라벨 리스트 (예: ['H','B','IR','OR'])
+            prompt_embeddings: (C, D) torch.Tensor 또는 np.ndarray, 클래스 프로토타입
+            domain_name: '0HP' 등
+        Returns:
+            저장 경로
+        """
+        logger.info(f"Similarity diagnostics 시각화 생성 중: {domain_name}")
+
+        # to torch tensor (CPU)
+        def _to_tensor(x):
+            if isinstance(x, torch.Tensor):
+                return x.detach().cpu()
+            return torch.tensor(np.asarray(x), dtype=torch.float32)
+
+        vib_t = _to_tensor(vib_embeddings)
+        proto_t = _to_tensor(prompt_embeddings)
+
+        # 라벨 매핑
+        label_map = {'H': 0, 'B': 1, 'IR': 2, 'OR': 3}
+        y = torch.tensor([label_map.get(l, 0) for l in labels], dtype=torch.long)
+
+        # 정규화 및 유사도
+        vib_t = F.normalize(vib_t, p=2, dim=1)
+        proto_t = F.normalize(proto_t, p=2, dim=1)
+        sims = vib_t @ proto_t.T  # (N, C)
+
+        # 정답/오답 유사도, 마진
+        correct_sim = sims[torch.arange(sims.size(0)), y]
+        sims_masked = sims.clone()
+        sims_masked[torch.arange(sims.size(0)), y] = -1e9
+        best_incorrect, _ = sims_masked.max(dim=1)
+        margins = correct_sim - best_incorrect
+
+        # per-class 데이터 준비
+        classes = ['H', 'B', 'IR', 'OR']
+        data = {cls: {'correct': [], 'margin': []} for cls in classes}
+        for i, cls_idx in enumerate(y.tolist()):
+            cls = classes[cls_idx]
+            data[cls]['correct'].append(float(correct_sim[i].item()))
+            data[cls]['margin'].append(float(margins[i].item()))
+
+        # Figure: 2x1 (상: 정답 유사도 상자/바이올린, 하: 마진 히스토그램)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        fig.suptitle(f'Similarity Diagnostics - {domain_name}', fontsize=16, fontweight='bold')
+
+        # 상단: per-class 정답 유사도 박스+스트립
+        cls_order = classes
+        box_data = [data[c]['correct'] for c in cls_order]
+        bplot = ax1.boxplot(box_data, labels=cls_order, patch_artist=True)
+        colors = [self.bearing_colors.get(c, self.colors['neutral']) for c in cls_order]
+        for patch, color in zip(bplot['boxes'], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.5)
+        # 점 산포
+        for i, c in enumerate(cls_order):
+            jitter_x = np.random.normal(loc=i+1, scale=0.05, size=len(data[c]['correct']))
+            ax1.scatter(jitter_x, data[c]['correct'], c=colors[i], s=20, alpha=0.7, edgecolors='white', linewidth=0.5)
+        ax1.set_ylabel('Cosine similarity to correct prototype')
+        ax1.grid(True, alpha=0.3)
+
+        # 하단: per-class margin 히스토그램
+        for i, c in enumerate(cls_order):
+            ax2.hist(data[c]['margin'], bins=20, alpha=0.6, label=f'{c}', color=colors[i])
+        ax2.set_xlabel('Margin (correct - best incorrect)')
+        ax2.set_ylabel('Count')
+        ax2.axvline(0.0, color=self.colors['secondary'], linestyle='--', linewidth=1.5, label='0 margin')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+
+        # 저장
+        plt.tight_layout()
+        save_path = os.path.join(self.output_dir, f"{save_name}_{domain_name}.png")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+
+        logger.info(f"Similarity diagnostics 시각화 저장 완료: {save_path}")
         return save_path
 
 

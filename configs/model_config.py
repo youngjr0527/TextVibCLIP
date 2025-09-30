@@ -104,7 +104,7 @@ FIRST_DOMAIN_CONFIG = {
 # CWRU 첫 번째 도메인 전용 설정 (극소 데이터 대응)
 CWRU_FIRST_DOMAIN_CONFIG = {
     # 🎯 CWRU Foundation: 극도로 보수적 학습
-    'num_epochs': 3,            # 5 → 3 (극도로 짧은 학습)
+    'num_epochs': 20,           # 3 → 20 (기초 학습 강화)
     'learning_rate': 5e-5,      # 1e-4 → 5e-5 (매우 낮은 학습률)
     'weight_decay': 5e-3,       # 1e-3 → 5e-3 (매우 강한 정규화)
     'aux_weight': 0.1,          # 0.5 → 0.1 (ranking 거의 전용)
@@ -123,7 +123,7 @@ CWRU_FIRST_DOMAIN_CONFIG = {
 # Continual Learning 전용 설정 (Adaptation Learning) 
 CONTINUAL_CONFIG = {
     # 🎯 Adaptation Learning: Auxiliary Head 중심 빠른 적응
-    'num_epochs': 6,            # 8 → 6 (더 빠른 적응)
+    'num_epochs': 4,            # 6 → 4 (적정 적응)
     'learning_rate': 5e-5,      # 1e-4 → 5e-5 (더 보존적)
     'weight_decay': 2e-4,       # 1e-4 → 2e-4 (과적합 방지 강화)
     'aux_weight': 5.0,          # 0.5 → 5.0 (Auxiliary Head 중심)
@@ -240,7 +240,7 @@ CWRU_DATA_CONFIG = {
     # 데이터 전처리 (UOS와 통일 유지)
     'signal_normalization': 'standardize',
     'window_size': 2048,  # UOS와 동일 (아키텍처 일관성)
-    'overlap_ratio': 0.8,  # 0.5 → 0.8 (겹침 증가로 샘플 증가)
+    'overlap_ratio': 0.6,  # 0.8 → 0.6 (중복 감소로 일반화 유도)
     
     # 텍스트 생성
     'max_text_length': 128,

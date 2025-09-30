@@ -335,39 +335,77 @@ class BearingDataset(Dataset):
         total_files = len(self.file_paths)
         
         if total_files <= 20:  # CWRU 처리 (4-20개 파일)
-            # 🎯 DOMAIN-INCREMENTAL LEARNING: 각 도메인 내에서 train/val/test를 "파일 단위"로 완전 분리
-            # prepare_cwru_no_leakage.py가 생성한 파일 네이밍 규칙(_train_, _val_, _test_)을 활용
+            # 🎯 DOMAIN-INCREMENTAL LEARNING: 파일 토큰 기반 분리 + 윈도우 랜덤 분할(비중복)
+            # prepare_cwru_no_leakage.py 파일명 규칙을 활용해 subset별 파일을 분리
 
-            logger.info("CWRU 도메인 내 분할 (Domain-Incremental, 파일 단위 분리):")
+            logger.info("CWRU 도메인 내 분할 (파일 토큰 기반 + 랜덤 윈도우 분리):")
             logger.info(f"  현재 도메인: {self.domain_value}HP")
 
-            subset_token_map = {
-                'train': '_train_',
-                'val': '_val_',
-                'test': '_test_'
-            }
-            token = subset_token_map.get(self.subset, '_train_')
-
-            filtered_indices = []
-            for idx, fp in enumerate(self.file_paths):
+            def match_subset(fp: str, ss: str) -> bool:
                 name = os.path.basename(fp).lower()
-                if token in name:
-                    filtered_indices.append(idx)
+                token = f"_{ss}_"
+                return token in name
 
-            # 만약 토큰 매칭이 전혀 없으면(예외 상황), 안전하게 전체 파일 사용하되 경고
-            if len(filtered_indices) == 0:
-                logger.warning(f"CWRU {self.subset}: 해당 토큰 {token} 로 매칭되는 파일이 없습니다. 임시로 전체 파일 사용.")
-                selected_files = self.file_paths
-                selected_meta = self.metadata_list
-            else:
-                selected_files = [self.file_paths[i] for i in filtered_indices]
-                selected_meta = [self.metadata_list[i] for i in filtered_indices]
+            # ✅ 새 준비 방식: 이미 파일이 subset별로 원시 신호가 비중복 분할되어 있음
+            #    → 각 파일의 전체 윈도우를 사용(0.0~1.0)
+            if self.subset == 'train':
+                selected_files = [f for f in self.file_paths if match_subset(f, 'train')]
+                selected_meta = [m for m in self.metadata_list if match_subset(m['filepath'], 'train')]
+                self._window_split_type = 'random'
+                self._window_split_range = (0.0, 1.0)
+            elif self.subset == 'val':
+                selected_files = [f for f in self.file_paths if match_subset(f, 'val')]
+                selected_meta = [m for m in self.metadata_list if match_subset(m['filepath'], 'val')]
+                self._window_split_type = 'random'
+                self._window_split_range = (0.0, 1.0)
+            elif self.subset == 'test':
+                selected_files = [f for f in self.file_paths if match_subset(f, 'test')]
+                selected_meta = [m for m in self.metadata_list if match_subset(m['filepath'], 'test')]
+                self._window_split_type = 'random'
+                self._window_split_range = (0.0, 1.0)
 
-            # 윈도우는 서브셋 간 중복 방지를 위해 파일로 분리되었으므로, 각 파일 내 전체 윈도우 사용(0.0~1.0)
-            self._window_split_type = 'random'
-            self._window_split_range = (0.0, 1.0)
+            # 하이브리드 폴백: 선택된 subset에 4개 클래스가 모두 없으면
+            # 모든 파일을 포함하는 윈도우‑레벨 랜덤 분할로 전환하여 클래스 커버리지 보장
+            try:
+                uniq = set(meta['bearing_condition'] for meta in selected_meta)
+                if len(uniq) < 4:
+                    logger.info(
+                        f"  ⚠️ {self.subset}에 클래스 누락 감지({sorted(list(uniq))}) → 윈도우 레벨 폴백 적용(학습/평가 누수 방지)"
+                    )
+                    # 폴백 시: train/val/test 간 파일 누수 방지
+                    # - val/test에서는 train 토큰 파일을 제외
+                    # - train에서는 val/test 토큰 파일을 제외
+                    def exclude_tokens(files: List[str], tokens: List[str]) -> List[str]:
+                        lowered = [os.path.basename(f).lower() for f in files]
+                        keep = []
+                        for f, name in zip(files, lowered):
+                            if not any(t in name for t in tokens):
+                                keep.append(f)
+                        return keep
 
-            # 선택된 subset의 클래스 분포 확인
+                    if self.subset == 'train':
+                        eligible_files = exclude_tokens(self.file_paths, ['_val_', '_test_'])
+                    elif self.subset == 'val':
+                        eligible_files = exclude_tokens(self.file_paths, ['_train_'])
+                    else:
+                        eligible_files = exclude_tokens(self.file_paths, ['_train_'])
+
+                    selected_files = eligible_files if eligible_files else self.file_paths
+                    # 메타 동기화
+                    selected_meta = [m for m in self.metadata_list if m['filepath'] in set(selected_files)]
+
+                    # 공통 순열 기반 랜덤 분할(비중복)
+                    self._window_split_type = 'random'
+                    if self.subset == 'train':
+                        self._window_split_range = (0.0, 0.6)
+                    elif self.subset == 'val':
+                        self._window_split_range = (0.6, 0.8)
+                    else:
+                        self._window_split_range = (0.8, 1.0)
+            except Exception:
+                pass
+
+            # 클래스 분포 로깅
             selected_labels = [meta['bearing_condition'] for meta in selected_meta]
             selected_dist = Counter(selected_labels)
             logger.info(f"  {self.subset} 클래스 분포: {dict(selected_dist)}")

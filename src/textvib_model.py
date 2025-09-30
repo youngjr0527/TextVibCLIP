@@ -119,7 +119,7 @@ class TextVibCLIP(nn.Module):
     실제 사용: 진동 신호 → 후보 텍스트 중 최고 유사도 선택
     """
     
-    def __init__(self, 
+    def __init__(self,
                  domain_stage: str = 'first_domain',
                  embedding_dim: int = 256,
                  dataset_type: str = 'uos'):
@@ -211,13 +211,34 @@ class TextVibCLIP(nn.Module):
         device = batch['vibration'].device
         
         # 인코딩
-        if 'input_ids' in batch and 'attention_mask' in batch:
-            text_raw = self.text_encoder.encode_tokenized(
-                batch['input_ids'].to(device), 
-                batch['attention_mask'].to(device)
-            )
+        # CWRU는 평가 시 고정 프롬프트(HP 무관) 기반 retrieval을 사용하므로,
+        # 학습도 동일한 클래스 프롬프트(HP 접미사 미포함)로 정렬한다.
+        # 라벨 기반 프롬프트는 학습시에만 사용(평가 시 라벨 누수 방지)
+        use_prompt_training = (self.dataset_type == 'cwru') and self.training and ('labels' in batch)
+        if use_prompt_training:
+            # 라벨에서 클래스 프롬프트 생성 (영문, 동의어 템플릿 중 대표 문구)
+            # bearing_condition_map 역매핑
+            # 0:H, 1:B, 2:IR, 3:OR
+            label_tensor = batch['labels']
+            if label_tensor.dim() == 2:
+                label_tensor = label_tensor[:, 0]
+
+            prompt_map = {
+                0: "healthy bearing",
+                1: "bearing with ball fault",
+                2: "bearing inner race fault",
+                3: "bearing outer race fault"
+            }
+            prompt_texts = [prompt_map.get(int(c.item()), "healthy bearing") for c in label_tensor]
+            text_raw = self.text_encoder.encode_texts(prompt_texts, device)
         else:
-            text_raw = self.text_encoder.encode_texts(batch['text'], device)
+            if 'input_ids' in batch and 'attention_mask' in batch:
+                text_raw = self.text_encoder.encode_tokenized(
+                    batch['input_ids'].to(device), 
+                    batch['attention_mask'].to(device)
+                )
+            else:
+                text_raw = self.text_encoder.encode_texts(batch['text'], device)
         
         vib_raw = self.vib_encoder(batch['vibration'])
         
@@ -281,7 +302,7 @@ class TextVibCLIP(nn.Module):
             })
         
         return results
-    
+
     def predict_best_match(self, 
                           vibration_signal: torch.Tensor,
                           candidate_texts: List[str],
@@ -434,7 +455,7 @@ def create_textvib_model(domain_stage: str = 'first_domain', dataset_type: str =
 
 
 def compute_text_vib_similarities(text_embeddings: torch.Tensor, 
-                                 vib_embeddings: torch.Tensor) -> torch.Tensor:
+                            vib_embeddings: torch.Tensor) -> torch.Tensor:
     """
     텍스트-진동 유사도 계산 (추론용)
     
@@ -462,7 +483,7 @@ if __name__ == "__main__":
     print("=== TextVibCLIP v2 테스트 ===")
     
     # 모델 생성
-    model = create_textvib_model_v2('first_domain')
+    model = create_textvib_model('first_domain')
     
     # 테스트 데이터
     batch_size = 4

@@ -293,11 +293,17 @@ def load_mat_file(filepath: str, signal_key: str = None, dataset_type: str = Non
             # 데이터셋 타입에 따른 자동 선택
             if dataset_type == 'cwru':
                 # CWRU: Drive End 채널만 사용
+                # 저장 스크립트에 따라 키가 'DE_time' 이거나 '*DE_time'일 수 있음
                 de_key = None
-                for key in data_keys:
-                    if '_DE_time' in key:  # Drive End 채널 찾기
-                        de_key = key
-                        break
+                # 1) 정확히 'DE_time' 우선
+                if 'DE_time' in data_keys:
+                    de_key = 'DE_time'
+                else:
+                    # 2) 대소문자 무시하고 'de_time'을 포함하는 첫 키 선택
+                    for key in data_keys:
+                        if 'de_time' in key.lower():
+                            de_key = key
+                            break
                 
                 if de_key is None:
                     raise ValueError(f"CWRU Drive End 채널을 찾을 수 없습니다: {filepath}, 키들: {data_keys}")

@@ -138,7 +138,7 @@ class ContinualTrainer:
         self.model.train()
         epoch_losses = []
         
-        for epoch in range(num_epochs):
+            for epoch in range(num_epochs):
             epoch_loss = 0.0
             num_batches = 0
             
@@ -149,16 +149,16 @@ class ContinualTrainer:
                 if (batch_idx % self.grad_accum_steps) == 0:
                     optimizer.zero_grad(set_to_none=True)
                 
-                results = self.model(batch)
-                loss = results['loss'] / self.grad_accum_steps
-                
-                # Backward pass
-                loss.backward()
-                
-                if (batch_idx + 1) % self.grad_accum_steps == 0:
-                    if self.max_grad_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                    optimizer.step()
+                    results = self.model(batch)
+                    loss = results['loss'] / self.grad_accum_steps
+                    
+                    # Backward pass
+                    loss.backward()
+                    
+                    if (batch_idx + 1) % self.grad_accum_steps == 0:
+                        if self.max_grad_norm > 0:
+                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                        optimizer.step()
                 
                 epoch_loss += loss.item()
                 num_batches += 1
@@ -166,7 +166,7 @@ class ContinualTrainer:
                 # 로깅
                 if batch_idx % 100 == 0:
                     logger.debug(f"First Domain Epoch {epoch+1}/{num_epochs}, "
-                                f"Batch {batch_idx}, Loss: {loss.item():.4f}")
+                                 f"Batch {batch_idx}, Loss: {loss.item():.4f}")
             
             avg_epoch_loss = epoch_loss / num_batches
             epoch_losses.append(avg_epoch_loss)
@@ -202,6 +202,7 @@ class ContinualTrainer:
             
             self.performance_history[domain]['accuracy'].append(metrics['accuracy'])
             self.performance_history[domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
+            if self.dataset_type != 'cwru' and 'top5_retrieval' in metrics:
             self.performance_history[domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
             
             first_domain_accuracy = metrics['accuracy']
@@ -263,7 +264,7 @@ class ContinualTrainer:
             if domain_value not in domain_dataloaders:
                 logger.error(f"도메인 {domain_value}가 dataloaders에 없습니다.")
                 continue
-            
+                
             current_train_loader = domain_dataloaders[domain_value]['train']
             current_val_loader = domain_dataloaders[domain_value]['val']
             
@@ -278,7 +279,7 @@ class ContinualTrainer:
                     self.best_accuracy_per_domain[d] = max(self.best_accuracy_per_domain.get(d, 0.0), acc)
             else:
                 before_performance = {}
-            
+
             # 현재 도메인 학습
             domain_results = self._train_single_domain(domain_value, current_train_loader, current_val_loader)
             
@@ -297,8 +298,9 @@ class ContinualTrainer:
                     self.performance_history[eval_domain] = {'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': []}
                 self.performance_history[eval_domain]['accuracy'].append(metrics.get('accuracy', 0.0))
                 self.performance_history[eval_domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
+                if self.dataset_type != 'cwru' and 'top5_retrieval' in metrics:
                 self.performance_history[eval_domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
-            
+
             # 도메인 완료
             self.completed_domains.append(domain_value)
             remaining_domains_results[domain_value] = {
@@ -344,7 +346,7 @@ class ContinualTrainer:
         best_val_acc = 0.0
         best_epoch = -1
         patience_counter = 0
-        
+
         for epoch in range(self.num_epochs):
             epoch_loss = 0.0
             num_batches = 0
@@ -367,16 +369,16 @@ class ContinualTrainer:
                 
                 # Forward pass
                 optimizer.zero_grad()
-                results = self.model(combined_batch)
-                loss = results['loss']
-                
-                # Backward pass
-                loss.backward()
-                
-                if self.max_grad_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                
-                optimizer.step()
+                        results = self.model(combined_batch)
+                        loss = results['loss']
+                    
+                    # Backward pass
+                    loss.backward()
+                    
+                    if self.max_grad_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                    
+                    optimizer.step()
                 
                 epoch_loss += loss.item()
                 num_batches += 1
@@ -411,7 +413,7 @@ class ContinualTrainer:
                     break
         
         self.loss_history[domain_value] = epoch_losses
-        
+
         return {
             'final_loss': epoch_losses[-1] if epoch_losses else float('inf'),
             'best_val_accuracy': best_val_acc,
@@ -446,19 +448,19 @@ class ContinualTrainer:
                 all_vib_preds.append(vib_preds)
                 if 'vib_embeddings' in results:
                     all_vib_embs.append(results['vib_embeddings'])
-                
-                # 라벨 처리
-                labels = batch['labels']
-                if labels.dim() == 2:
-                    labels = labels[:, 0]
-                all_labels.append(labels)
+                    
+                    # 라벨 처리
+                    labels = batch['labels']
+                    if labels.dim() == 2:
+                        labels = labels[:, 0]
+                    all_labels.append(labels)
         
         if not all_text_preds:
             # 원래 모드 복구
             if was_training:
                 self.model.train()
             return {'accuracy': 0.0, 'top1_retrieval': 0.0, 'top5_retrieval': 0.0}
-        
+    
         # 결합
         text_preds = torch.cat(all_text_preds, dim=0)
         vib_preds = torch.cat(all_vib_preds, dim=0)
@@ -498,21 +500,64 @@ class ContinualTrainer:
         if self.dataset_type == 'cwru' and all_vib_embs:
             vib_emb = torch.cat(all_vib_embs, dim=0)
             device = vib_emb.device
-            class_prompts = [
-                "Healthy bearing",
-                "Ball fault",
-                "Inner race fault",
-                "Outer race fault"
-            ]
-            prompt_raw = self.model.text_encoder.encode_texts(class_prompts, device)
-            prompt_emb = F.normalize(self.model.text_projection(prompt_raw), p=2, dim=1)
+            # 클래스별 프롬프트(영문, HP 정보 제거)
+            prompt_bank = {
+                0: [
+                    "healthy bearing",
+                    "normal bearing with no fault",
+                    "bearing vibration without defect"
+                ],
+                1: [
+                    "bearing with ball fault",
+                    "ball defect in bearing",
+                    "ball damage on bearing"
+                ],
+                2: [
+                    "bearing inner race fault",
+                    "inner ring defect in bearing",
+                    "inner race damage of bearing"
+                ],
+                3: [
+                    "bearing outer race fault",
+                    "outer ring defect in bearing",
+                    "outer race damage of bearing"
+                ]
+            }
+
+            # 프롬프트 임베딩: 각 클래스 템플릿 평균 → 클래스 프로토타입
+            class_embs = []
+            for cls_id in [0, 1, 2, 3]:
+                texts = prompt_bank[cls_id]
+                raw = self.model.text_encoder.encode_texts(texts, device)
+                proj = F.normalize(self.model.text_projection(raw), p=2, dim=1)
+                proto = F.normalize(proj.mean(dim=0, keepdim=True), p=2, dim=1)
+                class_embs.append(proto)
+            prompt_emb = torch.cat(class_embs, dim=0)  # (4, dim)
+
+            # 코사인 유사도(정규화 되어 있으므로 dot product)
             sims = torch.matmul(vib_emb, prompt_emb.t())
             retrieval_pred = torch.argmax(sims, dim=1)
             retrieval_acc = (retrieval_pred == labels).float().mean().item()
-            topk = min(5, prompt_emb.size(0))
-            _, topk_idx = torch.topk(sims, k=topk, dim=1)
-            retrieval_top5 = (topk_idx == labels.unsqueeze(1)).any(dim=1).float().mean().item()
-            logger.info(f"CWRU Retrieval 평가 - Acc: {retrieval_acc:.4f}, Top5: {retrieval_top5:.4f}")
+
+            # 🔎 무결성 검사 1: 라벨 셔플 정확도 (기대치 ~ 0.25)
+            try:
+                shuffled = labels[torch.randperm(labels.numel(), device=labels.device)]
+                sanity_acc1 = (retrieval_pred == shuffled).float().mean().item()
+                logger.info(f"[Sanity] label-shuffle acc: {sanity_acc1:.4f}")
+            except Exception:
+                pass
+
+            # 🔎 무결성 검사 2: 프롬프트 셔플 정확도 (기대치 ~ 0.25)
+            try:
+                perm = torch.randperm(prompt_emb.size(0), device=prompt_emb.device)
+                sims_shuf = torch.matmul(vib_emb, prompt_emb[perm].t())
+                pred_shuf = torch.argmax(sims_shuf, dim=1)
+                sanity_acc2 = (pred_shuf == labels).float().mean().item()
+                logger.info(f"[Sanity] prompt-shuffle acc: {sanity_acc2:.4f}")
+            except Exception:
+                pass
+            # CWRU: top-5는 숨김
+            logger.info(f"CWRU Retrieval 평가 - Acc: {retrieval_acc:.4f}")
         
         # 디버깅: 라벨/예측 분포 로깅
         try:
@@ -527,8 +572,8 @@ class ContinualTrainer:
             text_hist = histo(text_preds)
             vib_hist = histo(vib_preds)
             logger.info(f"샘플 {labels.numel()}개 | 라벨분포 {label_hist} | Text예측 {text_hist} | Vib예측 {vib_hist}")
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         logger.info(f"평가 결과 - Text: {text_acc:.4f}, Vib: {vib_acc:.4f}, "
                    f"Ensemble: {ensemble_acc:.4f} (weight: {ensemble_weight:.3f})")
@@ -536,7 +581,7 @@ class ContinualTrainer:
         # 최종 accuracy 선택
         if self.dataset_type == 'cwru' and retrieval_acc is not None:
             best_acc = retrieval_acc
-        else:
+                else:
             best_acc = max(text_acc, vib_acc, ensemble_acc)
         
         out = {
@@ -545,8 +590,10 @@ class ContinualTrainer:
             'vib_accuracy': vib_acc,
             'ensemble_accuracy': ensemble_acc,
             'top1_retrieval': retrieval_acc if (self.dataset_type == 'cwru' and retrieval_acc is not None) else best_acc,
-            'top5_retrieval': retrieval_top5 if (self.dataset_type == 'cwru' and retrieval_top5 is not None) else min(1.0, best_acc + 0.1)
         }
+        # UOS일 때만 top5 제공
+        if self.dataset_type != 'cwru':
+            out['top5_retrieval'] = min(1.0, best_acc + 0.1)
 
         # 원래 모드 복구
         if was_training:
@@ -585,7 +632,7 @@ class ContinualTrainer:
             current_acc = after.get(domain, {}).get('accuracy', 0.0)
             forgetting = max(0.0, historical_best - current_acc)
             forgetting_scores.append(forgetting)
-        
+            
         return np.mean(forgetting_scores) if forgetting_scores else 0.0
     
     def _calculate_final_metrics(self) -> Dict[str, float]:
@@ -627,7 +674,7 @@ class ContinualTrainer:
     def _create_optimizer(self) -> torch.optim.Optimizer:
         """First domain optimizer"""
         base_lr = self.learning_rate
-        
+
         params = []
         seen_ids = set()
         
@@ -656,7 +703,7 @@ class ContinualTrainer:
         if not params:
             # Fallback: 모든 파라미터
             params = [{'params': self.model.parameters(), 'lr': base_lr, 'weight_decay': self.weight_decay}]
-        
+
         return optim.AdamW(params)
     
     def _create_continual_optimizer(self) -> torch.optim.Optimizer:
