@@ -138,7 +138,7 @@ class ContinualTrainer:
         self.model.train()
         epoch_losses = []
         
-            for epoch in range(num_epochs):
+        for epoch in range(num_epochs):
             epoch_loss = 0.0
             num_batches = 0
             
@@ -203,7 +203,7 @@ class ContinualTrainer:
             self.performance_history[domain]['accuracy'].append(metrics['accuracy'])
             self.performance_history[domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
             if self.dataset_type != 'cwru' and 'top5_retrieval' in metrics:
-            self.performance_history[domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
+                self.performance_history[domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
             
             first_domain_accuracy = metrics['accuracy']
             self.best_accuracy_per_domain[domain] = max(self.best_accuracy_per_domain.get(domain, 0.0), float(first_domain_accuracy))
@@ -299,7 +299,7 @@ class ContinualTrainer:
                 self.performance_history[eval_domain]['accuracy'].append(metrics.get('accuracy', 0.0))
                 self.performance_history[eval_domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
                 if self.dataset_type != 'cwru' and 'top5_retrieval' in metrics:
-                self.performance_history[eval_domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
+                    self.performance_history[eval_domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
 
             # 도메인 완료
             self.completed_domains.append(domain_value)
@@ -369,15 +369,15 @@ class ContinualTrainer:
                 
                 # Forward pass
                 optimizer.zero_grad()
-                        results = self.model(combined_batch)
-                        loss = results['loss']
+                results = self.model(combined_batch)
+                loss = results['loss']
                     
-                    # Backward pass
-                    loss.backward()
+                # Backward pass
+                loss.backward()
                     
-                    if self.max_grad_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                    
+                if self.max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                
                     optimizer.step()
                 
                 epoch_loss += loss.item()
@@ -559,19 +559,19 @@ class ContinualTrainer:
             # CWRU: top-5는 숨김
             logger.info(f"CWRU Retrieval 평가 - Acc: {retrieval_acc:.4f}")
         
-        # 디버깅: 라벨/예측 분포 로깅
-        try:
-            max_class = int(max(labels.max().item(), text_preds.max().item(), vib_preds.max().item())) if labels.numel() > 0 else -1
-            num_classes = max_class + 1
-            def histo(t: torch.Tensor):
-                if t.numel() == 0 or num_classes <= 0:
-                    return {}
-                c = torch.bincount(t.detach().cpu(), minlength=num_classes)
-                return {int(i): int(v) for i, v in enumerate(c)}
-            label_hist = histo(labels)
-            text_hist = histo(text_preds)
-            vib_hist = histo(vib_preds)
-            logger.info(f"샘플 {labels.numel()}개 | 라벨분포 {label_hist} | Text예측 {text_hist} | Vib예측 {vib_hist}")
+            # 디버깅: 라벨/예측 분포 로깅
+            try:
+                max_class = int(max(labels.max().item(), text_preds.max().item(), vib_preds.max().item())) if labels.numel() > 0 else -1
+                num_classes = max_class + 1
+                def histo(t: torch.Tensor):
+                    if t.numel() == 0 or num_classes <= 0:
+                        return {}
+                    c = torch.bincount(t.detach().cpu(), minlength=num_classes)
+                    return {int(i): int(v) for i, v in enumerate(c)}
+                label_hist = histo(labels)
+                text_hist = histo(text_preds)
+                vib_hist = histo(vib_preds)
+                logger.info(f"샘플 {labels.numel()}개 | 라벨분포 {label_hist} | Text예측 {text_hist} | Vib예측 {vib_hist}")
             except Exception:
                 pass
 
@@ -581,7 +581,7 @@ class ContinualTrainer:
         # 최종 accuracy 선택
         if self.dataset_type == 'cwru' and retrieval_acc is not None:
             best_acc = retrieval_acc
-                else:
+        else:
             best_acc = max(text_acc, vib_acc, ensemble_acc)
         
         out = {
