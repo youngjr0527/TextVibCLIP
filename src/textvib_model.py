@@ -111,7 +111,7 @@ class RankingLoss(nn.Module):
         return torch.stack(losses).mean()
 
 
-class TextVibCLIP_v2(nn.Module):
+class TextVibCLIP(nn.Module):
     """
     TextVibCLIP v2: Ranking-based 아키텍처
     
@@ -408,7 +408,7 @@ class TextVibCLIP_v2(nn.Module):
         return checkpoint
 
 
-def create_textvib_model_v2(domain_stage: str = 'first_domain', dataset_type: str = 'uos') -> TextVibCLIP_v2:
+def create_textvib_model(domain_stage: str = 'first_domain', dataset_type: str = 'uos') -> TextVibCLIP:
     """
     TextVibCLIP v2 모델 생성
     
@@ -417,9 +417,9 @@ def create_textvib_model_v2(domain_stage: str = 'first_domain', dataset_type: st
         dataset_type: 'uos' 또는 'cwru'
         
     Returns:
-        TextVibCLIP_v2: 새로운 ranking-based 모델
+        TextVibCLIP: 새로운 ranking-based 모델
     """
-    model = TextVibCLIP_v2(domain_stage=domain_stage, dataset_type=dataset_type)
+    model = TextVibCLIP(domain_stage=domain_stage, dataset_type=dataset_type)
     
     # 파라미터 정보 출력
     param_info = model.get_trainable_parameters()

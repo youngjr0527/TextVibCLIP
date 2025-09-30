@@ -333,7 +333,7 @@ class BearingDataset(Dataset):
         # CWRU 특별 처리: 파일 수가 적으므로 적응적 분할
         total_files = len(self.file_paths)
         
-        if total_files <= 4:  # CWRU 4개 파일 처리  
+        if total_files <= 20:  # CWRU 처리 (4-20개 파일)  
             # 🎯 DOMAIN-INCREMENTAL LEARNING: 각 도메인 내에서 train/val/test 분할
             # 모든 클래스 (H, B, IR, OR)를 모든 subset에 포함하되, 시간적 독립성 보장
             

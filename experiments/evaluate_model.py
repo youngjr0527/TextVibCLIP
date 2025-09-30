@@ -16,7 +16,7 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support, con
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from src.textvib_model_v2 import create_textvib_model_v2 as create_textvib_model
+from src.textvib_model import create_textvib_model as create_textvib_model
 from src.data_loader import create_domain_dataloaders
 from configs.model_config import DATA_CONFIG
 

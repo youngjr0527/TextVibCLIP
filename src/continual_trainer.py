@@ -15,7 +15,7 @@ import logging
 import numpy as np
 from collections import defaultdict
 
-from .textvib_model_v2 import TextVibCLIP_v2, create_textvib_model_v2
+from .textvib_model import TextVibCLIP, create_textvib_model
 from .replay_buffer import ReplayBuffer
 from .data_loader import create_domain_dataloaders, create_first_domain_dataloader
 from .data_cache import create_cached_first_domain_dataloader
@@ -24,7 +24,7 @@ from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODE
 logger = logging.getLogger(__name__)
 
 
-class ContinualTrainer_v2:
+class ContinualTrainer:
     """
     TextVibCLIP v2 Continual Learning Trainer
     
@@ -32,7 +32,7 @@ class ContinualTrainer_v2:
     """
     
     def __init__(self,
-                 model: Optional[TextVibCLIP_v2] = None,
+                 model: Optional[TextVibCLIP] = None,
                  device: torch.device = torch.device('cpu'),
                  save_dir: str = 'checkpoints',
                  max_grad_norm: float = 0.1,
@@ -58,7 +58,7 @@ class ContinualTrainer_v2:
         
         # 모델 초기화 (데이터셋 타입 전달)
         if model is None:
-            self.model = create_textvib_model_v2('first_domain', dataset_type)
+            self.model = create_textvib_model('first_domain', dataset_type)
         else:
             self.model = model
         
@@ -460,14 +460,11 @@ class ContinualTrainer_v2:
         text_acc = (text_preds == labels).float().mean().item()
         vib_acc = (vib_preds == labels).float().mean().item()
         
-        # 앙상블 정확도 (가중 평균)
+        # 앙상블 정확도 (단순한 가중 평균)
         ensemble_weight = torch.sigmoid(self.model.ensemble_weight).item()
-        # 소프트 앙상블 대신 하드 voting 사용
-        ensemble_preds = torch.where(
-            torch.rand_like(vib_preds.float()) < ensemble_weight,
-            vib_preds, text_preds
-        )
-        ensemble_acc = (ensemble_preds == labels).float().mean().item()
+        
+        # 결정론적 앙상블: 개별 정확도의 가중 평균
+        ensemble_acc = ensemble_weight * vib_acc + (1 - ensemble_weight) * text_acc
         
         logger.info(f"평가 결과 - Text: {text_acc:.4f}, Vib: {vib_acc:.4f}, "
                    f"Ensemble: {ensemble_acc:.4f} (weight: {ensemble_weight:.3f})")
@@ -677,9 +674,9 @@ def create_continual_trainer_v2(device: torch.device = torch.device('cpu'),
                                save_dir: str = 'checkpoints_v2',
                                domain_order: List[Union[int, str]] = None,
                                data_dir: Optional[str] = None,
-                               dataset_type: str = 'uos') -> ContinualTrainer_v2:
+                               dataset_type: str = 'uos') -> ContinualTrainer:
     """ContinualTrainer v2 생성"""
-    return ContinualTrainer_v2(
+    return ContinualTrainer(
         device=device,
         save_dir=save_dir,
         domain_order=domain_order,

@@ -25,7 +25,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent
 sys.path.insert(0, str(project_root))
 
-from src.continual_trainer_v2 import ContinualTrainer_v2
+from src.continual_trainer import ContinualTrainer
 from src.data_loader import create_domain_dataloaders
 from src.data_cache import create_cached_domain_dataloaders, create_cached_first_domain_dataloader, clear_all_caches
 from src.utils import set_seed
@@ -104,7 +104,7 @@ def run_single_scenario_v2(config: Dict, logger: logging.Logger, device: torch.d
     
     try:
         # Trainer v2 생성
-        trainer = ContinualTrainer_v2(
+        trainer = ContinualTrainer(
             device=device,
             save_dir=f"checkpoints_v2/{config['name']}",
             domain_order=config['domain_order'],
