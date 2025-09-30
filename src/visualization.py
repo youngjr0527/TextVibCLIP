@@ -114,28 +114,12 @@ class PaperVisualizer:
         tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(all_embeddings)//4))
         embeddings_2d = tsne.fit_transform(all_embeddings)
         
-        # 서브플롯 생성 (2x2 layout) - 마지막(우하단) 축은 사용하지 않음 → 3개 플롯
+        # 서브플롯 생성 (2x2 layout) - 순서: [Text | Vibration] / [빈칸 | Modality]
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle(f'Encoder Alignment Analysis - {domain_name}', fontsize=16, fontweight='bold')
         
-        # 1. 모달리티별 분포 (Text vs Vibration)
-        ax1 = axes[0, 0]
-        for i, modality in enumerate(['Text', 'Vibration']):
-            mask = np.array(modality_labels) == modality
-            alpha = 0.7 if modality == 'Text' else 0.9
-            marker = 'o' if modality == 'Text' else 's'
-            color = self.colors['primary'] if modality == 'Text' else self.colors['secondary']
-            
-            ax1.scatter(embeddings_2d[mask, 0], embeddings_2d[mask, 1], 
-                       c=color, alpha=alpha, s=60, marker=marker, 
-                       label=modality, edgecolors='white', linewidth=0.5)
-        
-        ax1.set_title('Modality Distribution', fontweight='bold')
-        ax1.legend(frameon=True, fancybox=True, shadow=True)
-        ax1.grid(True, alpha=0.3)
-        
-        # 2. 베어링 상태별 분포 (Text만)
-        ax2 = axes[0, 1]
+        # 1. 베어링 상태별 분포 (Text만) - 좌상단
+        ax2 = axes[0, 0]
         text_mask = np.array(modality_labels) == 'Text'
         text_coords = embeddings_2d[text_mask]
         text_conditions = np.array(condition_labels)[text_mask]
@@ -152,8 +136,8 @@ class PaperVisualizer:
         ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         ax2.grid(True, alpha=0.3)
         
-        # 3. 베어링 상태별 분포 (Vibration만)
-        ax3 = axes[1, 0]
+        # 2. 베어링 상태별 분포 (Vibration만) - 우상단
+        ax3 = axes[0, 1]
         vib_mask = np.array(modality_labels) == 'Vibration'
         vib_coords = embeddings_2d[vib_mask]
         vib_conditions = np.array(condition_labels)[vib_mask]
@@ -170,9 +154,20 @@ class PaperVisualizer:
         ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         ax3.grid(True, alpha=0.3)
         
-        # 4번째 축은 사용하지 않음 (3개 플롯만 표시)
+        # 3. 모달리티별 분포 (Text vs Vibration) - 우하단
+        axes[1, 0].axis('off')
         ax4 = axes[1, 1]
-        ax4.axis('off')
+        for i, modality in enumerate(['Text', 'Vibration']):
+            mask = np.array(modality_labels) == modality
+            alpha = 0.7 if modality == 'Text' else 0.9
+            marker = 'o' if modality == 'Text' else 's'
+            color = self.colors['primary'] if modality == 'Text' else self.colors['secondary']
+            ax4.scatter(embeddings_2d[mask, 0], embeddings_2d[mask, 1],
+                        c=color, alpha=alpha, s=60, marker=marker,
+                        label=modality, edgecolors='white', linewidth=0.5)
+        ax4.set_title('Modality Distribution', fontweight='bold')
+        ax4.legend(frameon=True, fancybox=True, shadow=True)
+        ax4.grid(True, alpha=0.3)
         
         # 레이아웃 조정 및 저장
         plt.tight_layout()
