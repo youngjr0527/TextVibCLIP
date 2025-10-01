@@ -39,7 +39,8 @@ class ContinualTrainer:
                  domain_order: List[Union[int, str]] = None,
                  data_dir: Optional[str] = None,
                  dataset_type: str = 'uos',
-                 patience: Optional[int] = None):
+                 patience: Optional[int] = None,
+                 results_save_dir: Optional[str] = None):
         """
         Args:
             model: 사전 초기화된 모델
@@ -55,6 +56,10 @@ class ContinualTrainer:
         self.save_dir = save_dir
         self.max_grad_norm = max_grad_norm
         os.makedirs(save_dir, exist_ok=True)
+        # 결과 폴더 내 체크포인트 미러 저장소 (선택)
+        self.mirror_save_dir = results_save_dir
+        if self.mirror_save_dir:
+            os.makedirs(self.mirror_save_dir, exist_ok=True)
         
         # 모델 초기화 (데이터셋 타입 전달)
         if model is None:
@@ -184,6 +189,10 @@ class ContinualTrainer:
         # 체크포인트 저장
         checkpoint_path = os.path.join(self.save_dir, 'first_domain_final_v2.pth')
         self.model.save_checkpoint(checkpoint_path, num_epochs, optimizer.state_dict())
+        # 미러 저장
+        if self.mirror_save_dir:
+            mirror_path = os.path.join(self.mirror_save_dir, 'first_domain_final_v2.pth')
+            self.model.save_checkpoint(mirror_path, num_epochs, optimizer.state_dict())
         
         # 성능 평가
         domain_dataloaders = create_domain_dataloaders(
@@ -405,6 +414,9 @@ class ContinualTrainer:
                 # Best model 저장
                 checkpoint_path = os.path.join(self.save_dir, f'domain_{domain_value}_best_v2.pth')
                 self.model.save_checkpoint(checkpoint_path, epoch, optimizer.state_dict())
+                if self.mirror_save_dir:
+                    mirror_path = os.path.join(self.mirror_save_dir, f'domain_{domain_value}_best_v2.pth')
+                    self.model.save_checkpoint(mirror_path, epoch, optimizer.state_dict())
             else:
                 patience_counter += 1
                 

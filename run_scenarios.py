@@ -104,13 +104,14 @@ def run_single_scenario_v2(config: Dict, logger: logging.Logger, device: torch.d
     start_time = time.time()
     
     try:
-        # Trainer v2 생성
+        # Trainer v2 생성 (결과 폴더 내 체크포인트 미러 저장 경로 전달)
         trainer = ContinualTrainer(
             device=device,
             save_dir=f"checkpoints_v2/{config['name']}",
             domain_order=config['domain_order'],
             data_dir=config['data_dir'],
-            dataset_type=config['dataset_type']
+            dataset_type=config['dataset_type'],
+            results_save_dir=os.path.join(experiment_dir, 'checkpoints_v2', config['name'])
         )
         
         # 하이퍼파라미터 설정
