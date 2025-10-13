@@ -38,7 +38,9 @@
 
 ---
 
-## 🏗️ 시스템 아키텍처
+## 🏗️ 시스템 아키텍처 (논문 작성자용)
+
+### **전체 구조**
 
 ```
 Input:
@@ -56,6 +58,12 @@ Input:
          │                        │
          ▼                        ▼
 ┌─────────────────┐    ┌─────────────────┐
+│  Projection     │    │  Projection     │
+│  (2-layer MLP)  │    │  (2-layer MLP)  │
+└─────────────────┘    └─────────────────┘
+         │                        │
+         ▼                        ▼
+┌─────────────────┐    ┌─────────────────┐
 │   [256-dim]     │    │   [256-dim]     │
 │  진동 임베딩      │    │  텍스트 임베딩    │
 └─────────────────┘    └─────────────────┘
@@ -66,9 +74,69 @@ Input:
          │  Ranking Loss   │
          │   (Triplet)     │
          └─────────────────┘
+                    +
+         ┌─────────────────┐
+         │ Auxiliary Loss  │
+         │ (Classification)│
+         └─────────────────┘
 ```
 
-### Continual Learning 전략
+### **모델 컴포넌트 상세**
+
+#### **1. Vibration Encoder (1D-CNN)**
+```python
+Architecture:
+- Input: [batch, 2048] (raw vibration signal)
+- Conv1D layers: [64, 128, 256, 512] channels
+- Kernel sizes: [7, 5, 3, 3]
+- MaxPooling after each conv
+- Global Average Pooling
+- Output: [batch, 256] (vibration features)
+
+Total params: ~7M
+Learning: Full training (모든 도메인)
+```
+
+#### **2. Text Encoder (DistilBERT + LoRA)**
+```python
+Architecture:
+- Base: DistilBERT (66M params, frozen)
+- LoRA adapters: rank=8, alpha=16
+  - Query/Value matrices에만 적용
+  - Trainable params: ~0.3M
+- Output: [batch, 256] (text features)
+
+Total params: 66M (base) + 0.3M (LoRA)
+Learning: 
+  - Domain 1: LoRA fine-tuning
+  - Domain 2+: Freeze (LoRA 비활성화)
+```
+
+#### **3. Projection Layers**
+```python
+Both Text & Vib:
+- Linear(256, 256) + ReLU + Dropout(0.1)
+- Linear(256, 256) + LayerNorm
+- Output: [batch, 256] (normalized embeddings)
+
+Purpose: 공통 임베딩 공간으로 매핑
+Learning: 항상 학습 가능
+```
+
+#### **4. Auxiliary Classification Heads**
+```python
+Text Classifier:
+- Linear(256, num_classes)
+- Purpose: 텍스트 인코더 안정화
+
+Vib Classifier:
+- Linear(256, num_classes)
+- Purpose: 진동 인코더 안정화
+
+num_classes: 4 (CWRU), 7 (UOS)
+```
+
+### **Continual Learning 전략**
 - **Domain 1**: Text LoRA + Vibration 동시 학습
 - **Domain 2+**: Text freeze + Vibration adaptation + Replay buffer
 
@@ -212,25 +280,134 @@ diagnosis = candidate_descriptions[argmax(similarities)]
 
 ---
 
-## 🔧 기술적 세부사항
+## 🔧 기술적 세부사항 (논문 Methodology용)
 
-### Triplet Ranking Loss
-```python
-# Margin-based metric learning
-L_triplet = 1/N * Σ[
-    max(0, margin - sim(vib_i, text_same_class) + sim(vib_i, text_diff_class))
-]
+### **손실 함수 수식**
+
+#### **Triplet Ranking Loss**
+```
+L_triplet = 1/N * Σ_{i=1}^N max(0, m - sim(z_vib^i, z_text^+) + sim(z_vib^i, z_text^-))
+
+where:
+- z_vib^i: anchor (진동 임베딩)
+- z_text^+: positive (같은 클래스 텍스트 임베딩)
+- z_text^-: negative (다른 클래스 텍스트 임베딩)
+- m: margin (0.3)
+- sim(a, b) = cosine_similarity(a, b) = (a · b) / (||a|| ||b||)
 ```
 
-### 손실 함수 파라미터
-- **Margin**: 0.3 (같은 클래스와 다른 클래스 사이 분리 마진)
-- **Domain 1**: Ranking loss + Auxiliary loss (weight=2.0)
-- **Domain 2+**: Ranking loss + Auxiliary loss (weight=5.0, 빠른 적응)
+#### **Auxiliary Classification Loss**
+```
+L_aux = L_text + L_vib
 
-### 데이터 분할 (Domain-Incremental)
-- **모든 subset에 모든 클래스 포함**: `set(train_classes) == set(val_classes) == set(test_classes)`
-- **Stratified split**: 클래스 균형 유지
-- **파일 레벨 분할**: 데이터 누수 방지
+L_text = CrossEntropy(f_text(z_text), y)
+L_vib = CrossEntropy(f_vib(z_vib), y)
+
+where:
+- f_text, f_vib: 분류 헤드 (Linear layers)
+- y: ground truth labels
+```
+
+#### **Total Loss**
+```
+L_total = L_triplet + λ_aux * L_aux
+
+λ_aux = {
+    2.0  (First domain: 균형잡힌 학습)
+    5.0  (Remaining domains: 빠른 적응)
+}
+```
+
+### **Continual Learning Algorithm**
+
+```
+Algorithm: TextVibCLIP Continual Learning
+
+Input: 
+  - Domain sequence D = {D1, D2, ..., D6}
+  - Each Di = {(x_vib, x_text, y)}
+  
+Output:
+  - Model θ adapted to all domains
+  - Replay buffer R
+
+1. First Domain Training (D1):
+   θ_text ← LoRA fine-tune on D1
+   θ_vib ← Full training on D1
+   R ← ∅
+   Save: θ_D1
+
+2. For each remaining domain Di (i = 2, ..., 6):
+   a. Freeze θ_text (disable LoRA)
+   b. Sample R_replay from R
+   c. Train θ_vib on Di ∪ R_replay:
+      - Batch = 50% Di + 50% R_replay
+      - Loss = L_triplet + 5.0 * L_aux
+   d. Update R with samples from Di:
+      - Select top-k diverse samples
+      - R ← R ∪ samples_Di (max: 500 for UOS, 50 for CWRU)
+   e. Evaluate on all {D1, ..., Di}
+   f. Save: θ_Di
+
+3. Return θ, R
+```
+
+### **Retrieval Evaluation Algorithm**
+
+```
+Algorithm: Retrieval-based Classification
+
+Input:
+  - Test set T = {(x_vib, y)}
+  - Class prompts P = {P_0, P_1, ..., P_C}
+  - Each P_c = ["template1", "template2", "template3"]
+
+Output:
+  - Retrieval accuracy
+
+1. Generate text prototypes:
+   For each class c:
+     embeddings_c = [encode_text(p) for p in P_c]
+     prototype_c = mean(embeddings_c)
+     prototype_c = normalize(prototype_c)
+
+2. Classify test samples:
+   For each (x_vib, y) in T:
+     z_vib = encode_vibration(x_vib)
+     z_vib = normalize(z_vib)
+     
+     similarities = [cosine_sim(z_vib, prototype_c) for all c]
+     prediction = argmax(similarities)
+     
+     if prediction == y:
+       correct += 1
+
+3. Return accuracy = correct / |T|
+```
+
+### **데이터 분할 전략**
+
+#### **CWRU 파일 레벨 분할**
+```
+For each fault type (B, IR, OR):
+  - 3 bearings available
+  - Assign: bearing_1 → train, bearing_2 → val, bearing_3 → test
+  - Prevents same bearing in multiple subsets
+
+For Normal (H):
+  - Single bearing, multiple time segments
+  - Split by time: early → train, middle → val, late → test
+```
+
+#### **UOS 윈도우 레벨 분할**
+```
+For each class:
+  - Single file per class
+  - Extract overlapping windows
+  - Shuffle windows (seed=42)
+  - Split: 70% train, 15% val, 15% test
+  - Prevents temporal ordering memorization
+```
 
 ---
 
@@ -256,6 +433,248 @@ L_triplet = 1/N * Σ[
 - **일관성**: 모든 도메인에서 안정적 성능
 - **망각도**: 0.0% (효과적인 지식 보존)
 - **참고**: CWRU는 상대적으로 쉬운 태스크
+
+---
+
+## 🔬 **실험 파이프라인 상세 (논문 작성자용)**
+
+### **전체 실험 흐름**
+
+```
+python run_scenarios.py 실행
+    ↓
+1️⃣ First Domain Training (예: 600RPM 또는 0HP)
+    ├─ Text Encoder: LoRA fine-tuning (parameter-efficient)
+    ├─ Vibration Encoder: Full training
+    ├─ Loss: Triplet Ranking Loss + Auxiliary Classification Loss
+    ├─ 에포크: 15 epochs (UOS), 15 epochs (CWRU)
+    └─ 결과: first_domain_final.pth 저장
+    ↓
+2️⃣ Remaining Domains Training (예: 800~1600RPM 또는 1~3HP)
+    ├─ Text Encoder: Freeze (LoRA 비활성화)
+    ├─ Vibration Encoder: Full adaptation
+    ├─ Replay Buffer: 이전 도메인 샘플 500개 (UOS) / 50개 (CWRU) 저장
+    ├─ Loss: Triplet Ranking Loss + Auxiliary Loss (weight=5.0, 빠른 적응)
+    ├─ 에포크: 6 epochs per domain
+    └─ 결과: domain_{value}_best.pth 각각 저장
+    ↓
+3️⃣ Evaluation (모든 도메인)
+    ├─ 주 평가: Retrieval Accuracy (진동-텍스트 코사인 유사도)
+    ├─ 보조 평가: Text/Vib/Ensemble Accuracy
+    └─ Forgetting Score: 이전 도메인 성능 저하 측정
+    ↓
+4️⃣ 결과 저장
+    └─ results/{timestamp}/results_{timestamp}.json
+```
+
+### **1. First Domain Training (Foundation Learning)**
+
+**목적**: 진동-텍스트 멀티모달 임베딩 공간 구축
+
+**학습 대상**:
+- **Text Encoder**: DistilBERT + LoRA (rank=8)
+  - Base model: 66M params (freeze)
+  - LoRA adapters: ~0.3M params (trainable)
+  - 역할: 고장 유형의 의미론적 표현 학습
+  
+- **Vibration Encoder**: 1D-CNN
+  - 7M params (all trainable)
+  - 역할: 진동 신호의 특징 패턴 학습
+
+**손실 함수**:
+```python
+L_total = L_triplet + λ_aux * L_aux
+
+L_triplet = 1/N * Σ max(0, margin - sim(vib_i, text_same) + sim(vib_i, text_diff))
+L_aux = CrossEntropy(text_logits) + CrossEntropy(vib_logits)
+
+λ_aux = 2.0  # First domain에서는 균형잡힌 학습
+margin = 0.3  # Triplet margin
+```
+
+**최적화**:
+- Optimizer: AdamW
+- Learning rate: 1e-4 (UOS), 5e-5 (CWRU)
+- Weight decay: 1e-4
+- Gradient clipping: max_norm=0.1
+
+**데이터**:
+- Batch size: 8 (UOS), 4 (CWRU)
+- Epochs: 15
+- Early stopping: patience=8 (UOS), 5 (CWRU)
+
+### **2. Remaining Domains Training (Continual Adaptation)**
+
+**목적**: 새로운 운전 조건에 적응하면서 이전 지식 보존
+
+**Asymmetric Learning Strategy**:
+- **Text Encoder**: **완전 Freeze**
+  - LoRA 비활성화
+  - Projection layer만 최소 적응
+  - 이유: 고장 유형의 의미는 RPM/Load와 무관하게 일정
+  
+- **Vibration Encoder**: **Full Adaptation**
+  - 모든 파라미터 학습
+  - 이유: 진동 패턴은 운전 조건에 민감하게 변화
+
+**Replay Buffer Mechanism**:
+```python
+# 각 도메인 학습 후
+replay_buffer.add_samples(
+    embeddings,      # 진동 임베딩 저장
+    texts,           # 원본 텍스트 저장
+    labels,          # 라벨 저장
+    max_samples=500  # UOS: 500, CWRU: 50
+)
+
+# 다음 도메인 학습 시
+new_batch + replay_samples → model
+```
+
+**샘플 선택 전략**:
+- **다양성 기반**: 클래스별 균등 샘플링
+- **신뢰도 기반**: 높은 confidence 샘플 우선
+- **최신성 고려**: 최근 도메인 샘플 포함
+
+**손실 함수**:
+```python
+L_total = L_triplet + λ_aux * L_aux
+
+λ_aux = 5.0  # Continual에서는 빠른 적응을 위해 증가
+```
+
+**최적화**:
+- Learning rate: 5e-5 (UOS), 2e-5 (CWRU)
+- Epochs per domain: 6
+- Batch composition: 50% new domain + 50% replay samples
+
+### **3. Evaluation Protocol**
+
+**3.1 Retrieval Accuracy (주 평가 지표)**
+
+**평가 과정**:
+```python
+# Step 1: 텍스트 프로토타입 생성
+for each class:
+    texts = ["healthy bearing", "normal bearing", ...]  # 3개 템플릿
+    text_embeddings = text_encoder(texts)
+    prototype = mean(text_embeddings)  # 평균 임베딩
+
+# Step 2: 진동 신호 분류
+for each test_sample:
+    vib_embedding = vib_encoder(vibration_signal)
+    similarities = cosine_similarity(vib_embedding, all_prototypes)
+    prediction = argmax(similarities)
+
+# Step 3: 정확도 계산
+retrieval_accuracy = (predictions == ground_truth).mean()
+```
+
+**프롬프트 템플릿**:
+- **CWRU (4-클래스)**:
+  - Class 0: "healthy bearing", "normal bearing with no fault", "bearing vibration without defect"
+  - Class 1: "bearing with ball fault", "ball defect in bearing", "ball damage on bearing"
+  - Class 2: "bearing inner race fault", "inner ring defect in bearing", "inner race damage of bearing"
+  - Class 3: "bearing outer race fault", "outer ring defect in bearing", "outer race damage of bearing"
+
+- **UOS (7-클래스)**:
+  - Class 0: "healthy bearing", "normal bearing with no fault", "bearing vibration without defect"
+  - Class 1: "bearing with ball fault", "ball defect in bearing", "ball damage on bearing"
+  - Class 2: "bearing inner race fault", "inner ring defect in bearing", "inner race damage of bearing"
+  - Class 3: "bearing outer race fault", "outer ring defect in bearing", "outer race damage of bearing"
+  - Class 4: "mechanical looseness detected", "mechanical looseness fault", "looseness in mechanical system"
+  - Class 5: "rotor unbalance detected", "rotor imbalance fault", "unbalanced rotor condition"
+  - Class 6: "shaft misalignment detected", "shaft misalignment fault", "misaligned shaft condition"
+
+**중요**: 이 평가 방식이 `model.predict_best_match()` 함수의 실제 동작과 **완전히 일치**합니다.
+
+**3.2 보조 평가 지표**
+
+- **Text Accuracy**: 텍스트 분류 헤드 기반 (텍스트 인코더 성능 측정)
+- **Vib Accuracy**: 진동 분류 헤드 기반 (진동 인코더 성능 측정)
+- **Ensemble Accuracy**: `w * vib_acc + (1-w) * text_acc` (w는 학습된 가중치)
+
+**3.3 Forgetting Score**
+
+```python
+# 각 이전 도메인에 대해
+forgetting_i = max_accuracy_i - current_accuracy_i
+
+# 평균 forgetting
+average_forgetting = mean(forgetting_i for all previous domains)
+```
+
+### **4. 데이터 분할 전략 (Data Leakage 방지)**
+
+**CWRU 데이터셋**:
+- **파일 레벨 분할**: 같은 베어링의 다른 파일을 train/val/test로 분리
+- **전략**: B/IR/OR 결함은 서로 다른 베어링 할당, H 결함은 시간 기반 분할
+- **목적**: 같은 베어링의 연속 신호가 여러 subset에 들어가는 것 방지
+
+**UOS 데이터셋**:
+- **윈도우 레벨 랜덤 분할**: 각 클래스당 1개 파일이므로 윈도우를 랜덤 분할
+- **Shuffle**: 파일 순서 + 윈도우 순서 모두 랜덤화 (seed=42)
+- **목적**: 파일 순서나 윈도우 연속성을 모델이 암기하는 것 방지
+
+**공통**:
+- **Stratified split**: 클래스 균형 유지 (70% train, 15% val, 15% test)
+- **Window overlap**: 0.25 (CWRU), 0.25 (UOS) - 낮은 overlap으로 독립성 확보
+
+### **5. 하이퍼파라미터 요약 (논문 Table용)**
+
+| 항목 | UOS | CWRU | 설명 |
+|------|-----|------|------|
+| **First Domain Training** |
+| Epochs | 15 | 15 | Foundation learning |
+| Learning rate | 1e-4 | 5e-5 | CWRU는 작은 데이터로 낮은 LR |
+| Batch size | 8 | 4 | CWRU는 극소 데이터 대응 |
+| Aux loss weight (λ_aux) | 2.0 | 2.0 | 균형잡힌 학습 |
+| **Remaining Domains Training** |
+| Epochs per domain | 6 | 6 | 빠른 적응 |
+| Learning rate | 5e-5 | 2e-5 | Continual에서 더 낮은 LR |
+| Batch size | 8 | 4 | First domain과 동일 |
+| Aux loss weight (λ_aux) | 5.0 | 5.0 | 빠른 적응을 위해 증가 |
+| Replay buffer size | 500 | 50 | UOS는 더 많은 샘플 |
+| **공통 설정** |
+| Embedding dimension | 256 | 256 | 임베딩 공간 차원 |
+| Triplet margin | 0.3 | 0.3 | Ranking loss margin |
+| Weight decay | 1e-4 | 1e-4 | L2 regularization |
+| Gradient clipping | 0.1 | 0.1 | 안정적 학습 |
+| LoRA rank | 8 | 8 | Low-rank adaptation |
+| LoRA alpha | 16 | 16 | Scaling factor |
+
+### **6. 데이터셋 통계 (논문 Table용)**
+
+#### **UOS Dataset (Scenario 1: Varying Speed)**
+
+| Domain | RPM | Train | Val | Test | Total |
+|--------|-----|-------|-----|------|-------|
+| D1 | 600 | 1225 | 262 | 262 | 1749 |
+| D2 | 800 | 1225 | 262 | 262 | 1749 |
+| D3 | 1000 | 1225 | 262 | 262 | 1749 |
+| D4 | 1200 | 1225 | 262 | 262 | 1749 |
+| D5 | 1400 | 1225 | 262 | 262 | 1749 |
+| D6 | 1600 | 1225 | 262 | 262 | 1749 |
+| **Total** | - | **7350** | **1572** | **1572** | **10494** |
+
+- **Classes**: 7 (H, B, IR, OR, L, U, M)
+- **Bearing type**: Deep Groove Ball (6204) only
+- **Signal length**: 2048 samples
+- **Window overlap**: 0.25
+
+#### **CWRU Dataset (Scenario 2: Varying Load)**
+
+| Domain | Load | Train | Val | Test | Total |
+|--------|------|-------|-----|------|-------|
+| D1 | 0HP | 218 | 47 | 47 | 312 |
+| D2 | 1HP | 221 | 47 | 48 | 316 |
+| D3 | 2HP | 221 | 47 | 48 | 316 |
+| D4 | 3HP | 218 | 47 | 47 | 312 |
+| **Total** | - | **878** | **188** | **190** | **1256** |
+
+- **Classes**: 4 (Normal, B, IR, OR)
+- **Signal length**: 2048 samples
+- **Window overlap**: 0.25
 
 ---
 
