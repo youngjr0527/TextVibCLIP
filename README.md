@@ -420,22 +420,6 @@ For each class:
 
 ---
 
-## 📈 실험 결과 예시
-
-### UOS 시나리오 (Varying Speed, Deep Groove Ball)
-- **Retrieval Accuracy**: ~60-85% (7개 클래스, 실제 사용 방식 기준)
-- **Top5 성능**: ~80-90% (검색 관점에서 우수)
-- **망각도**: 0.0% (Replay buffer 효과)
-- **참고**: Vib/Text/Ensemble accuracy는 보조 지표로 제공
-
-### CWRU 시나리오 (Varying Load)
-- **Retrieval Accuracy**: ~90-100% (4개 클래스, 실제 사용 방식 기준)
-- **일관성**: 모든 도메인에서 안정적 성능
-- **망각도**: 0.0% (효과적인 지식 보존)
-- **참고**: CWRU는 상대적으로 쉬운 태스크
-
----
-
 ## 🔬 **실험 파이프라인 상세 (논문 작성자용)**
 
 ### **전체 실험 흐름**

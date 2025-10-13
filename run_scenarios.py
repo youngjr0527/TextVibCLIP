@@ -275,17 +275,26 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
                             class_protos.append(proto)
                         proto_mat = torch.cat(class_protos, dim=0)
 
-                        visualizer.create_similarity_diagnostics_plot(
-                            vib_embeddings=vib_emb,
-                            labels=labels,
-                            prompt_embeddings=proto_mat,
-                            domain_name=domain_name,
-                            save_name="similarity_diagnostics"
-                        )
+                        pass
                     except Exception as _e:
-                        logger.warning(f"유사도 진단 시각화 실패: {_e}")
+                        logger.warning(f"시각화 실패: {_e}")
         except Exception as viz_err:
             logger.warning(f"시각화 생성에 실패했습니다: {viz_err}")
+        
+        #  추가 시각화 생성
+        try:
+            logger.info("📊  시각화 생성 중...")
+            
+            # Continual Learning Performance Curve
+            visualizer.create_continual_learning_curve(
+                domain_names=config['domain_names'],
+                accuracies=remaining_results['final_metrics']['final_accuracies'],
+                scenario_name=config['name']
+            )
+            
+            logger.info("✅  시각화 생성 완료!")
+        except Exception as paper_viz_err:
+            logger.warning(f" 시각화 생성 실패: {paper_viz_err}")
         
         # 결과 정리
         final_metrics = remaining_results['final_metrics']

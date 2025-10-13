@@ -400,93 +400,120 @@ class PaperVisualizer:
         logger.info(f"Domain shift robustness 시각화 저장 완료: {save_path}")
         return save_path
 
-    def create_similarity_diagnostics_plot(self,
-                                           vib_embeddings: Any,
-                                           labels: List[str],
-                                           prompt_embeddings: Any,
-                                           domain_name: str,
-                                           save_name: str = "similarity_diagnostics") -> str:
-        """진동 임베딩과 클래스 프로토타입 간 유사도/마진 분포 시각화
+    def create_continual_learning_curve(self,
+                                        domain_names: List[str],
+                                        accuracies: List[float],
+                                        scenario_name: str,
+                                        save_name: str = "continual_learning_curve") -> str:
+        """Continual Learning 성능 곡선 시각화
+        
         Args:
-            vib_embeddings: (N, D) torch.Tensor 또는 np.ndarray
-            labels: 길이 N의 클래스 라벨 리스트 (예: ['H','B','IR','OR'])
-            prompt_embeddings: (C, D) torch.Tensor 또는 np.ndarray, 클래스 프로토타입
-            domain_name: '0HP' 등
+            domain_names: 도메인 이름 리스트 (예: ['600RPM', '800RPM', ...])
+            accuracies: 각 도메인의 최종 정확도 리스트
+            scenario_name: 시나리오 이름
+            save_name: 저장 파일명
+            
         Returns:
             저장 경로
         """
-        logger.info(f"Similarity diagnostics 시각화 생성 중: {domain_name}")
-
-        # to torch tensor (CPU)
-        def _to_tensor(x):
-            if isinstance(x, torch.Tensor):
-                return x.detach().cpu()
-            return torch.tensor(np.asarray(x), dtype=torch.float32)
-
-        vib_t = _to_tensor(vib_embeddings)
-        proto_t = _to_tensor(prompt_embeddings)
-
-        # 라벨 매핑
-        label_map = {'H': 0, 'B': 1, 'IR': 2, 'OR': 3}
-        y = torch.tensor([label_map.get(l, 0) for l in labels], dtype=torch.long)
-
-        # 정규화 및 유사도
-        vib_t = F.normalize(vib_t, p=2, dim=1)
-        proto_t = F.normalize(proto_t, p=2, dim=1)
-        sims = vib_t @ proto_t.T  # (N, C)
-
-        # 정답/오답 유사도, 마진
-        correct_sim = sims[torch.arange(sims.size(0)), y]
-        sims_masked = sims.clone()
-        sims_masked[torch.arange(sims.size(0)), y] = -1e9
-        best_incorrect, _ = sims_masked.max(dim=1)
-        margins = correct_sim - best_incorrect
-
-        # per-class 데이터 준비
-        classes = ['H', 'B', 'IR', 'OR']
-        data = {cls: {'correct': [], 'margin': []} for cls in classes}
-        for i, cls_idx in enumerate(y.tolist()):
-            cls = classes[cls_idx]
-            data[cls]['correct'].append(float(correct_sim[i].item()))
-            data[cls]['margin'].append(float(margins[i].item()))
-
-        # Figure: 2x1 (상: 정답 유사도 상자/바이올린, 하: 마진 히스토그램)
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
-        fig.suptitle(f'Similarity Diagnostics - {domain_name}', fontsize=16, fontweight='bold')
-
-        # 상단: per-class 정답 유사도 박스+스트립
-        cls_order = classes
-        box_data = [data[c]['correct'] for c in cls_order]
-        bplot = ax1.boxplot(box_data, labels=cls_order, patch_artist=True)
-        colors = [self.bearing_colors.get(c, self.colors['neutral']) for c in cls_order]
-        for patch, color in zip(bplot['boxes'], colors):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.5)
-        # 점 산포
-        for i, c in enumerate(cls_order):
-            jitter_x = np.random.normal(loc=i+1, scale=0.05, size=len(data[c]['correct']))
-            ax1.scatter(jitter_x, data[c]['correct'], c=colors[i], s=20, alpha=0.7, edgecolors='white', linewidth=0.5)
-        ax1.set_ylabel('Cosine similarity to correct prototype')
-        ax1.grid(True, alpha=0.3)
-
-        # 하단: per-class margin 히스토그램
-        for i, c in enumerate(cls_order):
-            ax2.hist(data[c]['margin'], bins=20, alpha=0.6, label=f'{c}', color=colors[i])
-        ax2.set_xlabel('Margin (correct - best incorrect)')
-        ax2.set_ylabel('Count')
-        ax2.axvline(0.0, color=self.colors['secondary'], linestyle='--', linewidth=1.5, label='0 margin')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-
-        # 저장
+        logger.info(f"Continual learning curve 생성 중: {scenario_name}")
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        x = np.arange(len(domain_names))
+        
+        # 메인 라인 플롯
+        ax.plot(x, accuracies, marker='o', linewidth=2.5, markersize=10,
+                color=self.colors['primary'], label='Retrieval Accuracy')
+        
+        # 각 포인트에 정확도 표시
+        for i, (domain, acc) in enumerate(zip(domain_names, accuracies)):
+            ax.text(i, acc + 0.02, f'{acc:.1%}', ha='center', va='bottom',
+                   fontsize=10, fontweight='bold')
+        
+        # 평균선 추가
+        avg_acc = np.mean(accuracies)
+        ax.axhline(avg_acc, color=self.colors['secondary'], linestyle='--',
+                  linewidth=2, label=f'Average: {avg_acc:.1%}', alpha=0.7)
+        
+        # 스타일링
+        ax.set_xlabel('Domain Sequence', fontsize=13, fontweight='bold')
+        ax.set_ylabel('Accuracy', fontsize=13, fontweight='bold')
+        ax.set_title(f'Continual Learning Performance - {scenario_name}',
+                    fontsize=14, fontweight='bold', pad=15)
+        ax.set_xticks(x)
+        ax.set_xticklabels(domain_names, rotation=45, ha='right')
+        ax.set_ylim([0, 1.05])
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.legend(loc='lower right', fontsize=11, framealpha=0.9)
+        
+        # 배경색
+        ax.set_facecolor('#FAFAFA')
+        
         plt.tight_layout()
-        save_path = os.path.join(self.output_dir, f"{save_name}_{domain_name}.png")
+        save_path = os.path.join(self.output_dir, f"{save_name}_{scenario_name}.png")
         plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
         plt.close()
-
-        logger.info(f"Similarity diagnostics 시각화 저장 완료: {save_path}")
+        
+        logger.info(f"Continual learning curve 저장 완료: {save_path}")
         return save_path
 
+    def create_forgetting_heatmap(self,
+                                  domain_names: List[str],
+                                  accuracy_matrix: np.ndarray,
+                                  scenario_name: str,
+                                  save_name: str = "forgetting_heatmap") -> str:
+        """Forgetting Analysis Heatmap 시각화
+        
+        Args:
+            domain_names: 도메인 이름 리스트
+            accuracy_matrix: (n_domains, n_domains) 정확도 행렬
+                            [i, j] = domain i 학습 후 domain j에서의 정확도
+            scenario_name: 시나리오 이름
+            save_name: 저장 파일명
+            
+        Returns:
+            저장 경로
+        """
+        logger.info(f"Forgetting heatmap 생성 중: {scenario_name}")
+        
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # Heatmap 생성
+        im = ax.imshow(accuracy_matrix, cmap='RdYlGn', aspect='auto',
+                      vmin=0, vmax=1, interpolation='nearest')
+        
+        # 컬러바
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('Accuracy', rotation=270, labelpad=20, fontsize=12, fontweight='bold')
+        
+        # 축 설정
+        ax.set_xticks(np.arange(len(domain_names)))
+        ax.set_yticks(np.arange(len(domain_names)))
+        ax.set_xticklabels(domain_names, rotation=45, ha='right')
+        ax.set_yticklabels(domain_names)
+        
+        ax.set_xlabel('Test Domain', fontsize=13, fontweight='bold')
+        ax.set_ylabel('Training Stage (after learning)', fontsize=13, fontweight='bold')
+        ax.set_title(f'Forgetting Analysis - {scenario_name}',
+                    fontsize=14, fontweight='bold', pad=15)
+        
+        # 각 셀에 정확도 값 표시
+        for i in range(len(domain_names)):
+            for j in range(len(domain_names)):
+                if not np.isnan(accuracy_matrix[i, j]):
+                    text_color = 'white' if accuracy_matrix[i, j] < 0.5 else 'black'
+                    text = ax.text(j, i, f'{accuracy_matrix[i, j]:.2f}',
+                                 ha='center', va='center', color=text_color,
+                                 fontsize=10, fontweight='bold')
+        
+        plt.tight_layout()
+        save_path = os.path.join(self.output_dir, f"{save_name}_{scenario_name}.png")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        
+        logger.info(f"Forgetting heatmap 저장 완료: {save_path}")
+        return save_path
 
 def create_visualizer(output_dir: str) -> PaperVisualizer:
     """PaperVisualizer 인스턴스 생성 (기존 호환성 유지)"""

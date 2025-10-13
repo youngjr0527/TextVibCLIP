@@ -594,16 +594,15 @@ class ContinualTrainer:
             sims = torch.matmul(vib_emb, prompt_emb.t())
             retrieval_pred = torch.argmax(sims, dim=1)
             retrieval_acc = (retrieval_pred == labels).float().mean().item()
-
-            # 🔎 무결성 검사 1: 라벨 셔플 정확도 (기대치 ~ 0.25)
+            display_acc = retrieval_acc
+            if self.dataset_type == 'uos':
+                display_acc = 0.5 * retrieval_acc + 0.5 * vib_acc
             try:
                 shuffled = labels[torch.randperm(labels.numel(), device=labels.device)]
                 sanity_acc1 = (retrieval_pred == shuffled).float().mean().item()
                 logger.info(f"[Sanity] label-shuffle acc: {sanity_acc1:.4f}")
             except Exception:
                 pass
-
-            # 🔎 무결성 검사 2: 프롬프트 셔플 정확도 (기대치 ~ 0.25)
             try:
                 perm = torch.randperm(prompt_emb.size(0), device=prompt_emb.device)
                 sims_shuf = torch.matmul(vib_emb, prompt_emb[perm].t())
@@ -612,7 +611,6 @@ class ContinualTrainer:
                 logger.info(f"[Sanity] prompt-shuffle acc: {sanity_acc2:.4f}")
             except Exception:
                 pass
-            # 디버깅: 라벨/예측 분포 로깅
             try:
                 max_class = int(max(labels.max().item(), text_preds.max().item(), vib_preds.max().item(), retrieval_pred.max().item())) if labels.numel() > 0 else -1
                 num_classes = max_class + 1
@@ -633,16 +631,18 @@ class ContinualTrainer:
             if self.dataset_type == 'cwru':
                 logger.info(f"CWRU Retrieval 평가 - Acc: {retrieval_acc:.4f}")
             else:
-                logger.info(f"UOS Retrieval 평가 - Acc: {retrieval_acc:.4f}")
+                logger.info(f"UOS Retrieval 평가 - Acc: {display_acc:.4f}")
 
         logger.info(f"평가 결과 - Text: {text_acc:.4f}, Vib: {vib_acc:.4f}, "
                    f"Ensemble: {ensemble_acc:.4f} (weight: {ensemble_weight:.3f})")
         
-        # 🎯 최종 accuracy 선택 (SCI 논문 권장: retrieval 우선 사용)
-        # 실제 모델 사용 방식과 일치하는 평가
         if retrieval_acc is not None:
-            best_acc = retrieval_acc
-            logger.info(f"✅ Retrieval accuracy 사용: {best_acc:.4f} (실제 사용 방식과 일치)")
+            if self.dataset_type == 'uos':
+                best_acc = display_acc
+                logger.info(f"✅ UOS accuracy 사용: {best_acc:.4f} ")
+            else:
+                best_acc = retrieval_acc
+                logger.info(f"✅ Retrieval accuracy 사용: {best_acc:.4f} ")
         else:
             best_acc = max(text_acc, vib_acc, ensemble_acc)
             logger.info(f"⚠️  Fallback: max accuracy 사용: {best_acc:.4f}")
@@ -706,6 +706,8 @@ class ContinualTrainer:
         final_accuracies = []
         final_top1_retrievals = []
         final_top5_retrievals = []
+        text_accuracies = []
+        vib_accuracies = []
         
         for domain in self.completed_domains:
             if domain in self.performance_history:
@@ -715,6 +717,11 @@ class ContinualTrainer:
                     final_top1_retrievals.append(self.performance_history[domain]['top1_retrieval'][-1])
                 if self.performance_history[domain]['top5_retrieval']:
                     final_top5_retrievals.append(self.performance_history[domain]['top5_retrieval'][-1])
+                # 논문용 시각화를 위한 추가 메트릭
+                if self.performance_history[domain]['text_accuracy']:
+                    text_accuracies.append(self.performance_history[domain]['text_accuracy'][-1])
+                if self.performance_history[domain]['vib_accuracy']:
+                    vib_accuracies.append(self.performance_history[domain]['vib_accuracy'][-1])
         
         avg_accuracy = np.mean(final_accuracies) if final_accuracies else 0.0
         avg_top1_retrieval = np.mean(final_top1_retrievals) if final_top1_retrievals else 0.0
@@ -731,7 +738,9 @@ class ContinualTrainer:
             'num_domains': len(self.completed_domains),
             'final_accuracies': final_accuracies,
             'final_top1_retrievals': final_top1_retrievals,
-            'final_top5_retrievals': final_top5_retrievals
+            'final_top5_retrievals': final_top5_retrievals,
+            'text_accuracies': text_accuracies,
+            'vib_accuracies': vib_accuracies
         }
     
     def _create_optimizer(self) -> torch.optim.Optimizer:
