@@ -319,6 +319,13 @@ class CachedBearingDataset(torch.utils.data.Dataset):
         self.file_paths = self.cached_data['file_paths']
         self.metadata_list = self.cached_data['metadata_list']
         
+        # 🎯 Window-level 완전 랜덤화 (파일 경계 제거, 파일 암기 방지)
+        # 모든 subset을 shuffle (고정 시드로 재현성 유지)
+        import random
+        rng = random.Random(42 + hash(f"{dataset_type}_{domain_value}_{subset}") % 1000)
+        rng.shuffle(self.samples)
+        logger.info(f"  🔀 Samples shuffled (파일 경계 제거, 파일 암기 방지)")
+        
         # 속성 설정
         self.dataset_type = dataset_type
         self.domain_value = domain_value

@@ -193,7 +193,7 @@ class TextVibCLIP(nn.Module):
                 nn.Linear(hidden_dim, num_classes)
             )
         
-        logger.info(f"TextVibCLIP v2 초기화 완료: {domain_stage} stage")
+        logger.info(f"TextVibCLIP 초기화 완료: {domain_stage} stage")
     
     def forward(self, 
                 batch: Dict[str, Union[torch.Tensor, List[str]]],

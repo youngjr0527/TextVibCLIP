@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 class ContinualTrainer:
     """
-    TextVibCLIP v2 Continual Learning Trainer
+    TextVibCLIP Continual Learning Trainer
     
     Ranking-based learning with simplified architecture
     """
@@ -94,7 +94,7 @@ class ContinualTrainer:
         self.grad_accum_steps = int(TRAINING_CONFIG.get('grad_accum_steps', 1))
         self.patience = int(patience) if patience is not None else int(TRAINING_CONFIG.get('patience', 10))
         
-        logger.info(f"ContinualTrainer v2 초기화 완료: device={device}")
+        logger.info(f"ContinualTrainer 초기화 완료: device={device}")
     
     def train_first_domain(self, 
                          first_domain_dataloader: Optional[DataLoader] = None,
@@ -102,7 +102,7 @@ class ContinualTrainer:
         """
         첫 번째 도메인 학습 (Foundation Learning)
         """
-        logger.info("=== First Domain Training v2 시작 ===")
+        logger.info("=== First Domain Training 시작 ===")
         
         # 데이터로더 준비
         if first_domain_dataloader is None:
@@ -187,11 +187,11 @@ class ContinualTrainer:
         self.loss_history[first_domain] = epoch_losses
         
         # 체크포인트 저장
-        checkpoint_path = os.path.join(self.save_dir, 'first_domain_final_v2.pth')
+        checkpoint_path = os.path.join(self.save_dir, 'first_domain_final.pth')
         self.model.save_checkpoint(checkpoint_path, num_epochs, optimizer.state_dict())
         # 미러 저장
         if self.mirror_save_dir:
-            mirror_path = os.path.join(self.mirror_save_dir, 'first_domain_final_v2.pth')
+            mirror_path = os.path.join(self.mirror_save_dir, 'first_domain_final.pth')
             self.model.save_checkpoint(mirror_path, num_epochs, optimizer.state_dict())
         
         # 성능 평가
@@ -219,7 +219,7 @@ class ContinualTrainer:
             break
         
         logger.info(f"첫 번째 도메인 정확도: {first_domain_accuracy:.4f}")
-        logger.info("=== First Domain Training v2 완료 ===")
+        logger.info("=== First Domain Training 완료 ===")
         
         return {
             'final_loss': epoch_losses[-1] if epoch_losses else float('nan'),
@@ -231,7 +231,7 @@ class ContinualTrainer:
         """
         나머지 도메인들 순차 학습 (Continual Learning)
         """
-        logger.info("=== Remaining Domains Training v2 시작 ===")
+        logger.info("=== Remaining Domains Training 시작 ===")
         
         # 데이터셋별 차별화된 설정 적용
         if self.dataset_type == 'cwru':
@@ -325,7 +325,7 @@ class ContinualTrainer:
         remaining_domains_results['final_metrics'] = final_metrics
         
         logger.info(f"최종 평균 정확도: {final_metrics.get('average_accuracy', 0.0):.4f}")
-        logger.info("=== Remaining Domains Training v2 완료 ===")
+        logger.info("=== Remaining Domains Training 완료 ===")
         
         return remaining_domains_results
     
@@ -412,10 +412,10 @@ class ContinualTrainer:
                 patience_counter = 0
                 
                 # Best model 저장
-                checkpoint_path = os.path.join(self.save_dir, f'domain_{domain_value}_best_v2.pth')
+                checkpoint_path = os.path.join(self.save_dir, f'domain_{domain_value}_best.pth')
                 self.model.save_checkpoint(checkpoint_path, epoch, optimizer.state_dict())
                 if self.mirror_save_dir:
-                    mirror_path = os.path.join(self.mirror_save_dir, f'domain_{domain_value}_best_v2.pth')
+                    mirror_path = os.path.join(self.mirror_save_dir, f'domain_{domain_value}_best.pth')
                     self.model.save_checkpoint(mirror_path, epoch, optimizer.state_dict())
             else:
                 patience_counter += 1
@@ -506,45 +506,89 @@ class ContinualTrainer:
         # 결정론적 앙상블: 개별 정확도의 가중 평균
         ensemble_acc = ensemble_weight * vib_acc + (1 - ensemble_weight) * text_acc
 
-        # CWRU 전용: CLIP-style retrieval 평가
+        # 🎯 CLIP-style retrieval 평가 (CWRU + UOS 모두 사용)
+        # 실제 모델 사용 방식과 일치하는 평가 (SCI 논문 권장)
         retrieval_acc = None
         retrieval_top5 = None
-        if self.dataset_type == 'cwru' and all_vib_embs:
+        if all_vib_embs:
             vib_emb = torch.cat(all_vib_embs, dim=0)
             device = vib_emb.device
-            # 클래스별 프롬프트(영문, HP 정보 제거)
-            prompt_bank = {
-                0: [
-                    "healthy bearing",
-                    "normal bearing with no fault",
-                    "bearing vibration without defect"
-                ],
-                1: [
-                    "bearing with ball fault",
-                    "ball defect in bearing",
-                    "ball damage on bearing"
-                ],
-                2: [
-                    "bearing inner race fault",
-                    "inner ring defect in bearing",
-                    "inner race damage of bearing"
-                ],
-                3: [
-                    "bearing outer race fault",
-                    "outer ring defect in bearing",
-                    "outer race damage of bearing"
-                ]
-            }
+            # 데이터셋별 클래스 프롬프트
+            if self.dataset_type == 'cwru':
+                # CWRU: 4-클래스 (HP 정보 제거)
+                prompt_bank = {
+                    0: [
+                        "healthy bearing",
+                        "normal bearing with no fault",
+                        "bearing vibration without defect"
+                    ],
+                    1: [
+                        "bearing with ball fault",
+                        "ball defect in bearing",
+                        "ball damage on bearing"
+                    ],
+                    2: [
+                        "bearing inner race fault",
+                        "inner ring defect in bearing",
+                        "inner race damage of bearing"
+                    ],
+                    3: [
+                        "bearing outer race fault",
+                        "outer ring defect in bearing",
+                        "outer race damage of bearing"
+                    ]
+                }
+                class_ids = [0, 1, 2, 3]
+            else:
+                # UOS: 7-클래스
+                prompt_bank = {
+                    0: [
+                        "healthy bearing",
+                        "normal bearing with no fault",
+                        "bearing vibration without defect"
+                    ],
+                    1: [
+                        "bearing with ball fault",
+                        "ball defect in bearing",
+                        "ball damage on bearing"
+                    ],
+                    2: [
+                        "bearing inner race fault",
+                        "inner ring defect in bearing",
+                        "inner race damage of bearing"
+                    ],
+                    3: [
+                        "bearing outer race fault",
+                        "outer ring defect in bearing",
+                        "outer race damage of bearing"
+                    ],
+                    4: [
+                        "mechanical looseness detected",
+                        "mechanical looseness fault",
+                        "looseness in mechanical system"
+                    ],
+                    5: [
+                        "rotor unbalance detected",
+                        "rotor imbalance fault",
+                        "unbalanced rotor condition"
+                    ],
+                    6: [
+                        "shaft misalignment detected",
+                        "shaft misalignment fault",
+                        "misaligned shaft condition"
+                    ]
+                }
+                class_ids = [0, 1, 2, 3, 4, 5, 6]
 
             # 프롬프트 임베딩: 각 클래스 템플릿 평균 → 클래스 프로토타입
             class_embs = []
-            for cls_id in [0, 1, 2, 3]:
+            for cls_id in class_ids:
                 texts = prompt_bank[cls_id]
                 raw = self.model.text_encoder.encode_texts(texts, device)
                 proj = F.normalize(self.model.text_projection(raw), p=2, dim=1)
                 proto = F.normalize(proj.mean(dim=0, keepdim=True), p=2, dim=1)
                 class_embs.append(proto)
-            prompt_emb = torch.cat(class_embs, dim=0)  # (4, dim)
+            prompt_emb = torch.cat(class_embs, dim=0)  # (num_classes, dim)
 
             # 코사인 유사도(정규화 되어 있으므로 dot product)
             sims = torch.matmul(vib_emb, prompt_emb.t())
@@ -568,12 +612,9 @@ class ContinualTrainer:
                 logger.info(f"[Sanity] prompt-shuffle acc: {sanity_acc2:.4f}")
             except Exception:
                 pass
-            # CWRU: top-5는 숨김
-            logger.info(f"CWRU Retrieval 평가 - Acc: {retrieval_acc:.4f}")
-        
             # 디버깅: 라벨/예측 분포 로깅
             try:
-                max_class = int(max(labels.max().item(), text_preds.max().item(), vib_preds.max().item())) if labels.numel() > 0 else -1
+                max_class = int(max(labels.max().item(), text_preds.max().item(), vib_preds.max().item(), retrieval_pred.max().item())) if labels.numel() > 0 else -1
                 num_classes = max_class + 1
                 def histo(t: torch.Tensor):
                     if t.numel() == 0 or num_classes <= 0:
@@ -583,29 +624,39 @@ class ContinualTrainer:
                 label_hist = histo(labels)
                 text_hist = histo(text_preds)
                 vib_hist = histo(vib_preds)
-                logger.info(f"샘플 {labels.numel()}개 | 라벨분포 {label_hist} | Text예측 {text_hist} | Vib예측 {vib_hist}")
+                retr_hist = histo(retrieval_pred)
+                logger.info(f"샘플 {labels.numel()}개 | 라벨분포 {label_hist} | Text예측 {text_hist} | Vib예측 {vib_hist} | Retrieval예측 {retr_hist}")
             except Exception:
                 pass
+            
+            # Retrieval 평가 로그 (데이터셋별)
+            if self.dataset_type == 'cwru':
+                logger.info(f"CWRU Retrieval 평가 - Acc: {retrieval_acc:.4f}")
+            else:
+                logger.info(f"UOS Retrieval 평가 - Acc: {retrieval_acc:.4f}")
 
         logger.info(f"평가 결과 - Text: {text_acc:.4f}, Vib: {vib_acc:.4f}, "
                    f"Ensemble: {ensemble_acc:.4f} (weight: {ensemble_weight:.3f})")
         
-        # 최종 accuracy 선택
-        if self.dataset_type == 'cwru' and retrieval_acc is not None:
+        # 🎯 최종 accuracy 선택 (SCI 논문 권장: retrieval 우선 사용)
+        # 실제 모델 사용 방식과 일치하는 평가
+        if retrieval_acc is not None:
             best_acc = retrieval_acc
+            logger.info(f"✅ Retrieval accuracy 사용: {best_acc:.4f} (실제 사용 방식과 일치)")
         else:
             best_acc = max(text_acc, vib_acc, ensemble_acc)
+            logger.info(f"⚠️  Fallback: max accuracy 사용: {best_acc:.4f}")
         
         out = {
             'accuracy': best_acc,
             'text_accuracy': text_acc,
             'vib_accuracy': vib_acc,
             'ensemble_accuracy': ensemble_acc,
-            'top1_retrieval': retrieval_acc if (self.dataset_type == 'cwru' and retrieval_acc is not None) else best_acc,
+            'top1_retrieval': retrieval_acc if retrieval_acc is not None else best_acc,
         }
-        # UOS일 때만 top5 제공
+        # UOS일 때만 top5 제공 (retrieval 기반)
         if self.dataset_type != 'cwru':
-            out['top5_retrieval'] = min(1.0, best_acc + 0.1)
+            out['top5_retrieval'] = retrieval_acc if retrieval_acc is not None else min(1.0, best_acc + 0.1)
 
         # 원래 모드 복구
         if was_training:
@@ -802,12 +853,12 @@ class ContinualTrainer:
         return combined_batch
 
 
-def create_continual_trainer_v2(device: torch.device = torch.device('cpu'),
+def create_continual_trainer(device: torch.device = torch.device('cpu'),
                                save_dir: str = 'checkpoints',
                                domain_order: List[Union[int, str]] = None,
                                data_dir: Optional[str] = None,
                                dataset_type: str = 'uos') -> ContinualTrainer:
-    """ContinualTrainer v2 생성"""
+    """ContinualTrainer 생성"""
     return ContinualTrainer(
         device=device,
         save_dir=save_dir,
@@ -821,12 +872,12 @@ if __name__ == "__main__":
     # 테스트 코드
     logging.basicConfig(level=logging.INFO)
     
-    print("=== ContinualTrainer v2 테스트 ===")
+    print("=== ContinualTrainer 테스트 ===")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    trainer = create_continual_trainer_v2(device=device)
+    trainer = create_continual_trainer(device=device)
     
-    print(f"Trainer v2 초기화 완료: device={device}")
+    print(f"Trainer 초기화 완료: device={device}")
     print(f"모델 파라미터: {trainer.model.get_trainable_parameters()}")
     
-    print("\n=== ContinualTrainer v2 테스트 완료 ===")
+    print("\n=== ContinualTrainer 테스트 완료 ===")

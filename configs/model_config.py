@@ -213,7 +213,7 @@ DATA_CONFIG = {
     # 데이터 전처리 (베어링 회전 주기 최적화)
     'signal_normalization': 'standardize',  # 'standardize', 'minmax', 'none'
     'window_size': 2048,  # 4096 → 2048 (1-5 회전 포함, 효율적 결함 감지)
-    'overlap_ratio': 0.5,
+    'overlap_ratio': 0.25,  # 0.5 → 0.25 (leakage 최소화, 일반화 강화)
     
     # 텍스트 생성
     'max_text_length': 128,
@@ -230,7 +230,7 @@ CWRU_DATA_CONFIG = {
     # 데이터 전처리 (UOS와 통일 유지)
     'signal_normalization': 'standardize',
     'window_size': 2048,  # UOS와 동일 (아키텍처 일관성)
-    'overlap_ratio': 0.6,  # 0.8 → 0.6 (중복 감소로 일반화 유도)
+    'overlap_ratio': 0.25,  # 0.6 → 0.25 (leakage 최소화, 일반화 강화)
     
     # 텍스트 생성
     'max_text_length': 128,

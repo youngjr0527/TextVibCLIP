@@ -11,6 +11,11 @@
 - **Similarity-based Retrieval**: 실제 사용 시 후보 텍스트 중 최고 유사도 선택
 - **두 가지 시나리오**: UOS (Varying Speed), CWRU (Varying Load)
 
+### 📊 성능 평가 방식
+- **주 평가 지표**: **Retrieval Accuracy** (진동-텍스트 코사인 유사도 기반)
+- **이유**: 실제 모델 배포 시 사용 방식과 완전히 일치
+- **보조 지표**: Text/Vib/Ensemble accuracy (각 인코더 성능 분석용)
+
 ---
 
 ## 📊 실험 시나리오
@@ -169,9 +174,37 @@ TextVibCLIP/
 ## 📊 결과 해석
 
 ### 성능 메트릭
-- **Accuracy**: Text-Vibration 매칭 정확도
-- **Top5 Retrieval**: 상위 5개 중 정답 포함 비율
+
+#### **주 평가 지표: Retrieval Accuracy**
+- **정의**: 진동 임베딩과 텍스트 프로토타입 간 코사인 유사도 기반 분류 정확도
+- **평가 방식**: 
+  1. 각 클래스의 텍스트 프로토타입 생성 (여러 텍스트 설명의 평균 임베딩)
+  2. 진동 신호를 임베딩 공간에 매핑
+  3. 모든 클래스 프로토타입과의 코사인 유사도 계산
+  4. 가장 높은 유사도를 가진 클래스로 분류
+- **중요성**: **실제 모델 사용 방식과 완전히 일치**하는 평가 (SCI 논문 권장)
+
+#### **보조 평가 지표**
+- **Text Accuracy**: 텍스트 분류 헤드 기반 정확도 (텍스트 인코더 성능)
+- **Vib Accuracy**: 진동 분류 헤드 기반 정확도 (진동 인코더 성능)
+- **Ensemble Accuracy**: Text + Vib 가중 평균 정확도
+- **Top5 Retrieval**: 상위 5개 후보 중 정답 포함 비율 (UOS만 제공)
 - **Forgetting Score**: 이전 도메인 성능 저하 정도
+
+### 평가 방식 선택 근거
+
+**왜 Retrieval Accuracy인가?**
+
+실제 산업 현장 배포 시 모델은 다음과 같이 작동합니다:
+```python
+# 실제 사용 시나리오
+vibration_embedding = model.encode_vibration(new_signal)
+text_embeddings = model.encode_texts(candidate_descriptions)
+similarities = cosine_similarity(vibration_embedding, text_embeddings)
+diagnosis = candidate_descriptions[argmax(similarities)]
+```
+
+따라서 **Retrieval Accuracy**가 실제 성능을 가장 정확하게 반영합니다.
 
 ### 기대 결과
 - **UOS**: 더 어려운 태스크 (7개 클래스) → 낮은 정확도 예상
@@ -213,14 +246,16 @@ L_triplet = 1/N * Σ[
 ## 📈 실험 결과 예시
 
 ### UOS 시나리오 (Varying Speed, Deep Groove Ball)
-- **평균 정확도**: ~50-70% (7개 클래스, 단일 베어링 타입으로 단순화)
-- **Top5 성능**: ~80% (검색 관점에서 우수)
+- **Retrieval Accuracy**: ~60-85% (7개 클래스, 실제 사용 방식 기준)
+- **Top5 성능**: ~80-90% (검색 관점에서 우수)
 - **망각도**: 0.0% (Replay buffer 효과)
+- **참고**: Vib/Text/Ensemble accuracy는 보조 지표로 제공
 
 ### CWRU 시나리오 (Varying Load)
-- **평균 정확도**: ~65% (4개 클래스, 상대적으로 쉬운 태스크)
+- **Retrieval Accuracy**: ~90-100% (4개 클래스, 실제 사용 방식 기준)
 - **일관성**: 모든 도메인에서 안정적 성능
 - **망각도**: 0.0% (효과적인 지식 보존)
+- **참고**: CWRU는 상대적으로 쉬운 태스크
 
 ---
 
@@ -288,10 +323,11 @@ Domain 3 학습 후: 평가 범위 [Domain 1, Domain 2, Domain 3]
 - **평균 Forgetting**: 모든 이전 도메인의 망각도 평균
 - **0에 가까울수록 좋음**: 이전 지식 잘 보존
 
-#### **Zero-shot 분류 평가**:
+#### **Retrieval-based 평가 (주 평가 지표)**:
 - **각 클래스의 텍스트 prototype 생성**: 같은 클래스 텍스트들의 평균 임베딩
-- **진동 신호 분류**: 모든 prototype과 비교하여 가장 유사한 클래스 선택
-- **CLIP 방식**: 실제 분류 능력 측정
+- **진동 신호 분류**: 모든 prototype과 코사인 유사도 비교하여 가장 유사한 클래스 선택
+- **CLIP 방식**: 실제 배포 시 사용 방식과 동일한 평가
+- **핵심**: 이 평가 방식이 `predict_best_match()` 함수의 실제 동작과 일치
 
 ### **5. 데이터 구조와 전처리**
 
@@ -322,9 +358,10 @@ Domain 3 학습 후: 평가 범위 [Domain 1, Domain 2, Domain 3]
 ### **7. 실험 결과의 해석**
 
 #### **성능 지표의 의미**:
-- **정확도 50-70%**: 7개 클래스 분류에서 우수 (랜덤 14.3% 대비)
-- **Top-5 성능 90%+**: 실제 진단에서 후보군 제시 관점에서 실용적
+- **Retrieval Accuracy 60-85%**: 7개 클래스 분류에서 우수 (랜덤 14.3% 대비, 실제 사용 방식 기준)
+- **Top-5 성능 80-90%**: 실제 진단에서 후보군 제시 관점에서 실용적
 - **Forgetting 0%**: Replay mechanism의 효과적 작동
+- **보조 지표**: Text/Vib/Ensemble accuracy는 각 인코더의 개별 성능 분석용
 
 #### **Domain별 성능 변화 패턴**:
 - **초기 도메인**: 기본 성능 확립

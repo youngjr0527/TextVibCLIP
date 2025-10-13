@@ -50,36 +50,102 @@ def _split_indices(n: int, ratios: tuple) -> tuple:
     return i1, i2
 
 
-def _preferred_file_for_class(load_files: dict, load: str, fault_type: str) -> str:
-    """도메인(load)×클래스에서 대표 원본 파일 1개 선택.
-    - H: 해당 load의 첫 파일
-    - B/IR: 사이즈 선호도 021→014→007→028
-    - OR: 위치 선호도 @6→@3→@12, 그다음 임의
+def _select_bearings_for_splits(all_files: dict, load: str, fault_type: str) -> dict:
     """
-    if load not in load_files:
+    각 클래스별로 train/val/test용 파일 선택
+    
+    전략:
+    - H: 1개 베어링만 존재 → 시간순 3분할 (기존 유지)
+    - B/IR/OR: Load별 순환 할당 (같은 fault size, 다른 load의 베어링)
+      * Load 0: 베어링[0] train, 베어링[1] val, 베어링[2] test
+      * Load 1: 베어링[1] train, 베어링[2] val, 베어링[3] test
+      * Load 2: 베어링[2] train, 베어링[3] val, 베어링[0] test
+      * Load 3: 베어링[3] train, 베어링[0] val, 베어링[1] test
+    
+    Returns:
+        {'train': filepath, 'val': filepath, 'test': filepath} 
+        또는 {'split_single': filepath} (H의 경우)
+    """
+    if load not in all_files[fault_type]:
         return None
-    candidates = []
-    for _, files in load_files[load].items():
-        candidates.extend(files)
-    if not candidates:
-        return None
+        
+    # H (Normal): 베어링 1개만 → 시간순 3분할
     if fault_type == 'H':
-        return sorted(candidates)[0]
+        candidates = []
+        for exp_num, files in all_files[fault_type][load].items():
+            candidates.extend(files)
+        if candidates:
+            return {'split_single': sorted(candidates)[0]}
+        return None
+    
+    # B/IR/OR: 순환 할당 전략
+    # 선호 fault size 결정
     if fault_type in ['B', 'IR']:
-        size_pref = ['021', '014', '007', '028']
-        for sz in size_pref:
-            for f in sorted(candidates):
-                if f"/{sz}/" in f.replace('\\', '/'):
-                    return f
-        return sorted(candidates)[0]
-    if fault_type == 'OR':
-        pos_pref = ['@6', '@3', '@12']
-        for pos in pos_pref:
-            for f in sorted(candidates):
-                if pos in os.path.basename(f):
-                    return f
-        return sorted(candidates)[0]
-    return sorted(candidates)[0]
+        preferred_size = '021'  # 중간 크기
+    else:  # OR
+        preferred_size = '007'  # 작은 크기 (@6 위치)
+    
+    # 모든 load의 해당 size 베어링 수집
+    all_bearings = {}  # {bearing_num: {load: filepath}}
+    for ld in ['0', '1', '2', '3']:
+        if ld not in all_files[fault_type]:
+            continue
+        for exp_num, files in all_files[fault_type][ld].items():
+            for f in files:
+                match = False
+                if fault_type == 'OR':
+                    match = f"/{preferred_size}/" in f.replace('\\', '/') and "@6" in os.path.basename(f)
+                else:
+                    match = f"/{preferred_size}/" in f.replace('\\', '/')
+                
+                if match:
+                    if exp_num not in all_bearings:
+                        all_bearings[exp_num] = {}
+                    all_bearings[exp_num][ld] = f
+    
+    # 각 load에 대응하는 베어링 리스트
+    sorted_bearings = sorted(all_bearings.keys())
+    if len(sorted_bearings) < 3:
+        # 베어링이 3개 미만이면 fallback
+        if load in all_files[fault_type]:
+            candidates = []
+            for exp_num, files in all_files[fault_type][load].items():
+                candidates.extend(files)
+            if candidates:
+                return {'split_single': sorted(candidates)[0]}
+        return None
+    
+    # 순환 할당: load 인덱스에 따라 offset
+    load_idx = int(load)
+    train_idx = load_idx % len(sorted_bearings)
+    val_idx = (load_idx + 1) % len(sorted_bearings)
+    test_idx = (load_idx + 2) % len(sorted_bearings)
+    
+    train_bearing = sorted_bearings[train_idx]
+    val_bearing = sorted_bearings[val_idx]
+    test_bearing = sorted_bearings[test_idx]
+    
+    # 각 베어링의 해당 load 파일 선택
+    result = {}
+    for subset, bearing in [('train', train_bearing), ('val', val_bearing), ('test', test_bearing)]:
+        # 우선: 같은 load, 없으면 다른 load
+        if load in all_bearings[bearing]:
+            result[subset] = all_bearings[bearing][load]
+        else:
+            # 다른 load 중 하나 선택
+            available_loads = sorted(all_bearings[bearing].keys())
+            if available_loads:
+                result[subset] = all_bearings[bearing][available_loads[0]]
+            else:
+                return None
+    
+    if len(result) == 3:
+        print(f"    [순환] {fault_type}-{load}HP: Train={train_bearing}({list(all_bearings[train_bearing].keys())}), "
+              f"Val={val_bearing}({list(all_bearings[val_bearing].keys())}), "
+              f"Test={test_bearing}({list(all_bearings[test_bearing].keys())})")
+        return result
+    
+    return None
 
 
 def extract_experiment_number(filepath):
@@ -209,10 +275,16 @@ def create_experiment_based_split(all_files):
 
 
 def create_window_sliced_files(all_files) -> bool:
-    """도메인×클래스별 대표 파일을 3분할하여 data_scenario2에 저장."""
+    """
+    도메인×클래스별 파일 준비
+    
+    전략:
+    - H: 1개 베어링만 존재 → 시간순 3분할 (작은 leakage 허용)
+    - B/IR/OR: 같은 fault size 내 다른 베어링 → train/val/test 각각 할당
+    """
     target_dir = "data_scenario2"
 
-    # 기존 폴더 무조건 재생성(질의 없이 덮어쓰기)
+    # 기존 폴더 무조건 재생성
     if os.path.exists(target_dir):
         shutil.rmtree(target_dir)
 
@@ -227,53 +299,75 @@ def create_window_sliced_files(all_files) -> bool:
         os.makedirs(os.path.join(target_dir, load_domains[load]), exist_ok=True)
 
     created = 0
-    ratios = (0.6, 0.2, 0.2)
+    ratios = (0.6, 0.2, 0.2)  # H 시간순 분할용
 
     for load in sorted(load_domains.keys()):
         domain_dir = os.path.join(target_dir, load_domains[load])
-        print(f"\n📂 {load_domains[load]} 처리 중 (파일 내 3분할)...")
+        print(f"\n📂 {load_domains[load]} 처리 중...")
 
         for fault_type in ['H', 'B', 'IR', 'OR']:
-            rep_file = _preferred_file_for_class(all_files[fault_type], load, fault_type)
-            if rep_file is None:
+            selected = _select_bearings_for_splits(all_files, load, fault_type)
+            if selected is None:
                 print(f"  ⚠️ {fault_type}-{load}HP: 소스 파일 없음 - 건너뜀")
                 continue
 
-            try:
-                signal = _read_signal_from_mat(rep_file)
-            except Exception as e:
-                print(f"  ❌ {fault_type}-{load}HP: 로드 실패 - {os.path.basename(rep_file)} | {e}")
-                continue
+            # H: 시간순 3분할
+            if 'split_single' in selected:
+                rep_file = selected['split_single']
+                try:
+                    signal = _read_signal_from_mat(rep_file)
+                except Exception as e:
+                    print(f"  ❌ {fault_type}-{load}HP: 로드 실패 - {os.path.basename(rep_file)} | {e}")
+                    continue
 
-            n = signal.shape[0]
-            i1, i2 = _split_indices(n, ratios)
-            sig_train = signal[:i1]
-            sig_val = signal[i1:i2]
-            sig_test = signal[i2:]
+                n = signal.shape[0]
+                i1, i2 = _split_indices(n, ratios)
+                sig_train = signal[:i1]
+                sig_val = signal[i1:i2]
+                sig_test = signal[i2:]
 
-            out_train = os.path.join(domain_dir, f"{fault_type}_{load}hp_train_01.mat")
-            out_val = os.path.join(domain_dir, f"{fault_type}_{load}hp_val_01.mat")
-            out_test = os.path.join(domain_dir, f"{fault_type}_{load}hp_test_01.mat")
+                out_train = os.path.join(domain_dir, f"{fault_type}_{load}hp_train_01.mat")
+                out_val = os.path.join(domain_dir, f"{fault_type}_{load}hp_val_01.mat")
+                out_test = os.path.join(domain_dir, f"{fault_type}_{load}hp_test_01.mat")
 
-            _write_signal_to_mat(out_train, sig_train)
-            _write_signal_to_mat(out_val, sig_val)
-            _write_signal_to_mat(out_test, sig_test)
-            created += 3
+                _write_signal_to_mat(out_train, sig_train)
+                _write_signal_to_mat(out_val, sig_val)
+                _write_signal_to_mat(out_test, sig_test)
+                created += 3
 
-            print(f"  ✅ {fault_type}-{load}HP: {os.path.basename(rep_file)} → 3분할 저장")
+                print(f"  ✅ {fault_type}-{load}HP: 베어링 {os.path.basename(rep_file).split('_')[0]} → 시간순 3분할")
+            
+            # B/IR/OR: 다른 베어링 사용
+            else:
+                for subset in ['train', 'val', 'test']:
+                    src_file = selected[subset]
+                    try:
+                        signal = _read_signal_from_mat(src_file)
+                    except Exception as e:
+                        print(f"  ❌ {fault_type}-{load}HP-{subset}: 로드 실패 - {os.path.basename(src_file)} | {e}")
+                        continue
 
-    print(f"\n✅ 총 {created}개 파일이 생성되었습니다 (도메인×클래스×3)")
+                    out_file = os.path.join(domain_dir, f"{fault_type}_{load}hp_{subset}_01.mat")
+                    _write_signal_to_mat(out_file, signal)
+                    created += 1
+
+                bearing_nums = [os.path.basename(selected[s]).split('_')[0].split('@')[0] for s in ['train', 'val', 'test']]
+                print(f"  ✅ {fault_type}-{load}HP: 다른 베어링 사용 (Train:{bearing_nums[0]}, Val:{bearing_nums[1]}, Test:{bearing_nums[2]})")
+
+    print(f"\n✅ 총 {created}개 파일이 생성되었습니다")
     return True
 
 
 def main():
     """메인 실행 함수"""
-    print("🚀 CWRU 데이터 누수 방지 준비 시작! (파일 내 3분할)")
+    print("🚀 CWRU 데이터 누수 방지 준비 시작! (개선 버전)")
     print("=" * 60)
-    print("🎯 전략: 실험 번호(베어링) 기반 분할")
-    print("   - 서로 다른 베어링을 train/val/test에 할당")
-    print("   - 같은 베어링의 다른 부하는 같은 subset에만")
-    print("   - Domain-Incremental + 데이터 누수 방지 동시 달성")
+    print("🎯 전략: 베어링 기반 분할 (Fault Type별 차별화)")
+    print("   - H (Normal): 시간순 3분할 (베어링 1개뿐)")
+    print("   - B/IR/OR: 같은 fault size 내 다른 베어링 할당")
+    print("     * B/IR: 021 size → 베어링 3개 사용")
+    print("     * OR: 007/@6 → 베어링 3개 사용")
+    print("   - Domain-Incremental + 진정한 일반화 평가")
     print("=" * 60)
     
     try:
@@ -282,11 +376,12 @@ def main():
         
         # 2. 대표 파일 현황 출력
         _ = create_experiment_based_split(all_files)
-        # 3. 대표 파일을 실제로 3분할하여 저장
+        # 3. 파일 준비 (다른 베어링 또는 시간순 3분할)
         if create_window_sliced_files(all_files):
             print(f"\n🎉 CWRU 데이터 누수 방지 준비 완료!")
-            print("✅ 동일 파일의 비중복 3분할 → train/val/test 간 윈도우 누수 없음")
-            print("✅ 도메인별 H가 1개여도 평가 커버리지 확보")
+            print("✅ H: 시간순 3분할 (작은 leakage, 베어링 1개뿐)")
+            print("✅ B/IR/OR: 완전히 다른 베어링 사용 (진정한 일반화)")
+            print("✅ Domain-incremental learning 시나리오 유지")
             return True
         return False
             

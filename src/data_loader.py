@@ -176,7 +176,12 @@ class BearingDataset(Dataset):
         if len(file_paths) == 0:
             raise ValueError(f"UOS 파일을 찾을 수 없습니다: {pattern}")
         
-        return sorted(file_paths)
+        # 🎯 파일 순서 랜덤화 (subset별 고정 시드로 재현성 유지)
+        import random
+        file_paths = sorted(file_paths)  # 먼저 정렬 (일관성)
+        rng = random.Random(42 + hash(self.subset) % 1000)  # subset별 시드
+        rng.shuffle(file_paths)
+        return file_paths
     
     def _collect_cwru_file_paths(self) -> List[str]:
         """CWRU 데이터 파일 경로 수집"""
@@ -197,7 +202,12 @@ class BearingDataset(Dataset):
         if len(file_paths) == 0:
             raise ValueError(f"CWRU 파일을 찾을 수 없습니다: {pattern}")
         
-        return sorted(file_paths)
+        # 🎯 파일 순서 랜덤화 (subset별 고정 시드로 재현성 유지)
+        import random
+        file_paths = sorted(file_paths)  # 먼저 정렬 (일관성)
+        rng = random.Random(42 + hash(self.subset) % 1000)  # subset별 시드
+        rng.shuffle(file_paths)
+        return file_paths
     
     def _extract_metadata(self) -> List[Dict[str, Union[str, int]]]:
         """파일명에서 메타데이터 추출"""

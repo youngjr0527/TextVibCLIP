@@ -37,10 +37,10 @@ from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, CWRU_DATA_CONFIG
 def setup_logging(log_dir: str) -> Tuple[logging.Logger, str]:
     """로깅 설정"""
     experiment_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    experiment_dir = os.path.join(log_dir, f"v2_{experiment_timestamp}")
+    experiment_dir = os.path.join(log_dir, f"{experiment_timestamp}")
     os.makedirs(experiment_dir, exist_ok=True)
     
-    log_filename = f"textvibclip_v2_{experiment_timestamp}.log"
+    log_filename = f"textvibclip_{experiment_timestamp}.log"
     log_path = os.path.join(experiment_dir, log_filename)
     
     # 기존 핸들러 제거
@@ -57,13 +57,13 @@ def setup_logging(log_dir: str) -> Tuple[logging.Logger, str]:
     )
     
     logger = logging.getLogger(__name__)
-    logger.info(f"TextVibCLIP v2 실험 시작: {log_path}")
+    logger.info(f"TextVibCLIP 실험 시작: {log_path}")
     logger.info(f"실험 결과 폴더: {experiment_dir}")
     
     return logger, experiment_dir
 
 
-class ScenarioConfig_v2:
+class ScenarioConfig:
     """시나리오별 설정"""
     
     UOS_CONFIG = {
@@ -95,7 +95,7 @@ class ScenarioConfig_v2:
     }
 
 
-def run_single_scenario_v2(config: Dict, logger: logging.Logger, device: torch.device, args, experiment_dir: str) -> Dict:
+def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.device, args, experiment_dir: str) -> Dict:
     """단일 시나리오 실행"""
     logger.info(f"🚀 {config['name']} 시작!")
     logger.info(f"   아키텍처: Ranking-based (Triplet Loss)")
@@ -318,10 +318,10 @@ def run_single_scenario_v2(config: Dict, logger: logging.Logger, device: torch.d
         return None
 
 
-def save_results_v2(results: Dict, output_dir: str) -> str:
+def save_results(results: Dict, output_dir: str) -> str:
     """결과 저장"""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    results_path = os.path.join(output_dir, f'results_v2_{timestamp}.json')
+    results_path = os.path.join(output_dir, f'results_{timestamp}.json')
     
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
@@ -382,9 +382,9 @@ def main():
     # 시나리오 설정
     scenarios = []
     if not args.skip_uos:
-        scenarios.append(ScenarioConfig_v2.UOS_CONFIG)
+        scenarios.append(ScenarioConfig.UOS_CONFIG)
     if not args.skip_cwru:
-        scenarios.append(ScenarioConfig_v2.CWRU_CONFIG)
+        scenarios.append(ScenarioConfig.CWRU_CONFIG)
     
     if not scenarios:
         logger.error("❌ 실행할 시나리오가 없습니다!")
@@ -411,7 +411,7 @@ def main():
         logger.info(f"시나리오 {i}/{len(scenarios)}: {scenario['name']}")
         logger.info(f"{'='*60}")
         
-        scenario_result = run_single_scenario_v2(scenario, logger, device, args, experiment_dir)
+        scenario_result = run_single_scenario(scenario, logger, device, args, experiment_dir)
         
         if scenario_result:
             all_results[scenario['name']] = scenario_result
@@ -420,7 +420,7 @@ def main():
     
     # 결과 저장
     if all_results:
-        results_path = save_results_v2(all_results, experiment_dir)
+        results_path = save_results(all_results, experiment_dir)
         logger.info(f"✅ 결과 저장: {results_path}")
     
     # 최종 요약
