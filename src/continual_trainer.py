@@ -1,6 +1,6 @@
 """
-ContinualTrainer v2: Ranking-based TextVibCLIP용 학습 파이프라인
-InfoNCE 대신 Triplet/Ranking Loss 사용으로 소규모 데이터에 최적화
+ContinualTrainer: Ranking-based TextVibCLIP용 학습 파이프라인
+Triplet/Ranking Loss 기반으로 소규모 데이터에 최적화
 """
 
 import os
@@ -803,7 +803,7 @@ class ContinualTrainer:
 
 
 def create_continual_trainer_v2(device: torch.device = torch.device('cpu'),
-                               save_dir: str = 'checkpoints_v2',
+                               save_dir: str = 'checkpoints',
                                domain_order: List[Union[int, str]] = None,
                                data_dir: Optional[str] = None,
                                dataset_type: str = 'uos') -> ContinualTrainer:

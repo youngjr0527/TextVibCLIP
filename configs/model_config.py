@@ -38,21 +38,11 @@ MODEL_CONFIG = {
         # 2048 → 1024 → 512 → 256 → 128 → Global Pool → 256 embedding
     },
     
-    # InfoNCE Loss - 균형 잡힌 온도 설정
-    'infonce': {
-        # First Domain Training (Domain 1) - 적당한 온도로 효과적 정렬
-        'first_domain_temperature_text': 0.2,   # 0.5 → 0.2 (더 강한 정렬)
-        'first_domain_temperature_vib': 0.2,    # 0.5 → 0.2 (더 강한 정렬)
-        
-        # Continual Learning (Domain 2+) - 안정적 온도
-        'continual_temperature_text': 0.15,  # 0.3 → 0.15 (적당한 정렬)
-        'continual_temperature_vib': 0.1,   # 0.2 → 0.1 (적당한 적응)
-
-        # First domain 온도 스케줄(선형): init → final
-        'first_domain_temperature_text_init': 0.07,  # 0.05 → 0.07
-        'first_domain_temperature_text_final': 0.05, # 0.01 → 0.05
-        'first_domain_temperature_vib_init': 0.07,   # 0.05 → 0.07
-        'first_domain_temperature_vib_final': 0.05,  # 0.01 → 0.05
+    # Ranking Loss - Triplet margin 설정
+    'ranking_loss': {
+        # Triplet Loss margin (같은 클래스 vs 다른 클래스 분리)
+        'margin': 0.3,  # 고정된 마진으로 안정적 학습
+        'loss_type': 'triplet',  # 'triplet' 또는 'margin_ranking'
     },
     
     # Projection layers
@@ -73,18 +63,18 @@ MODEL_CONFIG = {
     'aux_classification': {
         'enabled': True,   # 🎯 CRITICAL FIX: Auxiliary loss 활성화 (supervised signal 강화)
         'num_classes': 7,  # UOS 7-클래스 지원 (H/B/IR/OR/L/U/M)
-        'loss_weight': 1.0,  # 5.0 → 1.0 (과적합 방지, InfoNCE와 균형)
+        'loss_weight': 1.0,  # 5.0 → 1.0 (과적합 방지, Ranking loss와 균형)
         'dropout': 0.2     # 0.1 → 0.2 (과적합 방지 강화)
     }
 }
 
     # 첫 번째 도메인 전용 학습 설정 (Foundation Learning)
 FIRST_DOMAIN_CONFIG = {
-    # 🎯 Foundation Learning: InfoNCE와 Auxiliary Head 균형
+    # 🎯 Foundation Learning: Ranking Loss와 Auxiliary Head 균형
     'num_epochs': 15,           # 충분한 기초 학습
     'learning_rate': 2e-4,      # 1e-4 → 2e-4 (적당한 학습률)
     'weight_decay': 5e-5,       # 1e-4 → 5e-5 (정규화 완화)
-    'aux_weight': 2.0,          # 10.0 → 2.0 (InfoNCE와 균형)
+    'aux_weight': 2.0,          # 10.0 → 2.0 (Ranking loss와 균형)
     'patience': 8,              # 5 → 8 (충분한 학습 기회)
     'min_epoch': 5,             # 3 → 5 (최소 기초 학습 보장)
     

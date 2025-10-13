@@ -31,7 +31,7 @@ from run_scenarios import ScenarioConfig_v2
 def build_trainer(dataset_type: str, data_dir: str, device: torch.device) -> ContinualTrainer:
     trainer = ContinualTrainer(
         device=device,
-        save_dir=f"checkpoints_v2/REDRAW_{dataset_type}",
+        save_dir=f"checkpoints/REDRAW_{dataset_type}",
         domain_order=(ScenarioConfig_v2.UOS_CONFIG['domain_order'] if dataset_type == 'uos' else ScenarioConfig_v2.CWRU_CONFIG['domain_order']),
         data_dir=data_dir,
         dataset_type=dataset_type

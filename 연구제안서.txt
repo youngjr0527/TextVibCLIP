@@ -180,7 +180,7 @@ Continual Learning 시나리오에서 가변 작업 조건(**Varying Working Con
 
 ### 3. Contrastive Learning Objective
 
-**InfoNCE loss**를 사용하여 진동과 텍스트 임베딩을 동일한 특징 공간에 매핑. 이를 통해 모델은 텍스트 설명에 맞는 진동 패턴을 인식하며, domain 변동에 robust한 처리가 가능하다.
+**Triplet ranking loss**를 사용하여 진동과 텍스트 임베딩을 동일한 특징 공간에 매핑. 이를 통해 모델은 텍스트 설명에 맞는 진동 패턴을 인식하며, domain 변동에 robust한 처리가 가능하다.
 
 ### 4. Continual Learning Scenario and Replay-Based Strategy
 
@@ -194,7 +194,7 @@ Domain 확장 시 catastrophic forgetting 방지 위해 **replay-based strategy*
 ① Joint Training (Initial Alignment)
 
 - **첫 번째 도메인(600 RPM)만**으로 Text Encoder ↔ Vibration Encoder joint 학습.
-- InfoNCE temperature τ 동일하게 설정하여 embedding space 맞춤.
+- Triplet ranking loss의 margin 파라미터로 embedding space 맞춤.
 - **LoRA 기반 parameter-efficient fine-tuning** 적용.
 Stratified sampling: bearing_condition, rotating_component_category(H/L/U/M), bearing_type 균형 유지.
 
@@ -208,29 +208,35 @@ Vibration encoder adaptation: Full parameter fine-tuning + Replay mechanism (emb
 
 # 1. Joint Training 단계
 
-Cross-modal Alignment loss = InfoNCE
-\[ \text{InfoNCE} = \frac{1}{2N} \sum_{i=1}^N \left[ -\log \frac{e^{\langle z_{\text{text}}^i, z_{\text{vib}}^i \rangle / \tau}} {\sum_j e^{\langle z_{\text{text}}^i, z_{\text{vib}}^j \rangle / \tau}} - \log \frac{e^{\langle z_{\text{vib}}^i, z_{\text{text}}^i \rangle / \tau}} {\sum_j e^{\langle z_{\text{vib}}^i, z_{\text{text}}^j \rangle / \tau}} \right] \]
+Cross-modal Alignment loss = Triplet Ranking Loss
+\[ L_{\text{triplet}} = \frac{1}{N} \sum_{i=1}^N \max(0, m - \text{sim}(z_{\text{vib}}^i, z_{\text{text}}^{+}) + \text{sim}(z_{\text{vib}}^i, z_{\text{text}}^{-})) \]
 
-첫 항: Text query – positive vibration pair close, negatives far.
-두 번째 항: Vibration query – symmetric.
+여기서:
+- \( z_{\text{vib}}^i \): anchor (진동 임베딩)
+- \( z_{\text{text}}^{+} \): positive (같은 클래스 텍스트 임베딩)
+- \( z_{\text{text}}^{-} \): negative (다른 클래스 텍스트 임베딩)
+- \( m \): margin (기본값 0.3)
 
-- Identical τ for balanced learning.
+- Margin-based separation for balanced learning.
 - Encoders form common space for rotating_components, bearing_conditions, bearing_types.
 
 # 2. Continual Domain Adaptation 단계
 
-\[ $\text{InfoNCE} = \frac{1}{2N} \sum_{i=1}^{N} \left[ -\log \frac{\exp(\langle z_{\text{text}}^{i}, z_{\text{vib}}^{i} \rangle / \tau_{\text{text}})} {\sum_{j} \exp(\langle z_{\text{text}}^{i}, z_{\text{vib}}^{j} \rangle / \tau_{\text{text}})} - \log \frac{\exp(\langle z_{\text{vib}}^{i}, z_{\text{text}}^{i} \rangle / \tau_{\text{vib}})} {\sum_{j} \exp(\langle z_{\text{vib}}^{i}, z_{\text{text}}^{j} \rangle / \tau_{\text{vib}})} \right]$ \]
+\[ L_{\text{total}} = L_{\text{triplet}} + \lambda_{\text{aux}} \cdot L_{\text{aux}} \]
 
-- τ_text: Text adaptation control (higher for minimal change).
-- τ_vib: Vibration adaptation control (lower for aggressive update).
+여기서:
+- \( L_{\text{triplet}} \): Triplet ranking loss (같은 클래스는 가깝게, 다른 클래스는 멀게)
+- \( L_{\text{aux}} \): Auxiliary classification loss (보조 분류 헤드)
+- \( \lambda_{\text{aux}} \): Auxiliary loss 가중치 (continual 시 5.0으로 증가)
+
 - New domain (rotating_speed changes) learning.
 - Vibration encoder focused.
-- **Asymmetric adaptation**: τ adjustment for gradient scaling.
+- **Asymmetric adaptation**: Text encoder freeze, vibration encoder adaptation.
 - + LoRA: Text encoder에만 적용되는 low-rank matrices for efficient updates (freeze base, train adapters).
-- Replay: Memory bank samples mixed, negative pairs from bank for robust contrast.
+- Replay: Memory bank samples mixed with new domain data for forgetting mitigation.
 
-> Joint training에서 τ_text = τ_vib for alignment.
-Continual에서 τ_vib lower for vibration gradient boost, domain adaptation. LoRA + replay from second domain for forgetting mitigation.
+> Joint training에서는 균형잡힌 학습 (aux_weight=2.0).
+Continual에서는 빠른 적응 (aux_weight=5.0), LoRA + replay from second domain for forgetting mitigation.
 > 
 
 ---

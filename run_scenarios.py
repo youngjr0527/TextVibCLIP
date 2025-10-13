@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-TextVibCLIP v2 실험 스크립트
-Ranking-based 아키텍처로 소규모 데이터에 최적화
+TextVibCLIP 실험 스크립트
+Triplet ranking loss 기반 아키텍처로 소규모 데이터에 최적화
 
 Usage:
-    python run_scenarios_v2.py --quick_test --epochs 10
-    python run_scenarios_v2.py --skip_uos  # CWRU만
-    python run_scenarios_v2.py --skip_cwru # UOS만
+    python run_scenarios.py --quick_test --epochs 10
+    python run_scenarios.py --skip_uos  # CWRU만
+    python run_scenarios.py --skip_cwru # UOS만
 """
 
 import argparse
@@ -64,10 +64,10 @@ def setup_logging(log_dir: str) -> Tuple[logging.Logger, str]:
 
 
 class ScenarioConfig_v2:
-    """시나리오별 설정 (v2용)"""
+    """시나리오별 설정"""
     
     UOS_CONFIG = {
-        'name': 'UOS_Scenario1_VaryingSpeed_v2',
+        'name': 'UOS_Scenario1_VaryingSpeed',
         'data_dir': 'data_scenario1',
         'dataset_type': 'uos',
         'domain_order': [600, 800, 1000, 1200, 1400, 1600],
@@ -81,7 +81,7 @@ class ScenarioConfig_v2:
     }
     
     CWRU_CONFIG = {
-        'name': 'CWRU_Scenario2_VaryingLoad_v2',
+        'name': 'CWRU_Scenario2_VaryingLoad',
         'data_dir': 'data_scenario2',
         'dataset_type': 'cwru',
         'domain_order': [0, 1, 2, 3],
@@ -96,22 +96,22 @@ class ScenarioConfig_v2:
 
 
 def run_single_scenario_v2(config: Dict, logger: logging.Logger, device: torch.device, args, experiment_dir: str) -> Dict:
-    """단일 시나리오 실행 (v2)"""
+    """단일 시나리오 실행"""
     logger.info(f"🚀 {config['name']} 시작!")
-    logger.info(f"   아키텍처: Ranking-based (InfoNCE 대신 Triplet Loss)")
+    logger.info(f"   아키텍처: Ranking-based (Triplet Loss)")
     logger.info(f"   Domains: {' → '.join(config['domain_names'])}")
     
     start_time = time.time()
     
     try:
-        # Trainer v2 생성 (결과 폴더 내 체크포인트 미러 저장 경로 전달)
+        # Trainer 생성 (결과 폴더 내 체크포인트 미러 저장 경로 전달)
         trainer = ContinualTrainer(
             device=device,
-            save_dir=f"checkpoints_v2/{config['name']}",
+            save_dir=f"checkpoints/{config['name']}",
             domain_order=config['domain_order'],
             data_dir=config['data_dir'],
             dataset_type=config['dataset_type'],
-            results_save_dir=os.path.join(experiment_dir, 'checkpoints_v2', config['name'])
+            results_save_dir=os.path.join(experiment_dir, 'checkpoints', config['name'])
         )
         
         # 하이퍼파라미터 설정
@@ -119,7 +119,7 @@ def run_single_scenario_v2(config: Dict, logger: logging.Logger, device: torch.d
         trainer.replay_buffer.buffer_size_per_domain = config['replay_buffer_size']
         
         # First Domain Training
-        logger.info("📚 First Domain Training v2...")
+        logger.info("📚 First Domain Training...")
         
         first_loader = create_cached_first_domain_dataloader(
             data_dir=config['data_dir'],
@@ -135,7 +135,7 @@ def run_single_scenario_v2(config: Dict, logger: logging.Logger, device: torch.d
         )
         
         # Remaining Domains Training
-        logger.info("🔄 Remaining Domains Training v2...")
+        logger.info("🔄 Remaining Domains Training...")
         
         domain_loaders = create_cached_domain_dataloaders(
             data_dir=config['data_dir'],
@@ -319,7 +319,7 @@ def run_single_scenario_v2(config: Dict, logger: logging.Logger, device: torch.d
 
 
 def save_results_v2(results: Dict, output_dir: str) -> str:
-    """결과 저장 (v2)"""
+    """결과 저장"""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     results_path = os.path.join(output_dir, f'results_v2_{timestamp}.json')
     
@@ -331,7 +331,7 @@ def save_results_v2(results: Dict, output_dir: str) -> str:
 
 def parse_arguments():
     """명령줄 인수 파싱"""
-    parser = argparse.ArgumentParser(description='TextVibCLIP v2 실험')
+    parser = argparse.ArgumentParser(description='TextVibCLIP 실험')
     
     parser.add_argument('--output_dir', type=str, default='results',
                        help='결과 저장 디렉토리')
@@ -367,7 +367,7 @@ def main():
         logger.info("🗑️ 캐시 삭제 중...")
         clear_all_caches()
     
-    logger.info("🎯 TextVibCLIP v2 실험 시작!")
+    logger.info("🎯 TextVibCLIP 실험 시작!")
     logger.info("   아키텍처: Ranking-based (Triplet Loss)")
     logger.info("   특징: 소규모 데이터 최적화, 실제 사용 시나리오 지원")
     
@@ -428,13 +428,13 @@ def main():
     logger.info(f"\n⏱️ 전체 실험 소요 시간: {total_time/60:.1f}분")
     
     # 성능 요약
-    logger.info(f"\n📊 TextVibCLIP v2 성능 요약:")
+    logger.info(f"\n📊 TextVibCLIP 성능 요약:")
     for scenario_name, result in all_results.items():
         avg_acc = result.get('average_accuracy', 0.0)
         avg_forget = result.get('average_forgetting', 0.0)
         logger.info(f"   {scenario_name}: 평균 정확도 {avg_acc:.4f}, 망각도 {avg_forget:.4f}")
     
-    logger.info("🎉 TextVibCLIP v2 실험 완료!")
+    logger.info("🎉 TextVibCLIP 실험 완료!")
 
 
 if __name__ == "__main__":

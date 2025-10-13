@@ -39,14 +39,14 @@
 Input:
 ┌─────────────────┐    ┌─────────────────┐
 │   진동 신호       │    │   텍스트 설명     │
-│ [4096 samples]  │    │ "A ball bearing │
+│ [2048 samples]  │    │ "A ball bearing │
 └─────────────────┘    │  with fault..." │
          │              └─────────────────┘
          ▼                        ▼
 ┌─────────────────┐    ┌─────────────────┐
 │ VibrationEncoder│    │   TextEncoder   │
 │  (1D-CNN)       │    │  (DistilBERT    │
-│  35M params     │    │   + LoRA)       │
+│  7M params      │    │   + LoRA)       │
 └─────────────────┘    └─────────────────┘
          │                        │
          ▼                        ▼
@@ -58,8 +58,8 @@ Input:
          └────────────┬─────────────┘
                     ▼
          ┌─────────────────┐
-         │   InfoNCE Loss  │
-         │ (Bidirectional) │
+         │  Ranking Loss   │
+         │   (Triplet)     │
          └─────────────────┘
 ```
 
@@ -181,18 +181,18 @@ TextVibCLIP/
 
 ## 🔧 기술적 세부사항
 
-### InfoNCE Loss
+### Triplet Ranking Loss
 ```python
-# Bidirectional contrastive learning
-InfoNCE = 1/(2N) * Σ[
-    -log(exp(<text_i, vib_i>/τ_text) / Σ_j exp(<text_i, vib_j>/τ_text)) +
-    -log(exp(<vib_i, text_i>/τ_vib) / Σ_j exp(<vib_i, text_j>/τ_vib))
+# Margin-based metric learning
+L_triplet = 1/N * Σ[
+    max(0, margin - sim(vib_i, text_same_class) + sim(vib_i, text_diff_class))
 ]
 ```
 
-### 온도 파라미터
-- **Domain 1**: τ_text = τ_vib = 0.05 (균등 학습)
-- **Domain 2+**: τ_text = 0.07, τ_vib = 0.03 (비대칭 적응)
+### 손실 함수 파라미터
+- **Margin**: 0.3 (같은 클래스와 다른 클래스 사이 분리 마진)
+- **Domain 1**: Ranking loss + Auxiliary loss (weight=2.0)
+- **Domain 2+**: Ranking loss + Auxiliary loss (weight=5.0, 빠른 적응)
 
 ### 데이터 분할 (Domain-Incremental)
 - **모든 subset에 모든 클래스 포함**: `set(train_classes) == set(val_classes) == set(test_classes)`

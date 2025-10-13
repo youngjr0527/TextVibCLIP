@@ -1,10 +1,10 @@
 """
-TextVibCLIP v2: Ranking-based 멀티모달 베어링 진단 모델
-InfoNCE 대신 Triplet/Margin Ranking Loss 사용으로 소규모 데이터에 최적화
+TextVibCLIP: Ranking-based 멀티모달 베어링 진단 모델
+Triplet/Margin Ranking Loss 사용으로 소규모 데이터에 최적화
 
 핵심 아이디어:
 1. 각 인코더가 독립적으로 분류 학습 (안정적)
-2. 간단한 정렬 학습 (MSE 기반)
+2. Triplet ranking loss로 cross-modal 정렬 학습
 3. 실제 사용: 진동 신호 → 후보 텍스트 중 최고 유사도 선택
 4. Continual learning: 진동 위주 적응
 """
@@ -27,7 +27,7 @@ class RankingLoss(nn.Module):
     Ranking-based Loss for Text-Vibration Alignment
     
     핵심: 같은 클래스의 text-vib는 가깝게, 다른 클래스는 멀게
-    InfoNCE보다 소규모 데이터에 적합
+    Triplet loss 기반으로 소규모 데이터에 최적화
     """
     
     def __init__(self, margin: float = 0.2, loss_type: str = 'triplet'):
@@ -113,9 +113,9 @@ class RankingLoss(nn.Module):
 
 class TextVibCLIP(nn.Module):
     """
-    TextVibCLIP v2: Ranking-based 아키텍처
+    TextVibCLIP: Ranking-based 아키텍처
     
-    InfoNCE 대신 Triplet/Ranking Loss 사용
+    Triplet/Ranking Loss 기반 cross-modal alignment
     실제 사용: 진동 신호 → 후보 텍스트 중 최고 유사도 선택
     """
     
@@ -151,7 +151,7 @@ class TextVibCLIP(nn.Module):
             nn.LayerNorm(embedding_dim)
         )
         
-        # 🎯 Ranking Loss (InfoNCE 대신)
+        # 🎯 Ranking Loss (Triplet 기반)
         self.ranking_loss = RankingLoss(margin=0.3, loss_type='triplet')
         
         # 🎯 앙상블 가중치 (추론 시 사용)
@@ -257,7 +257,7 @@ class TextVibCLIP(nn.Module):
             # 라벨 없으면 대각선 매칭 가정
             class_labels = torch.arange(text_emb.size(0), device=device)
         
-        # 🎯 핵심: Ranking Loss (InfoNCE 대신)
+        # 🎯 핵심: Triplet Ranking Loss
         ranking_loss = self.ranking_loss(text_emb, vib_emb, class_labels)
         
         total_loss = ranking_loss
@@ -431,20 +431,20 @@ class TextVibCLIP(nn.Module):
 
 def create_textvib_model(domain_stage: str = 'first_domain', dataset_type: str = 'uos') -> TextVibCLIP:
     """
-    TextVibCLIP v2 모델 생성
+    TextVibCLIP 모델 생성
     
     Args:
         domain_stage: 'first_domain' 또는 'continual'
         dataset_type: 'uos' 또는 'cwru'
         
     Returns:
-        TextVibCLIP: 새로운 ranking-based 모델
+        TextVibCLIP: Ranking-based 모델
     """
     model = TextVibCLIP(domain_stage=domain_stage, dataset_type=dataset_type)
     
     # 파라미터 정보 출력
     param_info = model.get_trainable_parameters()
-    logger.info(f"TextVibCLIP v2 생성 완료: {domain_stage} stage")
+    logger.info(f"TextVibCLIP 생성 완료: {domain_stage} stage")
     logger.info(f"Text encoder: {param_info['text_encoder']:,}")
     logger.info(f"Vibration encoder: {param_info['vib_encoder']:,}")
     logger.info(f"Projections: {param_info['projections']:,}")
@@ -480,7 +480,7 @@ if __name__ == "__main__":
     # 테스트 코드
     logging.basicConfig(level=logging.INFO)
     
-    print("=== TextVibCLIP v2 테스트 ===")
+    print("=== TextVibCLIP 테스트 ===")
     
     # 모델 생성
     model = create_textvib_model('first_domain')
@@ -526,4 +526,4 @@ if __name__ == "__main__":
     print(f"Best match: {candidates[best_idx]}")
     print(f"Confidence: {confidence:.4f}")
     
-    print("\n=== TextVibCLIP v2 테스트 완료 ===")
+    print("\n=== TextVibCLIP 테스트 완료 ===")
