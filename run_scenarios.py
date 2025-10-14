@@ -344,18 +344,54 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         except Exception as paper_viz_err:
             logger.warning(f" 시각화 생성 실패: {paper_viz_err}")
         
-        # 결과 정리
+        # 결과 정리 (Heatmap 데이터 포함)
         final_metrics = remaining_results['final_metrics']
         total_time = time.time() - start_time
+        
+        # 🎯 Forgetting Heatmap 데이터 추출 (JSON 저장용)
+        n_domains = len(config['domain_names'])
+        heatmap_matrix = []
+        stage_averages = []
+        
+        for i in range(n_domains):
+            row = []
+            for j in range(n_domains):
+                if j <= i:  # 학습한 도메인만
+                    test_domain = config['domain_order'][j]
+                    if test_domain in trainer.performance_history:
+                        history = trainer.performance_history[test_domain]['accuracy']
+                        history_idx = i - j
+                        if len(history) > history_idx:
+                            row.append(round(history[history_idx] * 100, 2))  # 퍼센트
+                        else:
+                            row.append(None)
+                    else:
+                        row.append(None)
+                else:
+                    row.append(None)  # 아직 학습 안함
+            
+            # 각 행의 평균 계산
+            valid_values = [v for v in row if v is not None]
+            if valid_values:
+                stage_avg = round(sum(valid_values) / len(valid_values), 2)
+            else:
+                stage_avg = None
+            
+            heatmap_matrix.append(row)
+            stage_averages.append(stage_avg)
         
         results = {
             'domain_names': config['domain_names'],
             'shift_type': config['shift_type'],
-            'final_accuracies': final_metrics['final_accuracies'],
-            'final_top1_retrievals': final_metrics.get('final_top1_retrievals', []),
-            'final_top5_retrievals': final_metrics.get('final_top5_retrievals', []),
+            # 🎯 주요 결과: Stage별 평균 (Heatmap 각 행 평균)
+            'stage_accuracies': stage_averages,  # 이게 핵심!
             'average_accuracy': final_metrics['average_accuracy'],
             'average_forgetting': final_metrics['average_forgetting'],
+            # 🎯 Forgetting Heatmap 전체 데이터
+            'forgetting_matrix': heatmap_matrix,
+            # 참고용 (논문에는 사용 안함)
+            'final_top1_retrievals': final_metrics.get('final_top1_retrievals', []),
+            'final_top5_retrievals': final_metrics.get('final_top5_retrievals', []),
             'total_time': total_time,
             'first_domain_epochs': config['first_domain_epochs'],
             'remaining_epochs': config['remaining_epochs'],

@@ -14,6 +14,7 @@ import torch
 import torch.nn.functional as F
 from typing import Dict, List, Any, Optional, Tuple
 import pandas as pd
+from matplotlib.colors import LinearSegmentedColormap
 
 # 한글 폰트 및 스타일 설정
 plt.rcParams['font.family'] = ['DejaVu Sans']
@@ -463,7 +464,7 @@ class PaperVisualizer:
                                   accuracy_matrix: np.ndarray,
                                   scenario_name: str,
                                   save_name: str = "forgetting_heatmap") -> str:
-        """Forgetting Analysis Heatmap 시각화
+        """Forgetting Analysis Heatmap 시각화 (각 행 평균 포함)
         
         Args:
             domain_names: 도메인 이름 리스트
@@ -477,38 +478,88 @@ class PaperVisualizer:
         """
         logger.info(f"Forgetting heatmap 생성 중: {scenario_name}")
         
-        fig, ax = plt.subplots(figsize=(10, 8))
-        
-        # Heatmap 생성 (퍼센트 범위: 0-100)
-        accuracy_matrix_percent = accuracy_matrix * 100  # 0~1 → 0~100
-        im = ax.imshow(accuracy_matrix_percent, cmap='RdYlGn', aspect='auto',
-                      vmin=0, vmax=100, interpolation='nearest')
-        
-        # 컬러바
-        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Accuracy (%)', rotation=270, labelpad=20, fontsize=12, fontweight='bold')
-        
-        # 축 설정
-        ax.set_xticks(np.arange(len(domain_names)))
-        ax.set_yticks(np.arange(len(domain_names)))
-        ax.set_xticklabels(domain_names, rotation=45, ha='right')
-        ax.set_yticklabels(domain_names)
-        
-        ax.set_xlabel('Test Domain', fontsize=13, fontweight='bold')
-        ax.set_ylabel('Training Stage (after learning)', fontsize=13, fontweight='bold')
-        ax.set_title(f'Forgetting Analysis - {scenario_name}',
-                    fontsize=14, fontweight='bold', pad=15)
-        
-        # 각 셀에 정확도 값 표시 (퍼센트, 소수점 2자리, 크고 진하게)
+        # 🎯 각 행의 평균 계산 (Average Accuracy per Stage)
+        row_averages = []
         for i in range(len(domain_names)):
-            for j in range(len(domain_names)):
+            row_values = accuracy_matrix[i, :]
+            valid_values = row_values[~np.isnan(row_values)]
+            if len(valid_values) > 0:
+                row_avg = np.mean(valid_values)
+                row_averages.append(row_avg)
+            else:
+                row_averages.append(np.nan)
+        
+        # 확장된 행렬 생성 (원본 + 평균 열)
+        n_domains = len(domain_names)
+        extended_matrix = np.full((n_domains, n_domains + 1), np.nan)
+        extended_matrix[:, :n_domains] = accuracy_matrix
+        extended_matrix[:, n_domains] = row_averages  # 마지막 열에 평균 추가
+        
+        # Figure 생성 (평균 열을 위해 더 넓게, 간격 조정)
+        fig = plt.figure(figsize=(14, 8))
+        
+        # GridSpec으로 메인 heatmap과 평균 열 분리
+        import matplotlib.gridspec as gridspec
+        gs = gridspec.GridSpec(1, 2, width_ratios=[n_domains, 1], wspace=0.15)
+        
+        ax_main = fig.add_subplot(gs[0])  # 메인 heatmap
+        ax_avg = fig.add_subplot(gs[1], sharey=ax_main)  # 평균 열
+        
+        cmap_custom = LinearSegmentedColormap.from_list(
+            'white_to_lightgreen',
+            ['#ffffff', '#f7c6ba', '#fa7e5f']   # 필요하면 마지막 색 더 밝게(예: #d6f5c2)
+        )
+
+        # 🎯 메인 Heatmap 생성
+        accuracy_matrix_percent = accuracy_matrix * 100
+        im_main = ax_main.imshow(accuracy_matrix_percent, cmap=cmap_custom, aspect='auto',
+                                vmin=0, vmax=100, interpolation='nearest')
+        
+        # 메인 heatmap 축 설정
+        ax_main.set_xticks(np.arange(n_domains))
+        ax_main.set_yticks(np.arange(n_domains))
+        ax_main.set_xticklabels(domain_names, rotation=45, ha='right', fontsize=11)
+        ax_main.set_yticklabels(domain_names, fontsize=11)
+        
+        ax_main.set_xlabel('Test Domain', fontsize=13, fontweight='bold', labelpad=10)
+        ax_main.set_ylabel('Training Stage (after learning)', fontsize=13, fontweight='bold')
+        
+        # 메인 heatmap 셀 값 표시 (모두 검은색 볼드)
+        for i in range(n_domains):
+            for j in range(n_domains):
                 if not np.isnan(accuracy_matrix[i, j]):
                     percent_val = accuracy_matrix[i, j] * 100
-                    # 배경색에 따라 텍스트 색상 조정
-                    text_color = 'white' if percent_val < 60 else 'black'
-                    text = ax.text(j, i, f'{percent_val:.2f}%',
-                                 ha='center', va='center', color=text_color,
-                                 fontsize=14, fontweight='bold')
+                    ax_main.text(j, i, f'{percent_val:.2f}%',
+                               ha='center', va='center', color='black',
+                               fontsize=13, fontweight='bold')
+        
+        # 🎯 Stage Average 열 생성
+        row_avg_matrix = np.array(row_averages).reshape(-1, 1)
+        row_avg_percent = row_avg_matrix * 100
+        im_avg = ax_avg.imshow(row_avg_percent, cmap=cmap_custom, aspect='auto',
+                              vmin=0, vmax=100, interpolation='nearest')
+        
+        # 평균 열 축 설정
+        ax_avg.set_xticks([0])
+        ax_avg.set_xticklabels(['Stage\nAvg'], rotation=0, ha='center', fontsize=12, fontweight='bold')
+        ax_avg.set_yticks([])  # Y축 라벨 숨김 (메인과 공유)
+        ax_avg.set_xlabel('')
+        
+        # 평균 열 값 표시 (모두 검은색 볼드)
+        for i in range(n_domains):
+            if not np.isnan(row_averages[i]):
+                percent_val = row_averages[i] * 100
+                ax_avg.text(0, i, f'{percent_val:.1f}%',
+                          ha='center', va='center', color='black',
+                          fontsize=15, fontweight='bold')
+        
+        # 전체 타이틀
+        fig.suptitle(f'Forgetting Analysis - {scenario_name}',
+                    fontsize=15, fontweight='bold', y=0.98)
+        
+        # 컬러바 (메인 heatmap에만)
+        cbar = plt.colorbar(im_main, ax=[ax_main, ax_avg], fraction=0.046, pad=0.04)
+        cbar.set_label('Accuracy (%)', rotation=270, labelpad=20, fontsize=12, fontweight='bold')
         
         plt.tight_layout()
         save_path = os.path.join(self.output_dir, f"{save_name}_{scenario_name}.png")
@@ -516,6 +567,7 @@ class PaperVisualizer:
         plt.close()
         
         logger.info(f"Forgetting heatmap 저장 완료: {save_path}")
+        logger.info(f"각 행 평균: {[f'{avg*100:.1f}%' for avg in row_averages if not np.isnan(avg)]}")
         return save_path
 
 def create_visualizer(output_dir: str) -> PaperVisualizer:
