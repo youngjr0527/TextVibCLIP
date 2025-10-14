@@ -1,0 +1,120 @@
+================================================================================
+TextVibCLIP Experiment Configuration
+================================================================================
+Timestamp: 2025-10-14 23:22:26
+Scenario: UOS_Scenario1_VaryingSpeed_ReplayFree
+Dataset: UOS
+Domain Order: 600RPM → 800RPM → 1000RPM → 1200RPM → 1400RPM → 1600RPM
+Shift Type: Varying Speed
+Device: cuda
+
+--------------------------------------------------
+Scenario Configuration
+--------------------------------------------------
+first_domain_epochs: 15
+remaining_epochs: 6
+batch_size: 8
+replay_buffer_size: 0
+patience: 8
+
+--------------------------------------------------
+Model Architecture
+--------------------------------------------------
+embedding_dim: 256
+text_dim: 768
+vibration_input_dim: 1
+vibration_input_length: 2048
+vibration_kernel_sizes: [16, 32, 64, 32]
+vibration_channels: [64, 128, 256, 512]
+vibration_stride: 2
+dropout: 0.1
+activation: relu
+normalization: batch_norm
+pooling: adaptive_avg
+
+text_encoder_model: distilbert-base-uncased
+lora_rank: 32
+lora_alpha: 64
+lora_target_modules: ['q_lin', 'v_lin']
+lora_dropout: 0.1
+
+projection_hidden_dim: 512
+projection_output_dim: 256
+projection_dropout: 0.1
+
+ranking_margin: 0.3
+ranking_loss_type: triplet
+
+aux_classification_enabled: True
+aux_num_classes: 7
+aux_loss_weight: 1.0
+aux_dropout: 0.2
+
+--------------------------------------------------
+Training Configuration
+--------------------------------------------------
+UOS standard configuration:
+  first_domain_epochs: 15
+  first_domain_lr: 0.0002
+  first_domain_weight_decay: 5e-05
+  first_domain_aux_weight: 2.0
+  first_domain_patience: 8
+  first_domain_min_epochs: 5
+  remaining_epochs: 6
+  remaining_lr: 5e-05
+  remaining_weight_decay: 0.0002
+  remaining_aux_weight: 5.0
+  remaining_patience: 2
+  remaining_min_epochs: 2
+
+--------------------------------------------------
+Replay Buffer Configuration
+--------------------------------------------------
+buffer_size_per_domain: 0
+embedding_dim: 256
+sampling_strategy: random
+replay_ratio: 0.6
+replay_every_n: 1
+replay_selection: balanced
+
+--------------------------------------------------
+Data Configuration
+--------------------------------------------------
+window_size: 2048
+overlap_ratio: 0.25
+signal_normalization: standardize
+validation_split: 0.2
+test_split: 0.2
+max_text_length: 128
+
+--------------------------------------------------
+Reproducibility Configuration
+--------------------------------------------------
+pytorch_seed: 42
+numpy_seed: 42
+random_seed: 2789026240
+cuda_seed: 42
+cudnn_deterministic: True
+cudnn_benchmark: False
+
+--------------------------------------------------
+Checkpoint Information
+--------------------------------------------------
+save_dir: results/20251014_225015/checkpoints/UOS_Scenario1_VaryingSpeed_ReplayFree
+max_grad_norm: 0.1
+
+--------------------------------------------------
+System Information
+--------------------------------------------------
+python_version: 3.8.18 | packaged by conda-forge | (default, Dec 23 2023, 17:21:28) 
+[GCC 12.3.0]
+pytorch_version: 2.0.1+cu117
+cuda_available: True
+cuda_version: 11.7
+gpu_count: 6
+current_gpu: 0
+gpu_name: Quadro RTX 5000
+
+================================================================================
+Configuration saved successfully
+================================================================================

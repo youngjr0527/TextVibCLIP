@@ -223,13 +223,47 @@ class TextVibCLIP(nn.Module):
             if label_tensor.dim() == 2:
                 label_tensor = label_tensor[:, 0]
 
-            prompt_map = {
-                0: "healthy bearing",
-                1: "bearing with ball fault",
-                2: "bearing inner race fault",
-                3: "bearing outer race fault"
+            # CWRU 클래스별 다양한 프롬프트 변형 (text embedding 분포 풍부화)
+            prompt_variations = {
+                0: [  # Healthy
+                    "healthy bearing",
+                    "normal bearing operation",
+                    "bearing in perfect condition",
+                    "healthy bearing with no fault"
+                ],
+                1: [  # Ball fault
+                    "bearing with ball fault",
+                    "ball defect in bearing",
+                    "ball damage on bearing",
+                    "defective ball element",
+                    "bearing showing ball defect",
+                    "ball fault in bearing system"
+                ],
+                2: [  # Inner race fault
+                    "bearing inner race fault",
+                    "inner race damage of bearing",
+                    "inner raceway fault",
+                    "inner race deterioration",
+                    "bearing with inner race defect",
+                    "inner race fault in bearing"
+                ],
+                3: [  # Outer race fault
+                    "bearing outer race fault",
+                    "outer race damage of bearing",
+                    "outer raceway fault",
+                    "outer race deterioration",
+                    "bearing with outer race defect",
+                    "outer race fault in bearing"
+                ]
             }
-            prompt_texts = [prompt_map.get(int(c.item()), "healthy bearing") for c in label_tensor]
+            
+            # 배치 내 각 샘플에 대해 랜덤하게 프롬프트 변형 선택
+            import random
+            prompt_texts = []
+            for c in label_tensor:
+                class_id = int(c.item())
+                selected_prompt = random.choice(prompt_variations.get(class_id, ["unknown bearing condition"]))
+                prompt_texts.append(selected_prompt)
             text_raw = self.text_encoder.encode_texts(prompt_texts, device)
         else:
             if 'input_ids' in batch and 'attention_mask' in batch:

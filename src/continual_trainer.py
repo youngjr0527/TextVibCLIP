@@ -529,27 +529,37 @@ class ContinualTrainer:
             device = vib_emb.device
             # 데이터셋별 클래스 프롬프트
             if self.dataset_type == 'cwru':
-                # CWRU: 4-클래스 (HP 정보 제거)
+                # CWRU: 4-클래스 (HP 정보 제거) - 다양한 프롬프트 변형으로 text embedding 분포 풍부화
                 prompt_bank = {
-                    0: [
+                    0: [  # Healthy -
                         "healthy bearing",
-                        "normal bearing with no fault",
-                        "bearing vibration without defect"
+                        "bearing in perfect condition",
+                        "normal bearing operation",
+                        "healthy bearing with no defect",
                     ],
-                    1: [
+                    1: [  # Ball fault 
                         "bearing with ball fault",
                         "ball defect in bearing",
-                        "ball damage on bearing"
+                        "ball damage on bearing",
+                        "defective ball element",
+                        "bearing showing ball defect",
+                        "ball fault in bearing system",
                     ],
-                    2: [
+                    2: [  # Inner race fault 
                         "bearing inner race fault",
-                        "inner ring defect in bearing",
-                        "inner race damage of bearing"
+                        "inner race damage of bearing",
+                        "inner raceway fault",
+                        "inner race deterioration",
+                        "bearing with inner race defect",
+                        "inner race fault in bearing",
                     ],
-                    3: [
+                    3: [  # Outer race fault 
                         "bearing outer race fault",
-                        "outer ring defect in bearing",
-                        "outer race damage of bearing"
+                        "outer race damage of bearing",
+                        "outer raceway fault",
+                        "outer race deterioration",
+                        "bearing with outer race defect",
+                        "outer race fault in bearing",
                     ]
                 }
                 class_ids = [0, 1, 2, 3]
