@@ -207,10 +207,15 @@ class ContinualTrainer:
         first_domain_accuracy = 0.0
         for domain, metrics in first_domain_performance.items():
             if domain not in self.performance_history:
-                self.performance_history[domain] = {'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': []}
+                self.performance_history[domain] = {
+                    'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': [],
+                    'text_accuracy': [], 'vib_accuracy': []
+                }
             
             self.performance_history[domain]['accuracy'].append(metrics['accuracy'])
             self.performance_history[domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
+            self.performance_history[domain]['text_accuracy'].append(metrics.get('text_accuracy', 0.0))
+            self.performance_history[domain]['vib_accuracy'].append(metrics.get('vib_accuracy', 0.0))
             if self.dataset_type != 'cwru' and 'top5_retrieval' in metrics:
                 self.performance_history[domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
             
@@ -304,9 +309,14 @@ class ContinualTrainer:
             # 성능 기록
             for eval_domain, metrics in after_performance.items():
                 if eval_domain not in self.performance_history:
-                    self.performance_history[eval_domain] = {'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': []}
+                    self.performance_history[eval_domain] = {
+                        'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': [],
+                        'text_accuracy': [], 'vib_accuracy': []
+                    }
                 self.performance_history[eval_domain]['accuracy'].append(metrics.get('accuracy', 0.0))
                 self.performance_history[eval_domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
+                self.performance_history[eval_domain]['text_accuracy'].append(metrics.get('text_accuracy', 0.0))
+                self.performance_history[eval_domain]['vib_accuracy'].append(metrics.get('vib_accuracy', 0.0))
                 if self.dataset_type != 'cwru' and 'top5_retrieval' in metrics:
                     self.performance_history[eval_domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
 
@@ -717,10 +727,10 @@ class ContinualTrainer:
                     final_top1_retrievals.append(self.performance_history[domain]['top1_retrieval'][-1])
                 if self.performance_history[domain]['top5_retrieval']:
                     final_top5_retrievals.append(self.performance_history[domain]['top5_retrieval'][-1])
-                # 논문용 시각화를 위한 추가 메트릭
-                if self.performance_history[domain]['text_accuracy']:
+                # 논문용 시각화를 위한 추가 메트릭 (안전한 접근)
+                if 'text_accuracy' in self.performance_history[domain] and self.performance_history[domain]['text_accuracy']:
                     text_accuracies.append(self.performance_history[domain]['text_accuracy'][-1])
-                if self.performance_history[domain]['vib_accuracy']:
+                if 'vib_accuracy' in self.performance_history[domain] and self.performance_history[domain]['vib_accuracy']:
                     vib_accuracies.append(self.performance_history[domain]['vib_accuracy'][-1])
         
         avg_accuracy = np.mean(final_accuracies) if final_accuracies else 0.0
