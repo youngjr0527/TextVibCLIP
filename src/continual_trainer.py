@@ -713,7 +713,10 @@ class ContinualTrainer:
         if not self.performance_history:
             return {}
         
-        final_accuracies = []
+        # 🎯 Continual Learning 표준 평가 방식
+        # 각 도메인의 평균 정확도: 전체 학습 과정 동안의 평균
+        # 예: 600RPM → 1회, 800RPM → 2회, ..., 1600RPM → 6회 평균
+        final_accuracies = []  # 각 도메인의 평균 정확도 (학습 과정 전체)
         final_top1_retrievals = []
         final_top5_retrievals = []
         text_accuracies = []
@@ -721,17 +724,23 @@ class ContinualTrainer:
         
         for domain in self.completed_domains:
             if domain in self.performance_history:
+                # 각 도메인에서 전체 학습 과정 동안의 평균 정확도
                 if self.performance_history[domain]['accuracy']:
-                    final_accuracies.append(self.performance_history[domain]['accuracy'][-1])
+                    domain_avg_acc = np.mean(self.performance_history[domain]['accuracy'])
+                    final_accuracies.append(domain_avg_acc)
                 if self.performance_history[domain]['top1_retrieval']:
-                    final_top1_retrievals.append(self.performance_history[domain]['top1_retrieval'][-1])
+                    domain_avg_retr = np.mean(self.performance_history[domain]['top1_retrieval'])
+                    final_top1_retrievals.append(domain_avg_retr)
                 if self.performance_history[domain]['top5_retrieval']:
-                    final_top5_retrievals.append(self.performance_history[domain]['top5_retrieval'][-1])
+                    domain_avg_top5 = np.mean(self.performance_history[domain]['top5_retrieval'])
+                    final_top5_retrievals.append(domain_avg_top5)
                 # 논문용 시각화를 위한 추가 메트릭 (안전한 접근)
                 if 'text_accuracy' in self.performance_history[domain] and self.performance_history[domain]['text_accuracy']:
-                    text_accuracies.append(self.performance_history[domain]['text_accuracy'][-1])
+                    domain_avg_text = np.mean(self.performance_history[domain]['text_accuracy'])
+                    text_accuracies.append(domain_avg_text)
                 if 'vib_accuracy' in self.performance_history[domain] and self.performance_history[domain]['vib_accuracy']:
-                    vib_accuracies.append(self.performance_history[domain]['vib_accuracy'][-1])
+                    domain_avg_vib = np.mean(self.performance_history[domain]['vib_accuracy'])
+                    vib_accuracies.append(domain_avg_vib)
         
         avg_accuracy = np.mean(final_accuracies) if final_accuracies else 0.0
         avg_top1_retrieval = np.mean(final_top1_retrievals) if final_top1_retrievals else 0.0
