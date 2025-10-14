@@ -479,13 +479,14 @@ class PaperVisualizer:
         
         fig, ax = plt.subplots(figsize=(10, 8))
         
-        # Heatmap 생성
-        im = ax.imshow(accuracy_matrix, cmap='RdYlGn', aspect='auto',
-                      vmin=0, vmax=1, interpolation='nearest')
+        # Heatmap 생성 (퍼센트 범위: 0-100)
+        accuracy_matrix_percent = accuracy_matrix * 100  # 0~1 → 0~100
+        im = ax.imshow(accuracy_matrix_percent, cmap='RdYlGn', aspect='auto',
+                      vmin=0, vmax=100, interpolation='nearest')
         
         # 컬러바
         cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Accuracy', rotation=270, labelpad=20, fontsize=12, fontweight='bold')
+        cbar.set_label('Accuracy (%)', rotation=270, labelpad=20, fontsize=12, fontweight='bold')
         
         # 축 설정
         ax.set_xticks(np.arange(len(domain_names)))
@@ -498,14 +499,16 @@ class PaperVisualizer:
         ax.set_title(f'Forgetting Analysis - {scenario_name}',
                     fontsize=14, fontweight='bold', pad=15)
         
-        # 각 셀에 정확도 값 표시
+        # 각 셀에 정확도 값 표시 (퍼센트, 소수점 2자리, 크고 진하게)
         for i in range(len(domain_names)):
             for j in range(len(domain_names)):
                 if not np.isnan(accuracy_matrix[i, j]):
-                    text_color = 'white' if accuracy_matrix[i, j] < 0.5 else 'black'
-                    text = ax.text(j, i, f'{accuracy_matrix[i, j]:.2f}',
+                    percent_val = accuracy_matrix[i, j] * 100
+                    # 배경색에 따라 텍스트 색상 조정
+                    text_color = 'white' if percent_val < 60 else 'black'
+                    text = ax.text(j, i, f'{percent_val:.2f}%',
                                  ha='center', va='center', color=text_color,
-                                 fontsize=10, fontweight='bold')
+                                 fontsize=14, fontweight='bold')
         
         plt.tight_layout()
         save_path = os.path.join(self.output_dir, f"{save_name}_{scenario_name}.png")

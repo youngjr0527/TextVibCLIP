@@ -194,34 +194,38 @@ class ContinualTrainer:
             mirror_path = os.path.join(self.mirror_save_dir, 'first_domain_final.pth')
             self.model.save_checkpoint(mirror_path, num_epochs, optimizer.state_dict())
         
-        # 성능 평가
+        # 🎯 첫 번째 도메인만 평가 (아직 학습하지 않은 도메인은 평가 안함)
+        first_domain = self.domain_order[0]
         domain_dataloaders = create_domain_dataloaders(
             data_dir=self.data_dir,
-            domain_order=self.domain_order,
+            domain_order=[first_domain],  # 첫 번째 도메인만
             dataset_type=self.dataset_type,
             batch_size=self.batch_size
         )
         first_domain_performance = self._evaluate_all_domains(domain_dataloaders)
         
-        # 성능 기록
+        # 첫 번째 도메인 성능만 기록
         first_domain_accuracy = 0.0
-        for domain, metrics in first_domain_performance.items():
-            if domain not in self.performance_history:
-                self.performance_history[domain] = {
+        if first_domain in first_domain_performance:
+            metrics = first_domain_performance[first_domain]
+            
+            # performance_history 초기화
+            if first_domain not in self.performance_history:
+                self.performance_history[first_domain] = {
                     'accuracy': [], 'top1_retrieval': [], 'top5_retrieval': [],
                     'text_accuracy': [], 'vib_accuracy': []
                 }
             
-            self.performance_history[domain]['accuracy'].append(metrics['accuracy'])
-            self.performance_history[domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
-            self.performance_history[domain]['text_accuracy'].append(metrics.get('text_accuracy', 0.0))
-            self.performance_history[domain]['vib_accuracy'].append(metrics.get('vib_accuracy', 0.0))
+            # 첫 번째 도메인 성능 기록
+            self.performance_history[first_domain]['accuracy'].append(metrics['accuracy'])
+            self.performance_history[first_domain]['top1_retrieval'].append(metrics.get('top1_retrieval', 0.0))
+            self.performance_history[first_domain]['text_accuracy'].append(metrics.get('text_accuracy', 0.0))
+            self.performance_history[first_domain]['vib_accuracy'].append(metrics.get('vib_accuracy', 0.0))
             if self.dataset_type != 'cwru' and 'top5_retrieval' in metrics:
-                self.performance_history[domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
+                self.performance_history[first_domain]['top5_retrieval'].append(metrics.get('top5_retrieval', 0.0))
             
             first_domain_accuracy = metrics['accuracy']
-            self.best_accuracy_per_domain[domain] = max(self.best_accuracy_per_domain.get(domain, 0.0), float(first_domain_accuracy))
-            break
+            self.best_accuracy_per_domain[first_domain] = max(self.best_accuracy_per_domain.get(first_domain, 0.0), float(first_domain_accuracy))
         
         logger.info(f"첫 번째 도메인 정확도: {first_domain_accuracy:.4f}")
         logger.info("=== First Domain Training 완료 ===")
@@ -709,42 +713,73 @@ class ContinualTrainer:
         return np.mean(forgetting_scores) if forgetting_scores else 0.0
     
     def _calculate_final_metrics(self) -> Dict[str, float]:
-        """최종 메트릭 계산"""
+        """최종 메트릭 계산
+        
+        🎯 Continual Learning 표준 평가:
+        각 학습 단계에서 현재까지 마주한 모든 도메인의 평균 성능
+        
+        예: UOS (600→800→1000→1200→1400→1600)
+        - 600RPM 학습 후: 600RPM만 평가 → 평균 1개
+        - 800RPM 학습 후: 600, 800RPM 평가 → 평균 2개
+        - 1000RPM 학습 후: 600, 800, 1000RPM 평가 → 평균 3개
+        - ...
+        - 1600RPM 학습 후: 모든 6개 평가 → 평균 6개
+        
+        final_accuracies[i] = i번째 학습 단계에서 현재까지 학습한 모든 도메인의 평균
+                            = Heatmap의 i번째 행 평균
+        """
         if not self.performance_history:
             return {}
         
-        # 🎯 Continual Learning 표준 평가 방식
-        # 각 도메인의 평균 정확도: 전체 학습 과정 동안의 평균
-        # 예: 600RPM → 1회, 800RPM → 2회, ..., 1600RPM → 6회 평균
-        final_accuracies = []  # 각 도메인의 평균 정확도 (학습 과정 전체)
-        final_top1_retrievals = []
-        final_top5_retrievals = []
-        text_accuracies = []
-        vib_accuracies = []
+        # 각 학습 단계별 평균 성능 계산
+        stage_accuracies = []  # 각 학습 단계의 평균 (Heatmap 행 평균)
+        stage_top1_retrievals = []
+        stage_top5_retrievals = []
+        stage_text_accs = []
+        stage_vib_accs = []
         
-        for domain in self.completed_domains:
-            if domain in self.performance_history:
-                # 각 도메인에서 전체 학습 과정 동안의 평균 정확도
-                if self.performance_history[domain]['accuracy']:
-                    domain_avg_acc = np.mean(self.performance_history[domain]['accuracy'])
-                    final_accuracies.append(domain_avg_acc)
-                if self.performance_history[domain]['top1_retrieval']:
-                    domain_avg_retr = np.mean(self.performance_history[domain]['top1_retrieval'])
-                    final_top1_retrievals.append(domain_avg_retr)
-                if self.performance_history[domain]['top5_retrieval']:
-                    domain_avg_top5 = np.mean(self.performance_history[domain]['top5_retrieval'])
-                    final_top5_retrievals.append(domain_avg_top5)
-                # 논문용 시각화를 위한 추가 메트릭 (안전한 접근)
-                if 'text_accuracy' in self.performance_history[domain] and self.performance_history[domain]['text_accuracy']:
-                    domain_avg_text = np.mean(self.performance_history[domain]['text_accuracy'])
-                    text_accuracies.append(domain_avg_text)
-                if 'vib_accuracy' in self.performance_history[domain] and self.performance_history[domain]['vib_accuracy']:
-                    domain_avg_vib = np.mean(self.performance_history[domain]['vib_accuracy'])
-                    vib_accuracies.append(domain_avg_vib)
+        n_domains = len(self.completed_domains)
         
-        avg_accuracy = np.mean(final_accuracies) if final_accuracies else 0.0
-        avg_top1_retrieval = np.mean(final_top1_retrievals) if final_top1_retrievals else 0.0
-        avg_top5_retrieval = np.mean(final_top5_retrievals) if final_top5_retrievals else 0.0
+        for stage_idx in range(n_domains):
+            # stage_idx번째 학습 단계: 0~stage_idx까지의 도메인 학습 완료
+            # 현재까지 학습한 모든 도메인 (0 ~ stage_idx)에 대한 평균
+            stage_accs = []
+            stage_retrs = []
+            stage_top5s = []
+            stage_texts = []
+            stage_vibs = []
+            
+            for domain_idx in range(stage_idx + 1):
+                domain = self.completed_domains[domain_idx]
+                if domain in self.performance_history:
+                    # stage_idx번째 단계에서의 이 도메인 성능
+                    if len(self.performance_history[domain]['accuracy']) > stage_idx:
+                        stage_accs.append(self.performance_history[domain]['accuracy'][stage_idx])
+                    if len(self.performance_history[domain]['top1_retrieval']) > stage_idx:
+                        stage_retrs.append(self.performance_history[domain]['top1_retrieval'][stage_idx])
+                    if len(self.performance_history[domain]['top5_retrieval']) > stage_idx:
+                        stage_top5s.append(self.performance_history[domain]['top5_retrieval'][stage_idx])
+                    if 'text_accuracy' in self.performance_history[domain] and len(self.performance_history[domain]['text_accuracy']) > stage_idx:
+                        stage_texts.append(self.performance_history[domain]['text_accuracy'][stage_idx])
+                    if 'vib_accuracy' in self.performance_history[domain] and len(self.performance_history[domain]['vib_accuracy']) > stage_idx:
+                        stage_vibs.append(self.performance_history[domain]['vib_accuracy'][stage_idx])
+            
+            # 이 단계의 평균들
+            if stage_accs:
+                stage_accuracies.append(np.mean(stage_accs))
+            if stage_retrs:
+                stage_top1_retrievals.append(np.mean(stage_retrs))
+            if stage_top5s:
+                stage_top5_retrievals.append(np.mean(stage_top5s))
+            if stage_texts:
+                stage_text_accs.append(np.mean(stage_texts))
+            if stage_vibs:
+                stage_vib_accs.append(np.mean(stage_vibs))
+        
+        # 전체 평균 계산
+        avg_accuracy = np.mean(stage_accuracies) if stage_accuracies else 0.0
+        avg_top1_retrieval = np.mean(stage_top1_retrievals) if stage_top1_retrievals else 0.0
+        avg_top5_retrieval = np.mean(stage_top5_retrievals) if stage_top5_retrievals else 0.0
         
         valid_forgets = [f for f in self.forgetting_scores if f is not None]
         avg_forgetting = np.mean(valid_forgets) if valid_forgets else 0.0
@@ -755,11 +790,12 @@ class ContinualTrainer:
             'average_top5_retrieval': avg_top5_retrieval,
             'average_forgetting': avg_forgetting,
             'num_domains': len(self.completed_domains),
-            'final_accuracies': final_accuracies,
-            'final_top1_retrievals': final_top1_retrievals,
-            'final_top5_retrievals': final_top5_retrievals,
-            'text_accuracies': text_accuracies,
-            'vib_accuracies': vib_accuracies
+            # 🎯 각 학습 단계별 평균 (Heatmap 행 평균)
+            'final_accuracies': stage_accuracies,
+            'final_top1_retrievals': stage_top1_retrievals,
+            'final_top5_retrievals': stage_top5_retrievals,
+            'text_accuracies': stage_text_accs,
+            'vib_accuracies': stage_vib_accs
         }
     
     def _create_optimizer(self) -> torch.optim.Optimizer:

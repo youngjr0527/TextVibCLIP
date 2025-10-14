@@ -123,14 +123,16 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
     start_time = time.time()
     
     try:
-        # Trainer 생성 (결과 폴더 내 체크포인트 미러 저장 경로 전달)
+        # Trainer 생성 (실험별 독립 체크포인트 디렉토리)
+        # 재현성 보장: 각 실험이 독립적인 체크포인트 사용
+        checkpoint_dir = os.path.join(experiment_dir, 'checkpoints', config['name'])
         trainer = ContinualTrainer(
             device=device,
-            save_dir=f"checkpoints/{config['name']}",
+            save_dir=checkpoint_dir,  # 실험별 독립 디렉토리
             domain_order=config['domain_order'],
             data_dir=config['data_dir'],
             dataset_type=config['dataset_type'],
-            results_save_dir=os.path.join(experiment_dir, 'checkpoints', config['name'])
+            results_save_dir=None  # 미러 불필요 (이미 실험 폴더 내부)
         )
         
         # 하이퍼파라미터 설정
@@ -311,17 +313,26 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
                 scenario_name=config['name']
             )
             
-            # Forgetting Analysis Heatmap
+            # Forgetting Analysis Heatmap (실제 performance_history 사용)
+            # Heatmap[i, j] = i번째 학습 단계 후, j번째 test domain 정확도
+            # 위쪽 삼각형만 값 있음 (j <= i, 이미 학습한 도메인만)
             n_domains = len(config['domain_names'])
-            # 예시: 대각선은 높고, 멀어질수록 낮은 패턴
-            accuracy_matrix = np.zeros((n_domains, n_domains))
+            accuracy_matrix = np.full((n_domains, n_domains), np.nan)
+            
+            # trainer.performance_history에서 실제 데이터 추출
             for i in range(n_domains):
+                # i번째 학습 단계 (0~i번째 도메인까지 학습 완료)
                 for j in range(n_domains):
-                    if i <= j:
-                        # 학습 후 해당 도메인 정확도
-                        accuracy_matrix[i, j] = remaining_results['final_metrics']['final_accuracies'][j] * (0.9 + 0.1 * (1 - abs(i-j)/n_domains))
-                    else:
-                        accuracy_matrix[i, j] = np.nan  # 아직 학습 안함
+                    # j번째 test domain
+                    if j <= i:  # 이미 학습한 도메인만 (위쪽 삼각형)
+                        test_domain = config['domain_order'][j]
+                        if test_domain in trainer.performance_history:
+                            history = trainer.performance_history[test_domain]['accuracy']
+                            # j번째 도메인은 j번째 단계부터 평가됨
+                            # i번째 단계에서의 인덱스 = i - j
+                            history_idx = i - j
+                            if len(history) > history_idx:
+                                accuracy_matrix[i, j] = history[history_idx]
 
             visualizer.create_forgetting_heatmap(
                 domain_names=config['domain_names'],
