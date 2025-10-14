@@ -95,7 +95,7 @@ class ScenarioConfig:
         'first_domain_epochs': 15,  # FIRST_DOMAIN_CONFIG 사용
         'remaining_epochs': 6,      # CONTINUAL_CONFIG 사용
         'batch_size': 8,            # 안정적 배치 크기
-        'replay_buffer_size': 500,
+        'replay_buffer_size': 1000,  #500이었음
         'patience': 8
     }
     
@@ -108,8 +108,8 @@ class ScenarioConfig:
         'shift_type': 'Varying Load',
         'first_domain_epochs': 15,
         'remaining_epochs': 6,
-        'batch_size': 4,            # 16 → 4 (극소 데이터 대응)
-        'replay_buffer_size': 50,   # 200 → 50 (작은 버퍼)
+        'batch_size': 4,            #  (극소 데이터 대응)
+        'replay_buffer_size': 100,   
         'patience': 5
     }
 
@@ -344,6 +344,10 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         except Exception as paper_viz_err:
             logger.warning(f" 시각화 생성 실패: {paper_viz_err}")
         
+        # 실험 설정 저장
+        config_path = save_experiment_config(config, trainer, experiment_dir, device)
+        logger.info(f"📝 실험 설정 저장: {config_path}")
+        
         # 결과 정리 (Heatmap 데이터 포함)
         final_metrics = remaining_results['final_metrics']
         total_time = time.time() - start_time
@@ -409,6 +413,185 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         logger.error(f"❌ {config['name']} 실행 중 오류: {str(e)}")
         logger.exception("상세 오류 정보:")
         return None
+
+
+def save_experiment_config(config: Dict, trainer, output_dir: str, device: torch.device) -> str:
+    """Save experiment configuration to txt file"""
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    config_path = os.path.join(output_dir, f'experiment_config_{timestamp}.txt')
+    
+    with open(config_path, 'w', encoding='utf-8') as f:
+        f.write("=" * 80 + "\n")
+        f.write("TextVibCLIP Experiment Configuration\n")
+        f.write("=" * 80 + "\n")
+        f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Scenario: {config['name']}\n")
+        f.write(f"Dataset: {config['dataset_type'].upper()}\n")
+        f.write(f"Domain Order: {' → '.join(config['domain_names'])}\n")
+        f.write(f"Shift Type: {config['shift_type']}\n")
+        f.write(f"Device: {device}\n\n")
+        
+        # Scenario Configuration
+        f.write("-" * 50 + "\n")
+        f.write("Scenario Configuration\n")
+        f.write("-" * 50 + "\n")
+        for key, value in config.items():
+            if key not in ['name', 'data_dir', 'dataset_type', 'domain_order', 'domain_names', 'shift_type']:
+                f.write(f"{key}: {value}\n")
+        f.write("\n")
+        
+        # Model Architecture
+        f.write("-" * 50 + "\n")
+        f.write("Model Architecture\n")
+        f.write("-" * 50 + "\n")
+        try:
+            from configs.model_config import MODEL_CONFIG
+            f.write(f"embedding_dim: {MODEL_CONFIG['embedding_dim']}\n")
+            f.write(f"text_dim: {MODEL_CONFIG['text_dim']}\n")
+            f.write(f"vibration_input_dim: {MODEL_CONFIG['vibration_input_dim']}\n")
+            f.write(f"vibration_input_length: {MODEL_CONFIG['vibration_encoder']['input_length']}\n")
+            f.write(f"vibration_kernel_sizes: {MODEL_CONFIG['vibration_encoder']['kernel_sizes']}\n")
+            f.write(f"vibration_channels: {MODEL_CONFIG['vibration_encoder']['channels']}\n")
+            f.write(f"vibration_stride: {MODEL_CONFIG['vibration_encoder']['stride']}\n")
+            f.write(f"dropout: {MODEL_CONFIG['vibration_encoder']['dropout']}\n")
+            f.write(f"activation: {MODEL_CONFIG['vibration_encoder']['activation']}\n")
+            f.write(f"normalization: {MODEL_CONFIG['vibration_encoder']['normalization']}\n")
+            f.write(f"pooling: {MODEL_CONFIG['vibration_encoder']['pooling']}\n")
+            
+            # Text Encoder Configuration
+            f.write(f"\ntext_encoder_model: {MODEL_CONFIG['text_encoder']['model_name']}\n")
+            f.write(f"lora_rank: {MODEL_CONFIG['text_encoder']['lora_config']['r']}\n")
+            f.write(f"lora_alpha: {MODEL_CONFIG['text_encoder']['lora_config']['lora_alpha']}\n")
+            f.write(f"lora_target_modules: {MODEL_CONFIG['text_encoder']['lora_config']['target_modules']}\n")
+            f.write(f"lora_dropout: {MODEL_CONFIG['text_encoder']['lora_config']['lora_dropout']}\n")
+            
+            # Projection Layers
+            f.write(f"\nprojection_hidden_dim: {MODEL_CONFIG['projection']['hidden_dim']}\n")
+            f.write(f"projection_output_dim: {MODEL_CONFIG['projection']['output_dim']}\n")
+            f.write(f"projection_dropout: {MODEL_CONFIG['projection']['dropout']}\n")
+            
+            # Ranking Loss
+            f.write(f"\nranking_margin: {MODEL_CONFIG['ranking_loss']['margin']}\n")
+            f.write(f"ranking_loss_type: {MODEL_CONFIG['ranking_loss']['loss_type']}\n")
+            
+            # Auxiliary Classification
+            f.write(f"\naux_classification_enabled: {MODEL_CONFIG['aux_classification']['enabled']}\n")
+            f.write(f"aux_num_classes: {MODEL_CONFIG['aux_classification']['num_classes']}\n")
+            f.write(f"aux_loss_weight: {MODEL_CONFIG['aux_classification']['loss_weight']}\n")
+            f.write(f"aux_dropout: {MODEL_CONFIG['aux_classification']['dropout']}\n")
+        except Exception as e:
+            f.write(f"Model config loading failed: {e}\n")
+        f.write("\n")
+        
+        # Training Configuration
+        f.write("-" * 50 + "\n")
+        f.write("Training Configuration\n")
+        f.write("-" * 50 + "\n")
+        try:
+            from configs.model_config import FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG, CWRU_SPECIFIC_CONFIG, CWRU_FIRST_DOMAIN_CONFIG
+            
+            if config['dataset_type'] == 'cwru':
+                f.write("CWRU-specific configuration:\n")
+                f.write(f"  first_domain_epochs: {CWRU_FIRST_DOMAIN_CONFIG['num_epochs']}\n")
+                f.write(f"  first_domain_lr: {CWRU_FIRST_DOMAIN_CONFIG['learning_rate']}\n")
+                f.write(f"  first_domain_weight_decay: {CWRU_FIRST_DOMAIN_CONFIG['weight_decay']}\n")
+                f.write(f"  first_domain_aux_weight: {CWRU_FIRST_DOMAIN_CONFIG['aux_weight']}\n")
+                f.write(f"  first_domain_patience: {CWRU_FIRST_DOMAIN_CONFIG['patience']}\n")
+                f.write(f"  remaining_epochs: {CWRU_SPECIFIC_CONFIG['num_epochs']}\n")
+                f.write(f"  remaining_lr: {CWRU_SPECIFIC_CONFIG['learning_rate']}\n")
+                f.write(f"  remaining_weight_decay: {CWRU_SPECIFIC_CONFIG['weight_decay']}\n")
+                f.write(f"  remaining_aux_weight: {CWRU_SPECIFIC_CONFIG['aux_weight']}\n")
+                f.write(f"  remaining_patience: {CWRU_SPECIFIC_CONFIG['patience']}\n")
+            else:
+                f.write("UOS standard configuration:\n")
+                f.write(f"  first_domain_epochs: {FIRST_DOMAIN_CONFIG['num_epochs']}\n")
+                f.write(f"  first_domain_lr: {FIRST_DOMAIN_CONFIG['learning_rate']}\n")
+                f.write(f"  first_domain_weight_decay: {FIRST_DOMAIN_CONFIG['weight_decay']}\n")
+                f.write(f"  first_domain_aux_weight: {FIRST_DOMAIN_CONFIG['aux_weight']}\n")
+                f.write(f"  first_domain_patience: {FIRST_DOMAIN_CONFIG['patience']}\n")
+                f.write(f"  first_domain_min_epochs: {FIRST_DOMAIN_CONFIG['min_epoch']}\n")
+                f.write(f"  remaining_epochs: {CONTINUAL_CONFIG['num_epochs']}\n")
+                f.write(f"  remaining_lr: {CONTINUAL_CONFIG['learning_rate']}\n")
+                f.write(f"  remaining_weight_decay: {CONTINUAL_CONFIG['weight_decay']}\n")
+                f.write(f"  remaining_aux_weight: {CONTINUAL_CONFIG['aux_weight']}\n")
+                f.write(f"  remaining_patience: {CONTINUAL_CONFIG['patience']}\n")
+                f.write(f"  remaining_min_epochs: {CONTINUAL_CONFIG['min_epoch']}\n")
+        except Exception as e:
+            f.write(f"Training config loading failed: {e}\n")
+        f.write("\n")
+        
+        # Replay Buffer Configuration
+        f.write("-" * 50 + "\n")
+        f.write("Replay Buffer Configuration\n")
+        f.write("-" * 50 + "\n")
+        f.write(f"buffer_size_per_domain: {trainer.replay_buffer.buffer_size_per_domain}\n")
+        f.write(f"embedding_dim: {trainer.replay_buffer.embedding_dim}\n")
+        f.write(f"sampling_strategy: {trainer.replay_buffer.sampling_strategy}\n")
+        try:
+            from configs.model_config import CONTINUAL_CONFIG
+            f.write(f"replay_ratio: {CONTINUAL_CONFIG.get('replay_ratio', 'N/A')}\n")
+            f.write(f"replay_every_n: {CONTINUAL_CONFIG.get('replay_every_n', 'N/A')}\n")
+            f.write(f"replay_selection: {CONTINUAL_CONFIG.get('replay_selection', 'N/A')}\n")
+        except Exception:
+            pass
+        f.write("\n")
+        
+        # Data Configuration
+        f.write("-" * 50 + "\n")
+        f.write("Data Configuration\n")
+        f.write("-" * 50 + "\n")
+        try:
+            from configs.model_config import DATA_CONFIG, CWRU_DATA_CONFIG
+            data_config = CWRU_DATA_CONFIG if config['dataset_type'] == 'cwru' else DATA_CONFIG
+            f.write(f"window_size: {data_config['window_size']}\n")
+            f.write(f"overlap_ratio: {data_config['overlap_ratio']}\n")
+            f.write(f"signal_normalization: {data_config['signal_normalization']}\n")
+            f.write(f"validation_split: {data_config['validation_split']}\n")
+            f.write(f"test_split: {data_config['test_split']}\n")
+            f.write(f"max_text_length: {data_config['max_text_length']}\n")
+        except Exception as e:
+            f.write(f"Data config loading failed: {e}\n")
+        f.write("\n")
+        
+        # Reproducibility Configuration
+        f.write("-" * 50 + "\n")
+        f.write("Reproducibility Configuration\n")
+        f.write("-" * 50 + "\n")
+        f.write(f"pytorch_seed: {torch.initial_seed()}\n")
+        f.write(f"numpy_seed: {np.random.get_state()[1][0] if hasattr(np.random, 'get_state') else 'N/A'}\n")
+        f.write(f"random_seed: {random.getstate()[1][0] if hasattr(random, 'getstate') else 'N/A'}\n")
+        f.write(f"cuda_seed: {torch.cuda.initial_seed() if torch.cuda.is_available() else 'N/A'}\n")
+        f.write(f"cudnn_deterministic: {torch.backends.cudnn.deterministic}\n")
+        f.write(f"cudnn_benchmark: {torch.backends.cudnn.benchmark}\n")
+        f.write("\n")
+        
+        # Checkpoint Information
+        f.write("-" * 50 + "\n")
+        f.write("Checkpoint Information\n")
+        f.write("-" * 50 + "\n")
+        f.write(f"save_dir: {trainer.save_dir}\n")
+        f.write(f"max_grad_norm: {trainer.max_grad_norm}\n")
+        f.write("\n")
+        
+        # System Information
+        f.write("-" * 50 + "\n")
+        f.write("System Information\n")
+        f.write("-" * 50 + "\n")
+        f.write(f"python_version: {sys.version}\n")
+        f.write(f"pytorch_version: {torch.__version__}\n")
+        f.write(f"cuda_available: {torch.cuda.is_available()}\n")
+        if torch.cuda.is_available():
+            f.write(f"cuda_version: {torch.version.cuda}\n")
+            f.write(f"gpu_count: {torch.cuda.device_count()}\n")
+            f.write(f"current_gpu: {torch.cuda.current_device()}\n")
+            f.write(f"gpu_name: {torch.cuda.get_device_name()}\n")
+        f.write("\n")
+        
+        f.write("=" * 80 + "\n")
+        f.write("Configuration saved successfully\n")
+        f.write("=" * 80 + "\n")
+    
+    return config_path
 
 
 def save_results(results: Dict, output_dir: str) -> str:

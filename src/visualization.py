@@ -476,7 +476,7 @@ class PaperVisualizer:
         Returns:
             저장 경로
         """
-        logger.info(f"Forgetting heatmap 생성 중: {scenario_name}")
+        logger.info(f"Continual learning heatmap 생성 중: {scenario_name}")
         
         # 🎯 각 행의 평균 계산 (Average Accuracy per Stage)
         row_averages = []
@@ -503,7 +503,7 @@ class PaperVisualizer:
         gs = gridspec.GridSpec(1, 2, width_ratios=[n_domains, 1], wspace=0.15)
         
         ax_main = fig.add_subplot(gs[0])  # 메인 heatmap
-        ax_avg = fig.add_subplot(gs[1], sharey=ax_main)  # 평균 열
+        ax_avg = fig.add_subplot(gs[1])  # 평균 열 (독립적 Y축)
         
         cmap_custom = LinearSegmentedColormap.from_list(
             'white_to_lightgreen',
@@ -518,11 +518,11 @@ class PaperVisualizer:
         # 메인 heatmap 축 설정
         ax_main.set_xticks(np.arange(n_domains))
         ax_main.set_yticks(np.arange(n_domains))
-        ax_main.set_xticklabels(domain_names, rotation=45, ha='right', fontsize=11)
-        ax_main.set_yticklabels(domain_names, fontsize=11)
+        ax_main.set_xticklabels(domain_names, rotation=45, ha='right', fontsize=11, fontweight='bold')
+        ax_main.set_yticklabels(domain_names, rotation=0, ha='right', fontsize=11, fontweight='bold')
         
         ax_main.set_xlabel('Test Domain', fontsize=13, fontweight='bold', labelpad=10)
-        ax_main.set_ylabel('Training Stage (after learning)', fontsize=13, fontweight='bold')
+        ax_main.set_ylabel('Domain Shift Progress', fontsize=13, fontweight='bold', labelpad=15)
         
         # 메인 heatmap 셀 값 표시 (모두 검은색 볼드)
         for i in range(n_domains):
@@ -540,10 +540,14 @@ class PaperVisualizer:
                               vmin=0, vmax=100, interpolation='nearest')
         
         # 평균 열 축 설정
-        ax_avg.set_xticks([0])
-        ax_avg.set_xticklabels(['Stage\nAvg'], rotation=0, ha='center', fontsize=12, fontweight='bold')
-        ax_avg.set_yticks([])  # Y축 라벨 숨김 (메인과 공유)
+        ax_avg.set_xticks([])  # X축 틱 제거
+        ax_avg.set_yticks([])  # Y축 틱 제거 (오른쪽 열만)
         ax_avg.set_xlabel('')
+        
+        # 평균 열 제목 추가 
+        ax_avg.text(0.5, 1.08, 'Average Accuracy', 
+                   ha='center', va='bottom', fontsize=12, fontweight='bold',
+                   transform=ax_avg.transAxes)
         
         # 평균 열 값 표시 (모두 검은색 볼드)
         for i in range(n_domains):
@@ -554,12 +558,9 @@ class PaperVisualizer:
                           fontsize=15, fontweight='bold')
         
         # 전체 타이틀
-        fig.suptitle(f'Forgetting Analysis - {scenario_name}',
+        fig.suptitle(f'Continual learning Analysis - {scenario_name}',
                     fontsize=15, fontweight='bold', y=0.98)
         
-        # 컬러바 (메인 heatmap에만)
-        cbar = plt.colorbar(im_main, ax=[ax_main, ax_avg], fraction=0.046, pad=0.04)
-        cbar.set_label('Accuracy (%)', rotation=270, labelpad=20, fontsize=12, fontweight='bold')
         
         plt.tight_layout()
         save_path = os.path.join(self.output_dir, f"{save_name}_{scenario_name}.png")

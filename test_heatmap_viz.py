@@ -13,13 +13,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.visualization import create_visualizer
 
 # 테스트할 실험 결과 디렉토리
-RESULTS_DIR = 'results/20251014_174419'
+RESULTS_DIR = 'results/20251014_184128'
 
 print("🎨 Heatmap 시각화 테스트")
 print("="*60)
 
 # JSON 결과 로드
-with open(f'{RESULTS_DIR}/results_20251014_180300.json', 'r') as f:
+with open(f'{RESULTS_DIR}/results_20251014_185815.json', 'r') as f:
     results = json.load(f)
 
 # Visualizer 생성
