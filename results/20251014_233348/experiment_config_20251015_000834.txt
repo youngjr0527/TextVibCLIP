@@ -1,7 +1,7 @@
 ================================================================================
 TextVibCLIP Experiment Configuration
 ================================================================================
-Timestamp: 2025-10-14 23:21:55
+Timestamp: 2025-10-15 00:08:34
 Scenario: CWRU_Scenario2_VaryingLoad
 Dataset: CWRU
 Domain Order: 0HP → 1HP → 2HP → 3HP
@@ -11,8 +11,8 @@ Device: cuda
 --------------------------------------------------
 Scenario Configuration
 --------------------------------------------------
-first_domain_epochs: 2
-remaining_epochs: 3
+first_domain_epochs: 15
+remaining_epochs: 6
 batch_size: 4
 replay_buffer_size: 100
 patience: 5
@@ -59,7 +59,7 @@ CWRU-specific configuration:
   first_domain_weight_decay: 0.005
   first_domain_aux_weight: 0.1
   first_domain_patience: 1
-  remaining_epochs: 3
+  remaining_epochs: 6
   remaining_lr: 1e-06
   remaining_weight_decay: 0.01
   remaining_aux_weight: 0.05
@@ -90,7 +90,7 @@ Reproducibility Configuration
 --------------------------------------------------
 pytorch_seed: 42
 numpy_seed: 42
-random_seed: 949503138
+random_seed: 836920534
 cuda_seed: 42
 cudnn_deterministic: True
 cudnn_benchmark: False
@@ -98,7 +98,7 @@ cudnn_benchmark: False
 --------------------------------------------------
 Checkpoint Information
 --------------------------------------------------
-save_dir: results/20251014_231950/checkpoints/CWRU_Scenario2_VaryingLoad
+save_dir: results/20251014_233348/checkpoints/CWRU_Scenario2_VaryingLoad
 max_grad_norm: 0.1
 
 --------------------------------------------------

@@ -41,7 +41,7 @@ MODEL_CONFIG = {
     # Ranking Loss - Triplet margin 설정
     'ranking_loss': {
         # Triplet Loss margin (같은 클래스 vs 다른 클래스 분리)
-        'margin': 0.3,  # 고정된 마진으로 안정적 학습
+        'margin': 0.4,  # 0.3 → 0.4 (더 명확한 클래스 분리)
         'loss_type': 'triplet',  # 'triplet' 또는 'margin_ranking'
     },
     
@@ -70,13 +70,13 @@ MODEL_CONFIG = {
 
     # 첫 번째 도메인 전용 학습 설정 (Foundation Learning)
 FIRST_DOMAIN_CONFIG = {
-    # 🎯 Foundation Learning: Ranking Loss와 Auxiliary Head 균형
-    'num_epochs': 15,           # 충분한 기초 학습
-    'learning_rate': 2e-4,      # 1e-4 → 2e-4 (적당한 학습률)
-    'weight_decay': 5e-5,       # 1e-4 → 5e-5 (정규화 완화)
-    'aux_weight': 2.0,          # 10.0 → 2.0 (Ranking loss와 균형)
-    'patience': 8,              # 5 → 8 (충분한 학습 기회)
-    'min_epoch': 5,             # 3 → 5 (최소 기초 학습 보장)
+    # 🎯 Foundation Learning: Ranking Loss와 Auxiliary Head 균형 (UOS 최적화)
+    'num_epochs': 20,           # 15 → 20 (더 안정적인 기초 학습)
+    'learning_rate': 1.5e-4,    # 2e-4 → 1.5e-4 (더 안정적인 학습률)
+    'weight_decay': 3e-5,       # 5e-5 → 3e-5 (과적합 방지 강화)
+    'aux_weight': 1.5,          # 2.0 → 1.5 (더 균형잡힌 loss)
+    'patience': 10,             # 8 → 10 (더 여유있는 조기 종료)
+    'min_epoch': 8,             # 5 → 8 (더 충분한 최소 학습)
     
     # 파라미터 그룹 LR 멀티플라이어 (적극적 학습)
     'lora_lr_mult': 3.0,
@@ -112,13 +112,13 @@ CWRU_FIRST_DOMAIN_CONFIG = {
 
 # Continual Learning 전용 설정 (Adaptation Learning) 
 CONTINUAL_CONFIG = {
-    # 🎯 Adaptation Learning: Auxiliary Head 중심 빠른 적응
-    'num_epochs': 4,            # 6 → 4 (적정 적응)
-    'learning_rate': 5e-5,      # 1e-4 → 5e-5 (더 보존적)
-    'weight_decay': 2e-4,       # 1e-4 → 2e-4 (과적합 방지 강화)
-    'aux_weight': 5.0,          # 0.5 → 5.0 (Auxiliary Head 중심)
-    'patience': 2,              # 3 → 2 (더 엄격한 조기 종료)
-    'min_epoch': 2,             # 최소 적응 학습 유지
+    # 🎯 Adaptation Learning: 균형잡힌 적응 (UOS 최적화)
+    'num_epochs': 8,            # 4 → 8 (더 충분한 적응 학습)
+    'learning_rate': 3e-5,      # 5e-5 → 3e-5 (더 안정적인 학습률)
+    'weight_decay': 1e-4,       # 2e-4 → 1e-4 (적절한 정규화)
+    'aux_weight': 3.0,          # 5.0 → 3.0 (더 균형잡힌 loss)
+    'patience': 4,              # 2 → 4 (더 여유있는 조기 종료)
+    'min_epoch': 3,             # 2 → 3 (더 충분한 최소 학습)
     
     # 파라미터 그룹 LR 멀티플라이어 (보존적 학습)
     'lora_lr_mult': 1.0,        # 텍스트 안정화
@@ -130,13 +130,13 @@ CONTINUAL_CONFIG = {
     'step_size': 3,
     'gamma': 0.8,
     
-    # Replay 설정
-    'replay_buffer_size': 500,
-    'replay_ratio': 0.6,
-    'replay_every_n': 1,
-    'replay_selection': 'balanced',
-    'replay_boost_domains': [1000, 1200],
-    'replay_boost_ratio': 0.7
+    # Replay 설정 (UOS 최적화)
+    'replay_buffer_size': 800,  # 500 → 800 (더 많은 과거 정보 보존)
+    'replay_ratio': 0.5,        # 0.6 → 0.5 (현재 도메인과 균형)
+    'replay_every_n': 1,        # 매 배치마다 replay
+    'replay_selection': 'representative',  # 'balanced' → 'representative' (더 효과적)
+    'replay_boost_domains': [1000, 1200, 1400],  # 1400 추가 (더 어려운 도메인)
+    'replay_boost_ratio': 0.6   # 0.7 → 0.6 (적절한 부스팅)
 }
 
 # CWRU 전용 설정 (극소 데이터 대응)

@@ -21,7 +21,7 @@ import random
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 
-# 🎯 재현성 보장을 위한 시드 고정
+# 🎯 재현성 보장을 위한 시드 고정 (중복 제거)
 def set_random_seeds(seed: int = 42):
     """모든 랜덤 시드 고정"""
     torch.manual_seed(seed)
@@ -35,9 +35,6 @@ def set_random_seeds(seed: int = 42):
     torch.backends.cudnn.benchmark = False
     
     print(f"🎯 Random seeds fixed to {seed} for reproducibility")
-
-# 시작 시 시드 고정
-set_random_seeds(42)
 
 # 프로젝트 루트 경로 추가
 import sys
@@ -92,11 +89,11 @@ class ScenarioConfig:
         'domain_order': [600, 800, 1000, 1200, 1400, 1600],
         'domain_names': ['600RPM', '800RPM', '1000RPM', '1200RPM', '1400RPM', '1600RPM'],
         'shift_type': 'Varying Speed',
-        'first_domain_epochs': 15,  # FIRST_DOMAIN_CONFIG 사용
-        'remaining_epochs': 6,      # CONTINUAL_CONFIG 사용
-        'batch_size': 8,            # 안정적 배치 크기
-        'replay_buffer_size': 1000,  #500이었음
-        'patience': 8
+        'first_domain_epochs': 20,  # 15 → 20 (더 안정적인 기초 학습)
+        'remaining_epochs': 8,      # 6 → 8 (균형잡힌 적응 학습)
+        'batch_size': 16,           # 8 → 16 (더 안정적인 그래디언트)
+        'replay_buffer_size': 800,  # 1000 → 800 (최적화된 메모리 사용)
+        'patience': 10              # 8 → 10 (더 여유있는 조기 종료)
     }
     
     CWRU_CONFIG = {
@@ -663,8 +660,8 @@ def main():
     """메인 실행 함수"""
     args = parse_arguments()
     
-    # 재현성 설정
-    set_seed(args.seed)
+    # 재현성 설정 (중복 제거 - set_random_seeds 사용)
+    set_random_seeds(args.seed)
     
     # 출력 디렉토리 생성
     os.makedirs(args.output_dir, exist_ok=True)

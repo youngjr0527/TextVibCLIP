@@ -1,21 +1,21 @@
 ================================================================================
 TextVibCLIP Experiment Configuration
 ================================================================================
-Timestamp: 2025-10-14 23:23:34
-Scenario: CWRU_Scenario2_VaryingLoad_ReplayFree
-Dataset: CWRU
-Domain Order: 0HP → 1HP → 2HP → 3HP
-Shift Type: Varying Load
+Timestamp: 2025-10-15 00:06:22
+Scenario: UOS_Scenario1_VaryingSpeed_ReplayFree
+Dataset: UOS
+Domain Order: 600RPM → 800RPM → 1000RPM → 1200RPM → 1400RPM → 1600RPM
+Shift Type: Varying Speed
 Device: cuda
 
 --------------------------------------------------
 Scenario Configuration
 --------------------------------------------------
-first_domain_epochs: 2
-remaining_epochs: 3
-batch_size: 4
+first_domain_epochs: 15
+remaining_epochs: 6
+batch_size: 8
 replay_buffer_size: 0
-patience: 5
+patience: 8
 
 --------------------------------------------------
 Model Architecture
@@ -53,17 +53,19 @@ aux_dropout: 0.2
 --------------------------------------------------
 Training Configuration
 --------------------------------------------------
-CWRU-specific configuration:
-  first_domain_epochs: 20
-  first_domain_lr: 5e-05
-  first_domain_weight_decay: 0.005
-  first_domain_aux_weight: 0.1
-  first_domain_patience: 1
-  remaining_epochs: 3
-  remaining_lr: 1e-06
-  remaining_weight_decay: 0.01
-  remaining_aux_weight: 0.05
-  remaining_patience: 1
+UOS standard configuration:
+  first_domain_epochs: 15
+  first_domain_lr: 0.0002
+  first_domain_weight_decay: 5e-05
+  first_domain_aux_weight: 2.0
+  first_domain_patience: 8
+  first_domain_min_epochs: 5
+  remaining_epochs: 6
+  remaining_lr: 5e-05
+  remaining_weight_decay: 0.0002
+  remaining_aux_weight: 5.0
+  remaining_patience: 2
+  remaining_min_epochs: 2
 
 --------------------------------------------------
 Replay Buffer Configuration
@@ -90,7 +92,7 @@ Reproducibility Configuration
 --------------------------------------------------
 pytorch_seed: 42
 numpy_seed: 42
-random_seed: 2300483233
+random_seed: 3398943621
 cuda_seed: 42
 cudnn_deterministic: True
 cudnn_benchmark: False
@@ -98,7 +100,7 @@ cudnn_benchmark: False
 --------------------------------------------------
 Checkpoint Information
 --------------------------------------------------
-save_dir: results/20251014_231950/checkpoints/CWRU_Scenario2_VaryingLoad_ReplayFree
+save_dir: results/20251014_233348/checkpoints/UOS_Scenario1_VaryingSpeed_ReplayFree
 max_grad_norm: 0.1
 
 --------------------------------------------------

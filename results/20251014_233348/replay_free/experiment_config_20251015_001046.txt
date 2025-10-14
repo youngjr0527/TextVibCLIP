@@ -1,0 +1,118 @@
+================================================================================
+TextVibCLIP Experiment Configuration
+================================================================================
+Timestamp: 2025-10-15 00:10:46
+Scenario: CWRU_Scenario2_VaryingLoad_ReplayFree
+Dataset: CWRU
+Domain Order: 0HP → 1HP → 2HP → 3HP
+Shift Type: Varying Load
+Device: cuda
+
+--------------------------------------------------
+Scenario Configuration
+--------------------------------------------------
+first_domain_epochs: 15
+remaining_epochs: 6
+batch_size: 4
+replay_buffer_size: 0
+patience: 5
+
+--------------------------------------------------
+Model Architecture
+--------------------------------------------------
+embedding_dim: 256
+text_dim: 768
+vibration_input_dim: 1
+vibration_input_length: 2048
+vibration_kernel_sizes: [16, 32, 64, 32]
+vibration_channels: [64, 128, 256, 512]
+vibration_stride: 2
+dropout: 0.1
+activation: relu
+normalization: batch_norm
+pooling: adaptive_avg
+
+text_encoder_model: distilbert-base-uncased
+lora_rank: 32
+lora_alpha: 64
+lora_target_modules: ['q_lin', 'v_lin']
+lora_dropout: 0.1
+
+projection_hidden_dim: 512
+projection_output_dim: 256
+projection_dropout: 0.1
+
+ranking_margin: 0.3
+ranking_loss_type: triplet
+
+aux_classification_enabled: True
+aux_num_classes: 7
+aux_loss_weight: 1.0
+aux_dropout: 0.2
+
+--------------------------------------------------
+Training Configuration
+--------------------------------------------------
+CWRU-specific configuration:
+  first_domain_epochs: 20
+  first_domain_lr: 5e-05
+  first_domain_weight_decay: 0.005
+  first_domain_aux_weight: 0.1
+  first_domain_patience: 1
+  remaining_epochs: 6
+  remaining_lr: 1e-06
+  remaining_weight_decay: 0.01
+  remaining_aux_weight: 0.05
+  remaining_patience: 1
+
+--------------------------------------------------
+Replay Buffer Configuration
+--------------------------------------------------
+buffer_size_per_domain: 0
+embedding_dim: 256
+sampling_strategy: random
+replay_ratio: 0.6
+replay_every_n: 1
+replay_selection: balanced
+
+--------------------------------------------------
+Data Configuration
+--------------------------------------------------
+window_size: 2048
+overlap_ratio: 0.25
+signal_normalization: standardize
+validation_split: 0.2
+test_split: 0.2
+max_text_length: 128
+
+--------------------------------------------------
+Reproducibility Configuration
+--------------------------------------------------
+pytorch_seed: 42
+numpy_seed: 42
+random_seed: 2195724954
+cuda_seed: 42
+cudnn_deterministic: True
+cudnn_benchmark: False
+
+--------------------------------------------------
+Checkpoint Information
+--------------------------------------------------
+save_dir: results/20251014_233348/checkpoints/CWRU_Scenario2_VaryingLoad_ReplayFree
+max_grad_norm: 0.1
+
+--------------------------------------------------
+System Information
+--------------------------------------------------
+python_version: 3.8.18 | packaged by conda-forge | (default, Dec 23 2023, 17:21:28) 
+[GCC 12.3.0]
+pytorch_version: 2.0.1+cu117
+cuda_available: True
+cuda_version: 11.7
+gpu_count: 6
+current_gpu: 0
+gpu_name: Quadro RTX 5000
+
+================================================================================
+Configuration saved successfully
+================================================================================
