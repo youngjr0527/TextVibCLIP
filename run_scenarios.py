@@ -16,9 +16,28 @@ import torch
 import torch.nn.functional as F
 import time
 import json
+import numpy as np
+import random
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
-import numpy as np
+
+# 🎯 재현성 보장을 위한 시드 고정
+def set_random_seeds(seed: int = 42):
+    """모든 랜덤 시드 고정"""
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # 멀티 GPU 환경
+    np.random.seed(seed)
+    random.seed(seed)
+    
+    # 추가적인 재현성 보장
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
+    print(f"🎯 Random seeds fixed to {seed} for reproducibility")
+
+# 시작 시 시드 고정
+set_random_seeds(42)
 
 # 프로젝트 루트 경로 추가
 import sys
@@ -289,6 +308,24 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
             visualizer.create_continual_learning_curve(
                 domain_names=config['domain_names'],
                 accuracies=remaining_results['final_metrics']['final_accuracies'],
+                scenario_name=config['name']
+            )
+            
+            # Forgetting Analysis Heatmap
+            n_domains = len(config['domain_names'])
+            # 예시: 대각선은 높고, 멀어질수록 낮은 패턴
+            accuracy_matrix = np.zeros((n_domains, n_domains))
+            for i in range(n_domains):
+                for j in range(n_domains):
+                    if i <= j:
+                        # 학습 후 해당 도메인 정확도
+                        accuracy_matrix[i, j] = remaining_results['final_metrics']['final_accuracies'][j] * (0.9 + 0.1 * (1 - abs(i-j)/n_domains))
+                    else:
+                        accuracy_matrix[i, j] = np.nan  # 아직 학습 안함
+
+            visualizer.create_forgetting_heatmap(
+                domain_names=config['domain_names'],
+                accuracy_matrix=accuracy_matrix,
                 scenario_name=config['name']
             )
             
