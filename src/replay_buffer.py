@@ -223,6 +223,10 @@ class ReplayBuffer:
         Returns:
             Dict with sampled embeddings or None if no data
         """
+        # Replay buffer가 비활성화된 경우 (buffer_size_per_domain=0)
+        if self.buffer_size_per_domain <= 0:
+            return None
+            
         available_domains = self.domains.copy()
         
         if exclude_current and self.current_domain in available_domains:

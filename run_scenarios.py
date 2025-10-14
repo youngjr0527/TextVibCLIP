@@ -126,14 +126,29 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         # Trainer 생성 (실험별 독립 체크포인트 디렉토리)
         # 재현성 보장: 각 실험이 독립적인 체크포인트 사용
         checkpoint_dir = os.path.join(experiment_dir, 'checkpoints', config['name'])
-        trainer = ContinualTrainer(
-            device=device,
-            save_dir=checkpoint_dir,  # 실험별 독립 디렉토리
-            domain_order=config['domain_order'],
-            data_dir=config['data_dir'],
-            dataset_type=config['dataset_type'],
-            results_save_dir=None  # 미러 불필요 (이미 실험 폴더 내부)
-        )
+        
+        # Replay-free 실험인 경우 완전히 새로운 모델로 시작
+        if 'ReplayFree' in config['name']:
+            logger.info("🔄 Replay-free 실험: 모델 완전 초기화")
+            # 기존 모델이 있다면 완전히 제거하고 새로 생성
+            trainer = ContinualTrainer(
+                model=None,  # None으로 설정하여 완전히 새로운 모델 생성
+                device=device,
+                save_dir=checkpoint_dir,
+                domain_order=config['domain_order'],
+                data_dir=config['data_dir'],
+                dataset_type=config['dataset_type'],
+                results_save_dir=None
+            )
+        else:
+            trainer = ContinualTrainer(
+                device=device,
+                save_dir=checkpoint_dir,
+                domain_order=config['domain_order'],
+                data_dir=config['data_dir'],
+                dataset_type=config['dataset_type'],
+                results_save_dir=None
+            )
         
         # 하이퍼파라미터 설정
         trainer.batch_size = config['batch_size']
@@ -179,7 +194,14 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
 
         # 🔎 시각화: 각 도메인의 test 임베딩 수집 후 PNG 저장
         try:
-            visualizer = create_visualizer(experiment_dir)
+            # Replay-free 실험인 경우 시각화도 replay_free 디렉토리에 저장
+            viz_dir = experiment_dir
+            if 'ReplayFree' in config['name']:
+                replay_free_dir = os.path.join(experiment_dir, 'replay_free')
+                os.makedirs(replay_free_dir, exist_ok=True)
+                viz_dir = replay_free_dir
+            
+            visualizer = create_visualizer(viz_dir)
             for domain_value in config['domain_order']:
                 if domain_value not in domain_loaders:
                     continue
@@ -344,9 +366,21 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         except Exception as paper_viz_err:
             logger.warning(f" 시각화 생성 실패: {paper_viz_err}")
         
-        # 실험 설정 저장
-        config_path = save_experiment_config(config, trainer, experiment_dir, device)
-        logger.info(f"📝 실험 설정 저장: {config_path}")
+        # Replay-free 실험인 경우 별도 디렉토리에 저장
+        if 'ReplayFree' in config['name']:
+            replay_free_dir = os.path.join(experiment_dir, 'replay_free')
+            os.makedirs(replay_free_dir, exist_ok=True)
+            
+            # 실험 설정 저장 (replay_free 디렉토리)
+            config_path = save_experiment_config(config, trainer, replay_free_dir, device)
+            logger.info(f"📝 실험 설정 저장 (replay-free): {config_path}")
+            
+            # 결과를 replay_free 디렉토리에 저장하도록 설정
+            experiment_dir = replay_free_dir
+        else:
+            # 실험 설정 저장 (기본 디렉토리)
+            config_path = save_experiment_config(config, trainer, experiment_dir, device)
+            logger.info(f"📝 실험 설정 저장: {config_path}")
         
         # 결과 정리 (Heatmap 데이터 포함)
         final_metrics = remaining_results['final_metrics']
@@ -678,13 +712,14 @@ def main():
             scenario['first_domain_epochs'] = args.epochs
             scenario['remaining_epochs'] = max(args.epochs // 2, 3)
     
-    # 시나리오별 실행
+    # 시나리오별 실행 (기존 + replay-free ablation study)
     all_results = {}
     total_start_time = time.time()
     
     for i, scenario in enumerate(scenarios, 1):
+        # 1. 기존 실험 (replay buffer 사용)
         logger.info(f"\n{'='*60}")
-        logger.info(f"시나리오 {i}/{len(scenarios)}: {scenario['name']}")
+        logger.info(f"시나리오 {i*2-1}/{len(scenarios)*2}: {scenario['name']} (with replay buffer)")
         logger.info(f"{'='*60}")
         
         scenario_result = run_single_scenario(scenario, logger, device, args, experiment_dir)
@@ -693,6 +728,23 @@ def main():
             all_results[scenario['name']] = scenario_result
         else:
             logger.error(f"❌ {scenario['name']} 실행 실패!")
+        
+        # 2. Replay-free ablation study
+        logger.info(f"\n{'='*60}")
+        logger.info(f"시나리오 {i*2}/{len(scenarios)*2}: {scenario['name']} (replay-free)")
+        logger.info(f"{'='*60}")
+        
+        # Replay-free 설정으로 시나리오 복사 및 수정
+        replay_free_scenario = scenario.copy()
+        replay_free_scenario['name'] = scenario['name'] + '_ReplayFree'
+        replay_free_scenario['replay_buffer_size'] = 0  # Replay buffer 비활성화
+        
+        replay_free_result = run_single_scenario(replay_free_scenario, logger, device, args, experiment_dir)
+        
+        if replay_free_result:
+            all_results[replay_free_scenario['name']] = replay_free_result
+        else:
+            logger.error(f"❌ {replay_free_scenario['name']} 실행 실패!")
     
     # 결과 저장
     if all_results:
