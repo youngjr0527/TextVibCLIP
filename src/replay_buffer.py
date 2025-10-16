@@ -26,7 +26,7 @@ class ReplayBuffer:
     def __init__(self, 
                  buffer_size_per_domain: int = TRAINING_CONFIG['replay_buffer_size'],
                  embedding_dim: int = 256,  # 512 → 256: 임베딩 차원 변경에 맞춤
-                 sampling_strategy: str = 'random'):
+                 sampling_strategy: str = 'representative'):
         """
         Args:
             buffer_size_per_domain (int): 도메인당 저장할 임베딩 수
@@ -57,7 +57,7 @@ class ReplayBuffer:
                        vib_embeddings: torch.Tensor,
                        metadata_list: List[Dict],
                        labels: torch.Tensor = None,
-                       selection_strategy: str = 'random') -> None:
+                       selection_strategy: str = 'representative') -> None:
         """
         새 도메인 데이터를 버퍼에 추가
         
