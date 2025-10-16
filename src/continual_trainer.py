@@ -55,7 +55,8 @@ class ContinualTrainer:
         self.device = device
         self.save_dir = save_dir
         self.max_grad_norm = max_grad_norm
-        os.makedirs(save_dir, exist_ok=True)
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
         # 결과 폴더 내 체크포인트 미러 저장소 (선택)
         self.mirror_save_dir = results_save_dir
         if self.mirror_save_dir:
@@ -181,8 +182,9 @@ class ContinualTrainer:
         self.loss_history[first_domain] = epoch_losses
         
         # 체크포인트 저장
-        checkpoint_path = os.path.join(self.save_dir, 'first_domain_final.pth')
-        self.model.save_checkpoint(checkpoint_path, num_epochs, optimizer.state_dict())
+        if self.save_dir is not None:
+            checkpoint_path = os.path.join(self.save_dir, 'first_domain_final.pth')
+            self.model.save_checkpoint(checkpoint_path, num_epochs, optimizer.state_dict())
         # 미러 저장
         if self.mirror_save_dir:
             mirror_path = os.path.join(self.mirror_save_dir, 'first_domain_final.pth')
@@ -414,8 +416,9 @@ class ContinualTrainer:
                 patience_counter = 0
                 
                 # Best model 저장
-                checkpoint_path = os.path.join(self.save_dir, f'domain_{domain_value}_best.pth')
-                self.model.save_checkpoint(checkpoint_path, epoch, optimizer.state_dict())
+                if self.save_dir is not None:
+                    checkpoint_path = os.path.join(self.save_dir, f'domain_{domain_value}_best.pth')
+                    self.model.save_checkpoint(checkpoint_path, epoch, optimizer.state_dict())
                 if self.mirror_save_dir:
                     mirror_path = os.path.join(self.mirror_save_dir, f'domain_{domain_value}_best.pth')
                     self.model.save_checkpoint(mirror_path, epoch, optimizer.state_dict())
