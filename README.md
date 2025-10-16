@@ -9,7 +9,7 @@
 - **Multimodal Contrastive Learning**: 진동 신호 + 텍스트 메타데이터
 - **Asymmetric Continual Adaptation**: Text encoder freeze + Vibration encoder adaptation
 - **Similarity-based Retrieval**: 실제 사용 시 후보 텍스트 중 최고 유사도 선택
-- **두 가지 시나리오**: UOS (Varying Speed), CWRU (Varying Load)
+- **UOS 시나리오**: Varying Speed (회전 속도 변화)
 
 ### 📊 성능 평가 방식
 - **주 평가 지표**: **Retrieval Accuracy** (진동-텍스트 코사인 유사도 기반)
@@ -20,16 +20,11 @@
 
 ## 📊 실험 시나리오
 
-### **시나리오 1: UOS - Varying Speed (Deep Groove Ball)**
+### **UOS 시나리오: Varying Speed (Deep Groove Ball)**
 - **Domain 순서**: 600 → 800 → 1000 → 1200 → 1400 → 1600 RPM
 - **베어링 타입**: Deep Groove Ball (6204) 단일 타입
 - **클래스**: {H, B, IR, OR, L, U, M} (7개) - **모든 도메인에서 동일**
 - **Domain Shift**: 회전 속도 변화 (환경 변화)
-
-### **시나리오 2: CWRU - Varying Load**  
-- **Domain 순서**: 0 → 1 → 2 → 3 HP
-- **클래스**: {Normal, B, IR, OR} (4개) - **모든 도메인에서 동일**
-- **Domain Shift**: 부하 변화 (환경 변화)
 
 ### ⚠️ **중요**: Domain-Incremental Learning
 - **600→800 RPM 변화**: 새로운 클래스가 아님, 환경 변화임
@@ -133,7 +128,7 @@ Vib Classifier:
 - Linear(256, num_classes)
 - Purpose: 진동 인코더 안정화
 
-num_classes: 4 (CWRU), 7 (UOS)
+num_classes: 7 (UOS)
 ```
 
 ### **Continual Learning 전략**
@@ -201,13 +196,10 @@ python run_all_scenarios.py --quick_test --epochs 5
 python run_all_scenarios.py --epochs 50
 ```
 
-### 3. 개별 시나리오
+### 3. UOS 시나리오 실행
 ```bash
-# UOS만 실행
-python run_all_scenarios.py --skip_cwru --epochs 30
-
-# CWRU만 실행  
-python run_all_scenarios.py --skip_uos --epochs 30
+# UOS 시나리오 실행
+python run_scenarios.py --epochs 30
 ```
 
 ---
@@ -216,13 +208,12 @@ python run_all_scenarios.py --skip_uos --epochs 30
 
 ```
 TextVibCLIP/
-├── 📄 run_all_scenarios.py              # 통합 실험 스크립트
+├── 📄 run_scenarios.py                  # 실험 스크립트
 ├── 📄 prepare_uos_scenario1.py          # UOS 데이터 전처리 (Deep Groove Ball만)
-├── 📄 prepare_cwru_scenario2.py         # CWRU 데이터 전처리
 ├── 📁 src/                              # 소스 코드
 │   ├── textvib_model.py                 # TextVibCLIP 메인 모델
 │   ├── continual_trainer.py            # Continual Learning 트레이너
-│   ├── data_loader.py                   # 데이터 로더 (UOS/CWRU)
+│   ├── data_loader.py                   # 데이터 로더
 │   ├── data_cache.py                    # 데이터 캐싱 시스템
 │   ├── text_encoder.py                  # DistilBERT + LoRA
 │   ├── vibration_encoder.py             # 1D-CNN
@@ -230,9 +221,7 @@ TextVibCLIP/
 ├── 📁 configs/                          # 설정 파일
 │   └── model_config.py                  # 모델 및 실험 설정
 ├── 📁 uos_data/                         # UOS 원본 데이터
-├── 📁 cwru_data/                        # CWRU 원본 데이터
 ├── 📁 data_scenario1/                   # UOS 전처리 데이터 (Deep Groove Ball)
-├── 📁 data_scenario2/                   # CWRU 전처리 데이터
 ├── 📁 cache/                            # 데이터 캐시
 └── 📁 results/                          # 실험 결과
 ```
@@ -275,8 +264,7 @@ diagnosis = candidate_descriptions[argmax(similarities)]
 따라서 **Retrieval Accuracy**가 실제 성능을 가장 정확하게 반영합니다.
 
 ### 기대 결과
-- **UOS**: 더 어려운 태스크 (7개 클래스) → 낮은 정확도 예상
-- **CWRU**: 상대적으로 쉬운 태스크 (4개 클래스) → 높은 정확도 예상
+- **UOS**: 7개 클래스 분류 태스크로 복잡한 도메인 적응이 필요한 시나리오
 
 ---
 
@@ -386,18 +374,6 @@ Output:
 ```
 
 ### **데이터 분할 전략**
-
-#### **CWRU 파일 레벨 분할**
-```
-For each fault type (B, IR, OR):
-  - 3 bearings available
-  - Assign: bearing_1 → train, bearing_2 → val, bearing_3 → test
-  - Prevents same bearing in multiple subsets
-
-For Normal (H):
-  - Single bearing, multiple time segments
-  - Split by time: early → train, middle → val, late → test
-```
 
 #### **UOS 윈도우 레벨 분할**
 ```
@@ -600,36 +576,36 @@ average_forgetting = mean(forgetting_i for all previous domains)
 - **Shuffle**: 파일 순서 + 윈도우 순서 모두 랜덤화 (seed=42)
 - **목적**: 파일 순서나 윈도우 연속성을 모델이 암기하는 것 방지
 
-**공통**:
+**UOS 설정**:
 - **Stratified split**: 클래스 균형 유지 (70% train, 15% val, 15% test)
-- **Window overlap**: 0.25 (CWRU), 0.25 (UOS) - 낮은 overlap으로 독립성 확보
+- **Window overlap**: 0.25 - 낮은 overlap으로 독립성 확보
 
 ### **5. 하이퍼파라미터 요약 (논문 Table용)**
 
-| 항목 | UOS | CWRU | 설명 |
-|------|-----|------|------|
+| 항목 | UOS | 설명 |
+|------|-----|------|
 | **First Domain Training** |
-| Epochs | 15 | 15 | Foundation learning |
-| Learning rate | 1e-4 | 5e-5 | CWRU는 작은 데이터로 낮은 LR |
-| Batch size | 8 | 4 | CWRU는 극소 데이터 대응 |
-| Aux loss weight (λ_aux) | 2.0 | 2.0 | 균형잡힌 학습 |
+| Epochs | 20 | Foundation learning |
+| Learning rate | 1.5e-4 | 안정적인 학습률 |
+| Batch size | 16 | 안정적인 그래디언트 |
+| Aux loss weight (λ_aux) | 1.5 | 균형잡힌 학습 |
 | **Remaining Domains Training** |
-| Epochs per domain | 6 | 6 | 빠른 적응 |
-| Learning rate | 5e-5 | 2e-5 | Continual에서 더 낮은 LR |
-| Batch size | 8 | 4 | First domain과 동일 |
-| Aux loss weight (λ_aux) | 5.0 | 5.0 | 빠른 적응을 위해 증가 |
-| Replay buffer size | 500 | 50 | UOS는 더 많은 샘플 |
+| Epochs per domain | 8 | 균형잡힌 적응 학습 |
+| Learning rate | 3e-5 | 안정적인 적응 |
+| Batch size | 16 | First domain과 동일 |
+| Aux loss weight (λ_aux) | 3.0 | 빠른 적응을 위해 증가 |
+| Replay buffer size | 800 | 최적화된 메모리 사용 |
 | **공통 설정** |
-| Embedding dimension | 256 | 256 | 임베딩 공간 차원 |
-| Triplet margin | 0.3 | 0.3 | Ranking loss margin |
-| Weight decay | 1e-4 | 1e-4 | L2 regularization |
-| Gradient clipping | 0.1 | 0.1 | 안정적 학습 |
-| LoRA rank | 8 | 8 | Low-rank adaptation |
-| LoRA alpha | 16 | 16 | Scaling factor |
+| Embedding dimension | 256 | 임베딩 공간 차원 |
+| Triplet margin | 0.4 | Ranking loss margin |
+| Weight decay | 3e-5 | L2 regularization |
+| Gradient clipping | 0.1 | 안정적 학습 |
+| LoRA rank | 32 | Low-rank adaptation |
+| LoRA alpha | 64 | Scaling factor |
 
 ### **6. 데이터셋 통계 (논문 Table용)**
 
-#### **UOS Dataset (Scenario 1: Varying Speed)**
+#### **UOS Dataset: Varying Speed**
 
 | Domain | RPM | Train | Val | Test | Total |
 |--------|-----|-------|-----|------|-------|
@@ -643,20 +619,6 @@ average_forgetting = mean(forgetting_i for all previous domains)
 
 - **Classes**: 7 (H, B, IR, OR, L, U, M)
 - **Bearing type**: Deep Groove Ball (6204) only
-- **Signal length**: 2048 samples
-- **Window overlap**: 0.25
-
-#### **CWRU Dataset (Scenario 2: Varying Load)**
-
-| Domain | Load | Train | Val | Test | Total |
-|--------|------|-------|-----|------|-------|
-| D1 | 0HP | 218 | 47 | 47 | 312 |
-| D2 | 1HP | 221 | 47 | 48 | 316 |
-| D3 | 2HP | 221 | 47 | 48 | 316 |
-| D4 | 3HP | 218 | 47 | 47 | 312 |
-| **Total** | - | **878** | **188** | **190** | **1256** |
-
-- **Classes**: 4 (Normal, B, IR, OR)
 - **Signal length**: 2048 samples
 - **Window overlap**: 0.25
 

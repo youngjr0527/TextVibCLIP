@@ -31,7 +31,7 @@ from .utils import (
     normalize_signal,
     create_labels
 )
-from configs.model_config import DATA_CONFIG, CWRU_DATA_CONFIG
+from configs.model_config import DATA_CONFIG
 
 # 로깅 설정 (메인에서 구성되므로 basicConfig 제거)
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ def create_collate_fn(tokenizer: DistilBertTokenizer = None, max_length: int = 1
 
 class BearingDataset(Dataset):
     """
-    베어링 데이터셋 PyTorch Dataset 클래스 (UOS/CWRU 지원)
+    베어링 데이터셋 PyTorch Dataset 클래스 (UOS 지원)
     
     진동 신호와 텍스트 메타데이터를 쌍으로 로딩
     """
@@ -110,11 +110,10 @@ class BearingDataset(Dataset):
                  max_text_length: int = DATA_CONFIG['max_text_length']):
         """
         Args:
-            data_dir (str): 데이터 폴더 경로 (data_scenario1 또는 data_scenario2)
-            dataset_type (str): 'uos' 또는 'cwru'
+            data_dir (str): 데이터 폴더 경로 (data_scenario1)
+            dataset_type (str): 'uos'
             domain_value (Union[int, str], optional): 
                 - UOS: RPM 값 (600, 800, etc.)
-                - CWRU: Load 값 (0, 1, 2, 3)
             subset (str): 'train', 'val', 'test' 중 하나
             window_size (int): 신호 윈도우 크기
             overlap_ratio (float): 윈도우 겹침 비율
@@ -127,11 +126,8 @@ class BearingDataset(Dataset):
         self.max_text_length = max_text_length
         self.subset = subset
         
-        # 🎯 CRITICAL FIX: 데이터셋별 설정 적용
-        if self.dataset_type == 'cwru':
-            config = CWRU_DATA_CONFIG
-        else:
-            config = DATA_CONFIG
+        # UOS 설정 적용
+        config = DATA_CONFIG
             
         self.window_size = window_size if window_size is not None else config['window_size']
         self.overlap_ratio = overlap_ratio if overlap_ratio is not None else config['overlap_ratio']
@@ -323,156 +319,7 @@ class BearingDataset(Dataset):
         if len(self.file_paths) == 0:
             return [], []
         
-        # CWRU는 데이터가 적어서 split 없이 전체 데이터 사용
-        if self.dataset_type == 'cwru':
-            return self._split_cwru_dataset()
-        else:
-            return self._split_uos_dataset()
-    
-    def _split_cwru_dataset(self) -> Tuple[List[str], List[Dict]]:
-        """CWRU 데이터셋 분할 (개선된 전략)"""
-        # CWRU 특성: 도메인당 4개 파일 (H, B, IR, OR)
-        # 연구 목적에 맞는 분할 전략 적용
-        
-        # 베어링 상태별 라벨 (H, B, IR, OR)
-        bearing_labels = [metadata['bearing_condition'] for metadata in self.metadata_list]
-        
-        from collections import Counter
-        label_counts = Counter(bearing_labels)
-        logger.info(f"CWRU 데이터 라벨 분포: {dict(label_counts)}")
-        
-        # CWRU 특별 처리: 파일 수가 적으므로 적응적 분할
-        total_files = len(self.file_paths)
-        
-        if total_files <= 20:  # CWRU 처리 (4-20개 파일)
-            # 🎯 DOMAIN-INCREMENTAL LEARNING: 파일 토큰 기반 분리 + 윈도우 랜덤 분할(비중복)
-            # prepare_cwru_no_leakage.py 파일명 규칙을 활용해 subset별 파일을 분리
-
-            logger.info("CWRU 도메인 내 분할 (파일 토큰 기반 + 랜덤 윈도우 분리):")
-            logger.info(f"  현재 도메인: {self.domain_value}HP")
-
-            def match_subset(fp: str, ss: str) -> bool:
-                name = os.path.basename(fp).lower()
-                token = f"_{ss}_"
-                return token in name
-
-            # ✅ 새 준비 방식: 이미 파일이 subset별로 원시 신호가 비중복 분할되어 있음
-            #    → 각 파일의 전체 윈도우를 사용(0.0~1.0)
-            if self.subset == 'train':
-                selected_files = [f for f in self.file_paths if match_subset(f, 'train')]
-                selected_meta = [m for m in self.metadata_list if match_subset(m['filepath'], 'train')]
-                self._window_split_type = 'random'
-                self._window_split_range = (0.0, 1.0)
-            elif self.subset == 'val':
-                selected_files = [f for f in self.file_paths if match_subset(f, 'val')]
-                selected_meta = [m for m in self.metadata_list if match_subset(m['filepath'], 'val')]
-                self._window_split_type = 'random'
-                self._window_split_range = (0.0, 1.0)
-            elif self.subset == 'test':
-                selected_files = [f for f in self.file_paths if match_subset(f, 'test')]
-                selected_meta = [m for m in self.metadata_list if match_subset(m['filepath'], 'test')]
-                self._window_split_type = 'random'
-                self._window_split_range = (0.0, 1.0)
-
-            # 하이브리드 폴백: 선택된 subset에 4개 클래스가 모두 없으면
-            # 모든 파일을 포함하는 윈도우‑레벨 랜덤 분할로 전환하여 클래스 커버리지 보장
-            try:
-                uniq = set(meta['bearing_condition'] for meta in selected_meta)
-                if len(uniq) < 4:
-                    logger.info(
-                        f"  ⚠️ {self.subset}에 클래스 누락 감지({sorted(list(uniq))}) → 윈도우 레벨 폴백 적용(학습/평가 누수 방지)"
-                    )
-                    # 폴백 시: train/val/test 간 파일 누수 방지
-                    # - val/test에서는 train 토큰 파일을 제외
-                    # - train에서는 val/test 토큰 파일을 제외
-                    def exclude_tokens(files: List[str], tokens: List[str]) -> List[str]:
-                        lowered = [os.path.basename(f).lower() for f in files]
-                        keep = []
-                        for f, name in zip(files, lowered):
-                            if not any(t in name for t in tokens):
-                                keep.append(f)
-                        return keep
-
-                    if self.subset == 'train':
-                        eligible_files = exclude_tokens(self.file_paths, ['_val_', '_test_'])
-                    elif self.subset == 'val':
-                        eligible_files = exclude_tokens(self.file_paths, ['_train_'])
-                    else:
-                        eligible_files = exclude_tokens(self.file_paths, ['_train_'])
-
-                    selected_files = eligible_files if eligible_files else self.file_paths
-                    # 메타 동기화
-                    selected_meta = [m for m in self.metadata_list if m['filepath'] in set(selected_files)]
-
-                    # 공통 순열 기반 랜덤 분할(비중복)
-                    self._window_split_type = 'random'
-                    if self.subset == 'train':
-                        self._window_split_range = (0.0, 0.6)
-                    elif self.subset == 'val':
-                        self._window_split_range = (0.6, 0.8)
-                    else:
-                        self._window_split_range = (0.8, 1.0)
-            except Exception:
-                pass
-
-            # 클래스 분포 로깅
-            selected_labels = [meta['bearing_condition'] for meta in selected_meta]
-            selected_dist = Counter(selected_labels)
-            logger.info(f"  {self.subset} 클래스 분포: {dict(selected_dist)}")
-            logger.info(f"CWRU {self.subset} subset: {len(selected_files)}개 파일 사용 (총 {total_files}개 중)")
-
-            # 실제 선택된 파일명 로깅 (디버깅용)
-            file_names = [os.path.basename(f) for f in selected_files]
-            logger.info(f"CWRU {self.subset} 파일들: {file_names}")
-
-            return selected_files, selected_meta
-            
-        else:
-            # 파일이 많은 경우 (여러 도메인 통합 등) - 표준 분할 적용
-            try:
-                # 베어링 상태로 stratified split 시도
-                files_train, files_temp, meta_train, meta_temp = train_test_split(
-                    self.file_paths, self.metadata_list,
-                    test_size=0.4,  # 40%를 test+val용으로
-                    stratify=bearing_labels,
-                    random_state=42
-                )
-                
-                # Temp를 val/test로 분할
-                temp_labels = [metadata['bearing_condition'] for metadata in meta_temp]
-                files_val, files_test, meta_val, meta_test = train_test_split(
-                    files_temp, meta_temp,
-                    test_size=0.5,  # temp의 50%씩 val/test로
-                    stratify=temp_labels,
-                    random_state=42
-                )
-                
-                logger.info("CWRU stratified split 성공")
-                
-            except ValueError:
-                # Stratify 실패 시 랜덤 분할
-                logger.warning("CWRU stratified split 실패 - 랜덤 분할 사용")
-                files_train, files_temp, meta_train, meta_temp = train_test_split(
-                    self.file_paths, self.metadata_list,
-                    test_size=0.4,
-                    random_state=42
-                )
-                
-                files_val, files_test, meta_val, meta_test = train_test_split(
-                    files_temp, meta_temp,
-                    test_size=0.5,
-                    random_state=42
-                )
-            
-            # 요청된 subset 반환
-            if self.subset == 'train':
-                return files_train, meta_train
-            elif self.subset == 'val':
-                return files_val, meta_val
-            elif self.subset == 'test':
-                return files_test, meta_test
-            else:
-                raise ValueError(f"알 수 없는 subset: {self.subset}")
+        return self._split_uos_dataset()
     
     def _split_uos_dataset(self) -> Tuple[List[str], List[Dict]]:
         """UOS 데이터셋 분할 (개선된 stratified split)"""

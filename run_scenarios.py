@@ -47,7 +47,7 @@ from src.data_loader import create_domain_dataloaders
 from src.data_cache import create_cached_domain_dataloaders, create_cached_first_domain_dataloader, clear_all_caches
 from src.utils import set_seed
 from src.visualization import create_visualizer
-from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, CWRU_DATA_CONFIG
+from configs.model_config import TRAINING_CONFIG, DATA_CONFIG
 
 
 def setup_logging(log_dir: str) -> Tuple[logging.Logger, str]:
@@ -96,19 +96,6 @@ class ScenarioConfig:
         'patience': 10              # 8 → 10 (더 여유있는 조기 종료)
     }
     
-    CWRU_CONFIG = {
-        'name': 'CWRU_Scenario2_VaryingLoad',
-        'data_dir': 'data_scenario2',
-        'dataset_type': 'cwru',
-        'domain_order': [0, 1, 2, 3],
-        'domain_names': ['0HP', '1HP', '2HP', '3HP'],
-        'shift_type': 'Varying Load',
-        'first_domain_epochs': 15,
-        'remaining_epochs': 6,
-        'batch_size': 4,            #  (극소 데이터 대응)
-        'replay_buffer_size': 100,   
-        'patience': 5
-    }
 
 
 def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.device, args, experiment_dir: str) -> Dict:
@@ -179,11 +166,8 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         
         # 남도메인 에폭/설정 강제 반영 (시나리오 설정과 trainer 내부 특수설정 불일치 해소)
         try:
-            from configs.model_config import CWRU_SPECIFIC_CONFIG, CONTINUAL_CONFIG
-            if config['dataset_type'] == 'cwru':
-                CWRU_SPECIFIC_CONFIG['num_epochs'] = max(1, int(config.get('remaining_epochs', 3)))
-            else:
-                CONTINUAL_CONFIG['num_epochs'] = max(1, int(config.get('remaining_epochs', 3)))
+            from configs.model_config import CONTINUAL_CONFIG
+            CONTINUAL_CONFIG['num_epochs'] = max(1, int(config.get('remaining_epochs', 3)))
         except Exception:
             pass
 
@@ -213,39 +197,25 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
 
                 # 라벨/베어링타입 추출
                 labels = [m.get('bearing_condition', 'H') for m in metadata_list]
-                # CWRU는 베어링 타입 라벨을 고정 표시(혼동 방지)
-                if config['dataset_type'] == 'cwru':
-                    bearing_types = ['CWRU'] * len(metadata_list)
-                else:
-                    bearing_types = [m.get('bearing_type', '6204') for m in metadata_list]
+                bearing_types = [m.get('bearing_type', '6204') for m in metadata_list]
 
-                domain_name = f"{domain_value}HP" if config['dataset_type'] == 'cwru' else f"{domain_value}RPM"
+                domain_name = f"{domain_value}RPM"
 
-                # 정합 시각화: UOS/CWRU 공통 - 평가 기준과 동일하게 텍스트 프로토타입 사용(UOS는 7클래스)
+                # 정합 시각화: UOS 7클래스 프롬프트 사용
                 if vib_emb is not None and labels:
                     try:
-                        if config['dataset_type'] == 'cwru':
-                            prompt_bank = {
-                                0: ["healthy bearing","normal bearing with no fault","bearing vibration without defect"],
-                                1: ["bearing with ball fault","ball defect in bearing","ball damage on bearing"],
-                                2: ["bearing inner race fault","inner ring defect in bearing","inner race damage of bearing"],
-                                3: ["bearing outer race fault","outer ring defect in bearing","outer race damage of bearing"]
-                            }
-                            class_ids = [0,1,2,3]
-                            label_map = {'H': 0, 'B': 1, 'IR': 2, 'OR': 3}
-                        else:
-                            # UOS 7클래스 프롬프트 (간결 버전)
-                            prompt_bank = {
-                                0: ["healthy bearing"],          # H_H
-                                1: ["bearing with ball fault"],  # H_B
-                                2: ["inner race fault"],         # H_IR
-                                3: ["outer race fault"],         # H_OR
-                                4: ["mechanical looseness"],     # L_H
-                                5: ["rotor unbalance"],          # U_H
-                                6: ["shaft misalignment"]        # M_H
-                            }
-                            class_ids = [0,1,2,3,4,5,6]
-                            label_map = {'H_H':0,'H_B':1,'H_IR':2,'H_OR':3,'L_H':4,'U_H':5,'M_H':6}
+                        # UOS 7클래스 프롬프트 (간결 버전)
+                        prompt_bank = {
+                            0: ["healthy bearing"],          # H_H
+                            1: ["bearing with ball fault"],  # H_B
+                            2: ["inner race fault"],         # H_IR
+                            3: ["outer race fault"],         # H_OR
+                            4: ["mechanical looseness"],     # L_H
+                            5: ["rotor unbalance"],          # U_H
+                            6: ["shaft misalignment"]        # M_H
+                        }
+                        class_ids = [0,1,2,3,4,5,6]
+                        label_map = {'H_H':0,'H_B':1,'H_IR':2,'H_OR':3,'L_H':4,'U_H':5,'M_H':6}
 
                         # 클래스 프로토타입 임베딩 계산
                         class_protos = []
@@ -258,17 +228,16 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
                         proto_mat = torch.cat(class_protos, dim=0)
 
                         # UOS 라벨 문자열 구성
-                        if config['dataset_type'] == 'uos':
-                            # 기존 labels는 'bearing_condition'만일 수 있음 → metadata로 조합 라벨 생성
-                            rc = [m.get('rotating_component','H') for m in metadata_list]
-                            bc = [m.get('bearing_condition','H') for m in metadata_list]
-                            labels = [f"{r}_{b}" for r,b in zip(rc, bc)]
+                        # 기존 labels는 'bearing_condition'만일 수 있음 → metadata로 조합 라벨 생성
+                        rc = [m.get('rotating_component','H') for m in metadata_list]
+                        bc = [m.get('bearing_condition','H') for m in metadata_list]
+                        labels = [f"{r}_{b}" for r,b in zip(rc, bc)]
 
                         idx = torch.tensor([label_map.get(l, 0) for l in labels], device=proto_mat.device)
                         # 각 샘플 라벨에 해당하는 프로토타입을 텍스트 임베딩으로 사용
                         text_emb = proto_mat.index_select(0, idx)
                     except Exception as _e:
-                        logger.warning(f"CWRU 프로토타입 기반 텍스트 임베딩 생성 실패: {_e}")
+                        logger.warning(f"UOS 프로토타입 기반 텍스트 임베딩 생성 실패: {_e}")
 
                 # Per-domain encoder alignment t-SNE
                 visualizer.create_encoder_alignment_plot(
@@ -280,44 +249,6 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
                     save_name="encoder_alignment"
                 )
 
-                # Similarity diagnostics (per-domain)
-                if config['dataset_type'] == 'cwru':
-                    try:
-                        # 평가 프롬프트 프로토타입을 재사용
-                        prompt_bank = {
-                            0: [
-                                "healthy bearing",
-                                "normal bearing with no fault",
-                                "bearing vibration without defect"
-                            ],
-                            1: [
-                                "bearing with ball fault",
-                                "ball defect in bearing",
-                                "ball damage on bearing"
-                            ],
-                            2: [
-                                "bearing inner race fault",
-                                "inner ring defect in bearing",
-                                "inner race damage of bearing"
-                            ],
-                            3: [
-                                "bearing outer race fault",
-                                "outer ring defect in bearing",
-                                "outer race damage of bearing"
-                            ]
-                        }
-                        class_protos = []
-                        for cls_id in [0, 1, 2, 3]:
-                            texts = prompt_bank[cls_id]
-                            raw = trainer.model.text_encoder.encode_texts(texts, device)
-                            proj = F.normalize(trainer.model.text_projection(raw), p=2, dim=1)
-                            proto = F.normalize(proj.mean(dim=0, keepdim=True), p=2, dim=1)
-                            class_protos.append(proto)
-                        proto_mat = torch.cat(class_protos, dim=0)
-
-                        pass
-                    except Exception as _e:
-                        logger.warning(f"시각화 실패: {_e}")
         except Exception as viz_err:
             logger.warning(f"시각화 생성에 실패했습니다: {viz_err}")
         
@@ -550,34 +481,21 @@ def save_experiment_config(config: Dict, trainer, output_dir: str, device: torch
         f.write("Training Configuration\n")
         f.write("-" * 50 + "\n")
         try:
-            from configs.model_config import FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG, CWRU_SPECIFIC_CONFIG, CWRU_FIRST_DOMAIN_CONFIG
+            from configs.model_config import FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG
             
-            if config['dataset_type'] == 'cwru':
-                f.write("CWRU-specific configuration:\n")
-                f.write(f"  first_domain_epochs: {CWRU_FIRST_DOMAIN_CONFIG['num_epochs']}\n")
-                f.write(f"  first_domain_lr: {CWRU_FIRST_DOMAIN_CONFIG['learning_rate']}\n")
-                f.write(f"  first_domain_weight_decay: {CWRU_FIRST_DOMAIN_CONFIG['weight_decay']}\n")
-                f.write(f"  first_domain_aux_weight: {CWRU_FIRST_DOMAIN_CONFIG['aux_weight']}\n")
-                f.write(f"  first_domain_patience: {CWRU_FIRST_DOMAIN_CONFIG['patience']}\n")
-                f.write(f"  remaining_epochs: {CWRU_SPECIFIC_CONFIG['num_epochs']}\n")
-                f.write(f"  remaining_lr: {CWRU_SPECIFIC_CONFIG['learning_rate']}\n")
-                f.write(f"  remaining_weight_decay: {CWRU_SPECIFIC_CONFIG['weight_decay']}\n")
-                f.write(f"  remaining_aux_weight: {CWRU_SPECIFIC_CONFIG['aux_weight']}\n")
-                f.write(f"  remaining_patience: {CWRU_SPECIFIC_CONFIG['patience']}\n")
-            else:
-                f.write("UOS standard configuration:\n")
-                f.write(f"  first_domain_epochs: {FIRST_DOMAIN_CONFIG['num_epochs']}\n")
-                f.write(f"  first_domain_lr: {FIRST_DOMAIN_CONFIG['learning_rate']}\n")
-                f.write(f"  first_domain_weight_decay: {FIRST_DOMAIN_CONFIG['weight_decay']}\n")
-                f.write(f"  first_domain_aux_weight: {FIRST_DOMAIN_CONFIG['aux_weight']}\n")
-                f.write(f"  first_domain_patience: {FIRST_DOMAIN_CONFIG['patience']}\n")
-                f.write(f"  first_domain_min_epochs: {FIRST_DOMAIN_CONFIG['min_epoch']}\n")
-                f.write(f"  remaining_epochs: {CONTINUAL_CONFIG['num_epochs']}\n")
-                f.write(f"  remaining_lr: {CONTINUAL_CONFIG['learning_rate']}\n")
-                f.write(f"  remaining_weight_decay: {CONTINUAL_CONFIG['weight_decay']}\n")
-                f.write(f"  remaining_aux_weight: {CONTINUAL_CONFIG['aux_weight']}\n")
-                f.write(f"  remaining_patience: {CONTINUAL_CONFIG['patience']}\n")
-                f.write(f"  remaining_min_epochs: {CONTINUAL_CONFIG['min_epoch']}\n")
+            f.write("UOS configuration:\n")
+            f.write(f"  first_domain_epochs: {FIRST_DOMAIN_CONFIG['num_epochs']}\n")
+            f.write(f"  first_domain_lr: {FIRST_DOMAIN_CONFIG['learning_rate']}\n")
+            f.write(f"  first_domain_weight_decay: {FIRST_DOMAIN_CONFIG['weight_decay']}\n")
+            f.write(f"  first_domain_aux_weight: {FIRST_DOMAIN_CONFIG['aux_weight']}\n")
+            f.write(f"  first_domain_patience: {FIRST_DOMAIN_CONFIG['patience']}\n")
+            f.write(f"  first_domain_min_epochs: {FIRST_DOMAIN_CONFIG['min_epoch']}\n")
+            f.write(f"  remaining_epochs: {CONTINUAL_CONFIG['num_epochs']}\n")
+            f.write(f"  remaining_lr: {CONTINUAL_CONFIG['learning_rate']}\n")
+            f.write(f"  remaining_weight_decay: {CONTINUAL_CONFIG['weight_decay']}\n")
+            f.write(f"  remaining_aux_weight: {CONTINUAL_CONFIG['aux_weight']}\n")
+            f.write(f"  remaining_patience: {CONTINUAL_CONFIG['patience']}\n")
+            f.write(f"  remaining_min_epochs: {CONTINUAL_CONFIG['min_epoch']}\n")
         except Exception as e:
             f.write(f"Training config loading failed: {e}\n")
         f.write("\n")
@@ -603,14 +521,13 @@ def save_experiment_config(config: Dict, trainer, output_dir: str, device: torch
         f.write("Data Configuration\n")
         f.write("-" * 50 + "\n")
         try:
-            from configs.model_config import DATA_CONFIG, CWRU_DATA_CONFIG
-            data_config = CWRU_DATA_CONFIG if config['dataset_type'] == 'cwru' else DATA_CONFIG
-            f.write(f"window_size: {data_config['window_size']}\n")
-            f.write(f"overlap_ratio: {data_config['overlap_ratio']}\n")
-            f.write(f"signal_normalization: {data_config['signal_normalization']}\n")
-            f.write(f"validation_split: {data_config['validation_split']}\n")
-            f.write(f"test_split: {data_config['test_split']}\n")
-            f.write(f"max_text_length: {data_config['max_text_length']}\n")
+            from configs.model_config import DATA_CONFIG
+            f.write(f"window_size: {DATA_CONFIG['window_size']}\n")
+            f.write(f"overlap_ratio: {DATA_CONFIG['overlap_ratio']}\n")
+            f.write(f"signal_normalization: {DATA_CONFIG['signal_normalization']}\n")
+            f.write(f"validation_split: {DATA_CONFIG['validation_split']}\n")
+            f.write(f"test_split: {DATA_CONFIG['test_split']}\n")
+            f.write(f"max_text_length: {DATA_CONFIG['max_text_length']}\n")
         except Exception as e:
             f.write(f"Data config loading failed: {e}\n")
         f.write("\n")
@@ -680,8 +597,6 @@ def parse_arguments():
     parser.add_argument('--device', type=str, default='auto',
                        choices=['auto', 'cpu', 'cuda'])
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--skip_uos', action='store_true')
-    parser.add_argument('--skip_cwru', action='store_true')
     parser.add_argument('--clear_cache', action='store_true')
     
     return parser.parse_args()
@@ -718,15 +633,7 @@ def main():
     logger.info(f"🔧 디바이스: {device}")
     
     # 시나리오 설정
-    scenarios = []
-    if not args.skip_uos:
-        scenarios.append(ScenarioConfig.UOS_CONFIG)
-    if not args.skip_cwru:
-        scenarios.append(ScenarioConfig.CWRU_CONFIG)
-    
-    if not scenarios:
-        logger.error("❌ 실행할 시나리오가 없습니다!")
-        return
+    scenarios = [ScenarioConfig.UOS_CONFIG]
     
     # 에포크 설정
     if args.quick_test:
@@ -747,7 +654,7 @@ def main():
     for i, scenario in enumerate(scenarios, 1):
         # 1. 기존 실험 (replay buffer 사용)
         logger.info(f"\n{'='*60}")
-        logger.info(f"시나리오 {i*2-1}/{len(scenarios)*2}: {scenario['name']} (with replay buffer)")
+        logger.info(f"시나리오 {i*2-1}/2: {scenario['name']} (with replay buffer)")
         logger.info(f"{'='*60}")
         
         scenario_result = run_single_scenario(scenario, logger, device, args, experiment_dir)
@@ -759,7 +666,7 @@ def main():
         
         # 2. Replay-free ablation study
         logger.info(f"\n{'='*60}")
-        logger.info(f"시나리오 {i*2}/{len(scenarios)*2}: {scenario['name']} (replay-free)")
+        logger.info(f"시나리오 {i*2}/2: {scenario['name']} (replay-free)")
         logger.info(f"{'='*60}")
         
         # Replay-free 설정으로 시나리오 복사 및 수정

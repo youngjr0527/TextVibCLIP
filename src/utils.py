@@ -32,8 +32,6 @@ def parse_filename(filename: str, dataset_type: str = 'uos') -> Dict[str, str]:
     
     if dataset_type.lower() == 'uos':
         return _parse_uos_filename(name_without_ext)
-    elif dataset_type.lower() == 'cwru':
-        return _parse_cwru_filename(name_without_ext)
     else:
         raise ValueError(f"지원하지 않는 데이터셋 타입: {dataset_type}")
 
@@ -54,29 +52,6 @@ def _parse_uos_filename(name_without_ext: str) -> Dict[str, str]:
     }
 
 
-def _parse_cwru_filename(name_without_ext: str) -> Dict[str, str]:
-    """CWRU 파일명 파싱 - 새로운 형식: {결함타입}_{부하}hp.mat"""
-    parts = name_without_ext.split('_')
-    
-    if len(parts) < 2:
-        raise ValueError(f"예상된 CWRU 파일명 형식이 아님: {name_without_ext}")
-    
-    bearing_condition = parts[0]  # H, B, IR, OR (Normal → H로 변경됨)
-    load_part = parts[1]  # 0hp, 1hp, 2hp, 3hp
-    
-    # Load에서 숫자 추출
-    if 'hp' in load_part:
-        load = int(load_part.replace('hp', ''))
-    else:
-        load = 0
-    
-    return {
-        'dataset_type': 'cwru',
-        'bearing_condition': bearing_condition,  # H, B, IR, OR (H = Healthy, 기존 Normal)
-        'load': load,  # 0, 1, 2, 3 (horsepower)
-        'rotating_component': 'H',  # CWRU는 회전체 상태가 항상 정상
-        'bearing_type': 'deep_groove_ball'  # CWRU는 Deep Groove Ball Bearing 사용
-    }
 
 
 def generate_text_description(metadata: Dict[str, str]) -> str:
@@ -89,14 +64,7 @@ def generate_text_description(metadata: Dict[str, str]) -> str:
     Returns:
         str: 생성된 텍스트 설명
     """
-    dataset_type = metadata.get('dataset_type', 'uos')
-    
-    if dataset_type == 'uos':
-        return _generate_uos_text_description(metadata)
-    elif dataset_type == 'cwru':
-        return _generate_cwru_text_description(metadata)
-    else:
-        raise ValueError(f"지원하지 않는 데이터셋 타입: {dataset_type}")
+    return _generate_uos_text_description(metadata)
 
 
 def _generate_uos_text_description(metadata: Dict[str, str]) -> str:
@@ -273,7 +241,7 @@ def load_mat_file(filepath: str, signal_key: str = None, dataset_type: str = Non
     Args:
         filepath (str): .mat 파일 경로
         signal_key (str, optional): 신호 키 이름 (자동 탐지 시 None)
-        dataset_type (str, optional): 데이터셋 타입 ('uos', 'cwru')
+        dataset_type (str, optional): 데이터셋 타입 ('uos')
         
     Returns:
         np.ndarray: 진동 신호 (1D array)
@@ -290,27 +258,8 @@ def load_mat_file(filepath: str, signal_key: str = None, dataset_type: str = Non
                 raise KeyError(f"키 '{signal_key}'를 찾을 수 없습니다: {filepath}")
             signal = mat_data[signal_key]
         else:
-            # 데이터셋 타입에 따른 자동 선택
-            if dataset_type == 'cwru':
-                # CWRU: Drive End 채널만 사용
-                # 저장 스크립트에 따라 키가 'DE_time' 이거나 '*DE_time'일 수 있음
-                de_key = None
-                # 1) 정확히 'DE_time' 우선
-                if 'DE_time' in data_keys:
-                    de_key = 'DE_time'
-                else:
-                    # 2) 대소문자 무시하고 'de_time'을 포함하는 첫 키 선택
-                    for key in data_keys:
-                        if 'de_time' in key.lower():
-                            de_key = key
-                            break
-                
-                if de_key is None:
-                    raise ValueError(f"CWRU Drive End 채널을 찾을 수 없습니다: {filepath}, 키들: {data_keys}")
-                
-                signal = mat_data[de_key]
-                
-            elif dataset_type == 'uos':
+            # UOS 데이터셋 처리
+            if dataset_type == 'uos':
                 # UOS: 'Data' 키 우선 선택
                 if 'Data' in data_keys:
                     signal = mat_data['Data']

@@ -37,17 +37,11 @@ class DataCache:
         # 🎯 CRITICAL FIX: 실제 사용되는 설정값으로 캐시 키 생성
         dataset_type = kwargs.get('dataset_type', '')
         
-        # 데이터셋별 실제 설정 적용
-        if dataset_type == 'cwru':
-            from configs.model_config import CWRU_DATA_CONFIG
-            default_window = CWRU_DATA_CONFIG['window_size']
-            default_overlap = CWRU_DATA_CONFIG['overlap_ratio']
-            default_norm = CWRU_DATA_CONFIG['signal_normalization']
-        else:
-            from configs.model_config import DATA_CONFIG
-            default_window = DATA_CONFIG['window_size']
-            default_overlap = DATA_CONFIG['overlap_ratio']
-            default_norm = DATA_CONFIG['signal_normalization']
+        # UOS 설정 적용
+        from configs.model_config import DATA_CONFIG
+        default_window = DATA_CONFIG['window_size']
+        default_overlap = DATA_CONFIG['overlap_ratio']
+        default_norm = DATA_CONFIG['signal_normalization']
         
         key_params = {
             'data_dir': kwargs.get('data_dir', ''),
@@ -207,15 +201,11 @@ def preprocess_and_cache_dataset(data_dir: str,
     logger.info(f"🔄 데이터 전처리 시작: {dataset_type} {domain_value} {subset}")
     start_time = time.time()
     
-    # 🎯 CRITICAL FIX: 데이터셋별 설정 자동 적용
+    # UOS 설정 적용
     from .data_loader import BearingDataset
-    from configs.model_config import DATA_CONFIG, CWRU_DATA_CONFIG
+    from configs.model_config import DATA_CONFIG
     
-    # 데이터셋별 기본 설정 선택
-    if dataset_type == 'cwru':
-        config = CWRU_DATA_CONFIG
-    else:
-        config = DATA_CONFIG
+    config = DATA_CONFIG
     
     # 파라미터가 None이면 설정에서 가져오기
     if window_size is None:
@@ -285,20 +275,17 @@ class CachedBearingDataset(torch.utils.data.Dataset):
         """
         Args:
             data_dir: 데이터 디렉토리
-            dataset_type: 'uos' 또는 'cwru'
-            domain_value: 도메인 값 (RPM 또는 Load)
+            dataset_type: 'uos'
+            domain_value: 도메인 값 (RPM)
             subset: 'train', 'val', 'test'
             window_size: 윈도우 크기
             overlap_ratio: 윈도우 겹침 비율
             normalization: 정규화 방법
         """
-        # 🎯 CRITICAL FIX: 데이터셋별 설정 자동 적용
-        from configs.model_config import DATA_CONFIG, CWRU_DATA_CONFIG
+        # UOS 설정 적용
+        from configs.model_config import DATA_CONFIG
         
-        if dataset_type == 'cwru':
-            config = CWRU_DATA_CONFIG
-        else:
-            config = DATA_CONFIG
+        config = DATA_CONFIG
             
         final_window_size = window_size if window_size is not None else config['window_size']
         final_overlap_ratio = overlap_ratio if overlap_ratio is not None else config['overlap_ratio']

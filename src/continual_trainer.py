@@ -19,7 +19,7 @@ from .textvib_model import TextVibCLIP, create_textvib_model
 from .replay_buffer import ReplayBuffer
 from .data_loader import create_domain_dataloaders, create_first_domain_dataloader
 from .data_cache import create_cached_first_domain_dataloader
-from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG, CWRU_DATA_CONFIG, FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG, CWRU_SPECIFIC_CONFIG, CWRU_FIRST_DOMAIN_CONFIG
+from configs.model_config import TRAINING_CONFIG, DATA_CONFIG, EVAL_CONFIG, MODEL_CONFIG, FIRST_DOMAIN_CONFIG, CONTINUAL_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -114,15 +114,9 @@ class ContinualTrainer:
                 batch_size=self.batch_size
             )
         
-        # 데이터셋별 First domain 설정 적용
-        if self.dataset_type == 'cwru':
-            # CWRU: 극소 데이터 전용 설정
-            config = CWRU_FIRST_DOMAIN_CONFIG
-            logger.info("🎯 CWRU 극소 데이터 전용 First Domain 설정 적용")
-        else:
-            # UOS: 표준 First Domain 설정
-            config = FIRST_DOMAIN_CONFIG
-            logger.info("🎯 UOS 표준 First Domain 설정 적용")
+        # UOS First Domain 설정 적용
+        config = FIRST_DOMAIN_CONFIG
+        logger.info("🎯 UOS First Domain 설정 적용")
         
         if num_epochs is None:
             num_epochs = config['num_epochs']
@@ -242,15 +236,9 @@ class ContinualTrainer:
         """
         logger.info("=== Remaining Domains Training 시작 ===")
         
-        # 데이터셋별 차별화된 설정 적용
-        if self.dataset_type == 'cwru':
-            # CWRU: 극소 데이터 전용 설정
-            config = CWRU_SPECIFIC_CONFIG
-            logger.info("🎯 CWRU 극소 데이터 전용 설정 적용")
-        else:
-            # UOS: 표준 Continual 설정
-            config = CONTINUAL_CONFIG
-            logger.info("🎯 UOS 표준 Continual 설정 적용")
+        # UOS Continual 설정 적용
+        config = CONTINUAL_CONFIG
+        logger.info("🎯 UOS Continual 설정 적용")
         
         self.num_epochs = config['num_epochs']
         self.learning_rate = config['learning_rate']
