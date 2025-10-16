@@ -570,6 +570,95 @@ class PaperVisualizer:
         logger.info(f"Forgetting heatmap 저장 완료: {save_path}")
         logger.info(f"각 행 평균: {[f'{avg*100:.1f}%' for avg in row_averages if not np.isnan(avg)]}")
         return save_path
+    
+    def create_replay_comparison_plot(self,
+                                    replay_results: Dict,
+                                    replay_free_results: Dict,
+                                    scenario_name: str,
+                                    save_name: str = "replay_comparison") -> str:
+        """
+        Replay vs Replay-Free 성능 비교 선 그래프 생성
+        
+        Args:
+            replay_results: Replay buffer 사용 결과
+            replay_free_results: Replay-free 결과
+            scenario_name: 시나리오 이름
+            save_name: 저장 파일명
+        """
+        if not replay_results or not replay_free_results:
+            logger.warning("Replay 비교 결과가 부족합니다.")
+            return ""
+        
+        # 데이터 추출
+        replay_accuracies = replay_results.get('stage_accuracies', [])
+        replay_free_accuracies = replay_free_results.get('stage_accuracies', [])
+        
+        # 도메인 이름 (첫 번째 결과에서 추출)
+        domain_names = replay_results.get('domain_names', [])
+        
+        # 유효한 데이터만 필터링 (None 값 제거)
+        valid_indices = []
+        valid_replay = []
+        valid_replay_free = []
+        valid_domains = []
+        
+        for i, (r_acc, rf_acc) in enumerate(zip(replay_accuracies, replay_free_accuracies)):
+            if r_acc is not None and rf_acc is not None:
+                valid_indices.append(i)
+                valid_replay.append(r_acc)
+                valid_replay_free.append(rf_acc)  # 수정: replay_free_accuracies 사용
+                valid_domains.append(domain_names[i] if i < len(domain_names) else f"Domain {i+1}")
+        
+        if not valid_replay:
+            logger.warning("유효한 비교 데이터가 없습니다.")
+            return ""
+        
+        # Figure 생성 (단일 subplot, 적절한 aspect ratio)
+        fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+        fig.suptitle(f'Replay Buffer Ablation Study - {scenario_name}', 
+                    fontsize=16, fontweight='bold')
+        
+        # Accuracy 비교
+        x_pos = range(len(valid_replay))
+        
+        # 선 그래프 그리기
+        line1 = ax.plot(x_pos, valid_replay, 
+                       marker='o', linewidth=2.5, markersize=8,
+                       color=self.colors['primary'], label='With Replay Buffer',
+                       markerfacecolor='white', markeredgewidth=2)
+        
+        line2 = ax.plot(x_pos, valid_replay_free,
+                       marker='s', linewidth=2.5, markersize=8,
+                       color=self.colors['secondary'], label='Replay-Free',
+                       markerfacecolor='white', markeredgewidth=2)
+        
+        ax.set_title('Stage-wise Accuracy Comparison', fontweight='bold', fontsize=14)
+        ax.set_xlabel('Training Stage', fontweight='bold')
+        ax.set_ylabel('Accuracy (%)', fontweight='bold')
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(valid_domains, rotation=45, ha='right')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=12)
+        
+        # Y축 범위 설정 (0-100%)
+        ax.set_ylim(0, 100)
+        
+        # 값 표시
+        for i, (r_acc, rf_acc) in enumerate(zip(valid_replay, valid_replay_free)):
+            ax.annotate(f'{r_acc:.1f}%', (i, r_acc), 
+                       textcoords="offset points", xytext=(0,10), ha='center',
+                       fontsize=10, color=self.colors['primary'], fontweight='bold')
+            ax.annotate(f'{rf_acc:.1f}%', (i, rf_acc),
+                       textcoords="offset points", xytext=(0,-15), ha='center',
+                       fontsize=10, color=self.colors['secondary'], fontweight='bold')
+        
+        plt.tight_layout()
+        save_path = os.path.join(self.output_dir, f"{save_name}_{scenario_name}.png")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        
+        logger.info(f"Replay comparison plot 저장 완료: {save_path}")
+        return save_path
 
 def create_visualizer(output_dir: str) -> PaperVisualizer:
     """PaperVisualizer 인스턴스 생성 (기존 호환성 유지)"""

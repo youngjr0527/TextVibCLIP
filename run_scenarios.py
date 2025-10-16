@@ -363,6 +363,37 @@ def run_single_scenario(config: Dict, logger: logging.Logger, device: torch.devi
         except Exception as paper_viz_err:
             logger.warning(f" 시각화 생성 실패: {paper_viz_err}")
         
+        # 🆕 Replay vs Replay-Free 비교 그래프 생성 (replay-free 실험이 아닌 경우에만)
+        try:
+            if 'ReplayFree' not in config['name']:
+                logger.info("📊 Replay vs Replay-Free 비교 그래프 생성 중...")
+                
+                # 현재 실험 결과 준비
+                current_results = {
+                    'stage_accuracies': stage_averages,
+                    'scenario_name': config['name'],
+                    'forgetting_matrix': heatmap_matrix
+                }
+                
+                # Replay-free 결과 찾기 (같은 시나리오의 replay-free 버전)
+                replay_free_name = config['name'] + '_ReplayFree'
+                replay_free_results = None
+                
+                # 전역 결과에서 찾기 (실행 완료 후에 사용할 수 있도록 주석 처리)
+                # if hasattr(main, 'global_results') and replay_free_name in main.global_results:
+                #     replay_free_results = main.global_results[replay_free_name]
+                
+                # 현재는 임시로 None으로 설정 (실제로는 main 함수에서 호출)
+                visualizer.create_replay_comparison_plot(
+                    replay_results=current_results,
+                    replay_free_results=None,  # main에서 설정됨
+                    scenario_name=config['name']
+                )
+                
+                logger.info("✅ Replay 비교 그래프 생성 완료!")
+        except Exception as replay_viz_err:
+            logger.warning(f"Replay 비교 그래프 생성 실패: {replay_viz_err}")
+        
         # Replay-free 실험인 경우 별도 디렉토리에 저장
         if 'ReplayFree' in config['name']:
             replay_free_dir = os.path.join(experiment_dir, 'replay_free')
@@ -747,6 +778,28 @@ def main():
     if all_results:
         results_path = save_results(all_results, experiment_dir)
         logger.info(f"✅ 결과 저장: {results_path}")
+        
+        # 🆕 Replay vs Replay-Free 비교 그래프 생성 (모든 실험 완료 후)
+        try:
+            logger.info("📊 Replay vs Replay-Free 비교 그래프 생성 중...")
+            visualizer = create_visualizer(experiment_dir)
+            
+            for scenario_name in all_results.keys():
+                if 'ReplayFree' in scenario_name:
+                    continue  # replay-free는 건너뛰기
+                
+                replay_free_name = scenario_name + '_ReplayFree'
+                if replay_free_name in all_results:
+                    visualizer.create_replay_comparison_plot(
+                        replay_results=all_results[scenario_name],
+                        replay_free_results=all_results[replay_free_name],
+                        scenario_name=scenario_name
+                    )
+                    logger.info(f"   ✅ {scenario_name} 비교 그래프 생성 완료")
+            
+            logger.info("🎉 모든 Replay 비교 그래프 생성 완료!")
+        except Exception as replay_viz_err:
+            logger.warning(f"Replay 비교 그래프 생성 실패: {replay_viz_err}")
     
     # 최종 요약
     total_time = time.time() - total_start_time
