@@ -169,7 +169,6 @@ class TextVibCLIP(nn.Module):
             
             # 데이터셋별 차별화된 분류기 구조
             if self.dataset_type == 'cwru':
-                # CWRU: 매우 강한 정규화
                 dropout_rate = 0.7
                 hidden_dim = embedding_dim // 4  # 더 작은 hidden
             else:
@@ -284,7 +283,7 @@ class TextVibCLIP(nn.Module):
         labels = batch.get('labels', None)
         if labels is not None:
             if labels.dim() == 2:
-                class_labels = labels[:, 0]  # UOS 주 분류, CWRU 첫 번째
+                class_labels = labels[:, 0]  
             else:
                 class_labels = labels
         else:
@@ -469,7 +468,7 @@ def create_textvib_model(domain_stage: str = 'first_domain', dataset_type: str =
     
     Args:
         domain_stage: 'first_domain' 또는 'continual'
-        dataset_type: 'uos' 또는 'cwru'
+        dataset_type: 'uos'
         
     Returns:
         TextVibCLIP: Ranking-based 모델

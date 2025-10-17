@@ -6,8 +6,7 @@
 
 본 연구는 진동 신호와 텍스트 형태의 metadata(베어링 유형, 회전 속도, 결함 특성)를 결합한 **contrastive learning** 기반의 새로운 방법론을 제안한다. 이는 이미지와 텍스트 쌍을 활용한 CLIP 구조를 진동 신호와 텍스트로 재구성한 것으로, 텍스트 정보를 통해 다양한 도메인의 특징을 임베딩 공간에 효과적으로 매핑하여 모델의 지식을 지속적으로 확장한다. 제안된 방법론은 **두 가지 시나리오**로 검증한다:
 
-**시나리오 1**: UOS 데이터셋을 활용한 **Varying Speed** 실험 (600→1600 RPM)
-**시나리오 2**: CWRU 데이터셋을 활용한 **Varying Load** 실험 (0→3 HP)
+**시나리오**: UOS 데이터셋을 활용한 **Varying Speed** 실험 (600→1600 RPM)
 
 연구의 목표는 continual learning 전략을 통해 이전 도메인의 지식을 보존하면서 새로운 베어링 유형과 회전 속도 조건을 순차적으로 학습하는 모델을 개발하는 것이다. 특히, 진동-텍스트 contrastive learning으로 형성된 **multimodal embedding space**은 각 도메인의 고유한 특성을 유지하며, 도메인 전환 시 성능 저하를 최소화한다. 이를 통해 운용 조건이 변화하는 실제 산업 현장에 적용 가능한 **robust diagnosis model**을 제공한다.  LoRA (Low-Rank Adaptation)를 encoders에 도입하여 parameter-efficient adaptation을 실현하며, 첫 domain에서는 standard joint training, subsequent domains에서 LoRA + replay buffer를 활용한다.
 
@@ -56,13 +55,10 @@ Continual Learning 시나리오에서 가변 작업 조건(**Varying Working Con
 - 부하 변화 (Varying Load): 기계에 가해지는 부하의 변화.
 - 환경 노이즈 (Environmental Noise): 주변 환경에서 발생하는 예측 불가능한 노이즈.
 
-**시나리오 1 - UOS 데이터셋**: Varying Speed 실험 (domain shift 시 RPM이 변화)
+**시나리오 - UOS 데이터셋**: Varying Speed 실험 (domain shift 시 RPM이 변화)
 - Domain 순서: 600 → 800 → 1000 → 1200 → 1400 → 1600 RPM
 - 라벨: 회전체 상태(H/L/U/M) × 베어링 상태(H/B/IR/OR) × 베어링 타입(3종)
 
-**시나리오 2 - CWRU 데이터셋**: Varying Load 실험 (domain shift 시 부하가 변화)  
-- Domain 순서: 0hp → 1hp → 2hp → 3hp
-- 라벨: 베어링 상태(Normal/B/IR/OR), 베어링 타입은 Deep Groove Ball로 고정
 
 ### 3. Contrastive Learning and Multi-modal Approaches
 

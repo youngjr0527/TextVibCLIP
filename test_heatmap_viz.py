@@ -61,38 +61,31 @@ visualizer.create_forgetting_heatmap(
 )
 print(f"   ✅ 저장: {RESULTS_DIR}/forgetting_heatmap_UOS_Scenario1_VaryingSpeed.png")
 
-# CWRU 시나리오 테스트
-print("\n2️⃣ CWRU Scenario Heatmap 재생성...")
-cwru = results['CWRU_Scenario2_VaryingLoad']
+# # CWRU 시나리오 테스트
+# print("\n2️⃣ CWRU Scenario Heatmap 재생성...")
+# cwru = results['CWRU_Scenario2_VaryingLoad']
 
-n_domains_cwru = len(cwru['domain_names'])
-accuracy_matrix_cwru = np.full((n_domains_cwru, n_domains_cwru), np.nan)
+# n_domains_cwru = len(cwru['domain_names'])
+# accuracy_matrix_cwru = np.full((n_domains_cwru, n_domains_cwru), np.nan)
 
-if 'forgetting_matrix' in cwru:
-    for i, row in enumerate(cwru['forgetting_matrix']):
-        for j, val in enumerate(row):
-            if val is not None:
-                accuracy_matrix_cwru[i, j] = val / 100.0
-else:
-    # CWRU 예시 (모두 100%)
-    for i in range(n_domains_cwru):
-        for j in range(i + 1):
-            accuracy_matrix_cwru[i, j] = 1.0
+# if 'forgetting_matrix' in cwru:
+#     for i, row in enumerate(cwru['forgetting_matrix']):
+#         for j, val in enumerate(row):
+#             if val is not None:
+#                 accuracy_matrix_cwru[i, j] = val / 100.0
+# else:
+#     # CWRU 예시 (모두 100%)
+#     for i in range(n_domains_cwru):
+#         for j in range(i + 1):
+#             accuracy_matrix_cwru[i, j] = 1.0
 
-visualizer.create_forgetting_heatmap(
-    domain_names=cwru['domain_names'],
-    accuracy_matrix=accuracy_matrix_cwru,
-    scenario_name='CWRU_Scenario2_VaryingLoad'
-)
-print(f"   ✅ 저장: {RESULTS_DIR}/forgetting_heatmap_CWRU_Scenario2_VaryingLoad.png")
+# visualizer.create_forgetting_heatmap(
+#     domain_names=cwru['domain_names'],
+#     accuracy_matrix=accuracy_matrix_cwru,
+#     scenario_name='CWRU_Scenario2_VaryingLoad'
+# )
+# print(f"   ✅ 저장: {RESULTS_DIR}/forgetting_heatmap_CWRU_Scenario2_VaryingLoad.png")
 
-print("\n" + "="*60)
-print("🎉 시각화 재생성 완료!")
-print(f"\n📁 확인할 파일:")
 print(f"  - {RESULTS_DIR}/forgetting_heatmap_UOS_Scenario1_VaryingSpeed.png")
-print(f"  - {RESULTS_DIR}/forgetting_heatmap_CWRU_Scenario2_VaryingLoad.png")
-print("\n💡 변경사항:")
-print("  ✅ 모든 텍스트: 검은색 + 볼드체")
-print("  ✅ Stage Avg: 별도 분리된 열 (수평 라벨)")
-print("  ✅ 깔끔하고 통일된 디자인")
+# print(f"  - {RESULTS_DIR}/forgetting_heatmap_CWRU_Scenario2_VaryingLoad.png")
 

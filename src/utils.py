@@ -17,12 +17,9 @@ def parse_filename(filename: str, dataset_type: str = 'uos') -> Dict[str, str]:
     UOS 파일명 형식: {회전체상태}_{베어링상태}_{베어링타입}_{회전속도}.mat
     예시: H_B_6204_600.mat
     
-    CWRU 파일명 형식: {베어링상태}_{부하}.mat
-    예시: B_0hp_1.mat, Normal_2hp.mat
-    
     Args:
         filename (str): .mat 파일명
-        dataset_type (str): 'uos' 또는 'cwru'
+        dataset_type (str): 'uos' 
         
     Returns:
         Dict[str, str]: 추출된 메타데이터
@@ -169,9 +166,8 @@ def _generate_uos_text_description(metadata: Dict[str, str]) -> str:
     
     return text
 
-
+# _generate_cwru_text_description 더이상 사용하지 않음
 def _generate_cwru_text_description(metadata: Dict[str, str]) -> str:
-    """CWRU 데이터셋용 다양한 텍스트 설명 생성 (CRITICAL FIX: 텍스트 다양성 대폭 개선)"""
     import random
     # 결정론화: 상태+부하 기반 시드
     seed_key = f"{metadata.get('bearing_condition','')}_{metadata.get('load','')}"
