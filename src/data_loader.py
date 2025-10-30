@@ -278,8 +278,8 @@ class BearingDataset(Dataset):
         """도메인 키 반환"""
         if self.dataset_type == 'uos':
             return metadata['rotating_speed']  # RPM 값
-        elif self.dataset_type == 'cwru':
-            return metadata['load']  # Load 값 (0, 1, 2, 3)
+        # elif self.dataset_type == 'cwru':
+        #     return metadata['load']  # Load 값 (0, 1, 2, 3)
         else:
             return 0
     
@@ -618,7 +618,7 @@ def create_domain_dataloaders(data_dir: str = DATA_CONFIG['data_dir'],
     
     Args:
         data_dir (str): 데이터 디렉토리
-        domain_order (List[int]): 도메인 순서 (UOS: RPM, CWRU: Load)
+        domain_order (List[int]): 도메인 순서 (UOS: RPM)
         dataset_type (str): 'uos' 또는 'cwru'
         batch_size (int): 배치 크기
         num_workers (int): 워커 수

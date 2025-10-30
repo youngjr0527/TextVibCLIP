@@ -333,7 +333,7 @@ Output:
       - Loss = L_triplet + 5.0 * L_aux
    d. Update R with samples from Di:
       - Select top-k diverse samples
-      - R ← R ∪ samples_Di (max: 500 for UOS, 50 for CWRU)
+      - R ← R ∪ samples_Di (max: 500 for UOS)
    e. Evaluate on all {D1, ..., Di}
    f. Save: θ_Di
 
@@ -407,13 +407,13 @@ python run_scenarios.py 실행
     ├─ Text Encoder: LoRA fine-tuning (parameter-efficient)
     ├─ Vibration Encoder: Full training
     ├─ Loss: Triplet Ranking Loss + Auxiliary Classification Loss
-    ├─ 에포크: 15 epochs (UOS), 15 epochs (CWRU)
+    ├─ 에포크: 15 epochs (UOS)
     └─ 결과: first_domain_final.pth 저장
     ↓
 2️⃣ Remaining Domains Training (예: 800~1600RPM 또는 1~3HP)
     ├─ Text Encoder: Freeze (LoRA 비활성화)
     ├─ Vibration Encoder: Full adaptation
-    ├─ Replay Buffer: 이전 도메인 샘플 500개 (UOS) / 50개 (CWRU) 저장
+    ├─ Replay Buffer: 이전 도메인 샘플 500개 (UOS) 
     ├─ Loss: Triplet Ranking Loss + Auxiliary Loss (weight=5.0, 빠른 적응)
     ├─ 에포크: 6 epochs per domain
     └─ 결과: domain_{value}_best.pth 각각 저장
@@ -454,14 +454,14 @@ margin = 0.3  # Triplet margin
 
 **최적화**:
 - Optimizer: AdamW
-- Learning rate: 1e-4 (UOS), 5e-5 (CWRU)
+- Learning rate: 1e-4 (UOS)
 - Weight decay: 1e-4
 - Gradient clipping: max_norm=0.1
 
 **데이터**:
-- Batch size: 8 (UOS), 4 (CWRU)
+- Batch size: 8 (UOS)
 - Epochs: 15
-- Early stopping: patience=8 (UOS), 5 (CWRU)
+- Early stopping: patience=8 (UOS)
 
 ### **2. Remaining Domains Training (Continual Adaptation)**
 
@@ -471,7 +471,7 @@ margin = 0.3  # Triplet margin
 - **Text Encoder**: **완전 Freeze**
   - LoRA 비활성화
   - Projection layer만 최소 적응
-  - 이유: 고장 유형의 의미는 RPM/Load와 무관하게 일정
+  - 이유: 고장 유형의 의미는 RPM와 무관하게 일정
   
 - **Vibration Encoder**: **Full Adaptation**
   - 모든 파라미터 학습
@@ -484,7 +484,7 @@ replay_buffer.add_samples(
     embeddings,      # 진동 임베딩 저장
     texts,           # 원본 텍스트 저장
     labels,          # 라벨 저장
-    max_samples=500  # UOS: 500, CWRU: 50
+    max_samples=500  # UOS: 500, 
 )
 
 # 다음 도메인 학습 시
@@ -504,7 +504,7 @@ L_total = L_triplet + λ_aux * L_aux
 ```
 
 **최적화**:
-- Learning rate: 5e-5 (UOS), 2e-5 (CWRU)
+- Learning rate: 5e-5 (UOS)
 - Epochs per domain: 6
 - Batch composition: 50% new domain + 50% replay samples
 
@@ -531,11 +531,6 @@ retrieval_accuracy = (predictions == ground_truth).mean()
 ```
 
 **프롬프트 템플릿**:
-- **CWRU (4-클래스)**:
-  - Class 0: "healthy bearing", "normal bearing with no fault", "bearing vibration without defect"
-  - Class 1: "bearing with ball fault", "ball defect in bearing", "ball damage on bearing"
-  - Class 2: "bearing inner race fault", "inner ring defect in bearing", "inner race damage of bearing"
-  - Class 3: "bearing outer race fault", "outer ring defect in bearing", "outer race damage of bearing"
 
 - **UOS (7-클래스)**:
   - Class 0: "healthy bearing", "normal bearing with no fault", "bearing vibration without defect"
@@ -566,10 +561,6 @@ average_forgetting = mean(forgetting_i for all previous domains)
 
 ### **4. 데이터 분할 전략 (Data Leakage 방지)**
 
-**CWRU 데이터셋**:
-- **파일 레벨 분할**: 같은 베어링의 다른 파일을 train/val/test로 분리
-- **전략**: B/IR/OR 결함은 서로 다른 베어링 할당, H 결함은 시간 기반 분할
-- **목적**: 같은 베어링의 연속 신호가 여러 subset에 들어가는 것 방지
 
 **UOS 데이터셋**:
 - **윈도우 레벨 랜덤 분할**: 각 클래스당 1개 파일이므로 윈도우를 랜덤 분할
@@ -701,10 +692,6 @@ Domain 3 학습 후: 평가 범위 [Domain 1, Domain 2, Domain 3]
 - **클래스 정의**: 회전체 상태 + 베어링 상태 조합 (7가지)
 - **시간적 분할**: 같은 베어링의 시간 순서를 고려한 train/val/test 분할
 
-#### **CWRU 데이터셋 특성**:
-- **부하 변화**: 0→1→2→3 HP (기계적 스트레스 증가)
-- **데이터 증강**: 윈도우 크기 축소 + 겹침 증가로 샘플 수 확보
-- **클래스 균형**: 모든 고장 유형이 모든 부하 조건에서 동일하게 포함
 
 ### **6. 연구의 실용적 가치**
 
@@ -752,7 +739,7 @@ Domain 3 학습 후: 평가 범위 [Domain 1, Domain 2, Domain 3]
 ## 🔍 주요 개념
 
 ### Domain vs Class
-- **Domain**: 운전 조건 (RPM, Load) - 모델이 적응해야 하는 환경 변화
+- **Domain**: 운전 조건 (RPM) - 모델이 적응해야 하는 환경 변화
 - **Class**: 고장 유형 (H/B/IR/OR/L/U/M) - 모델이 분류하는 대상 (고정)
 
 ### Continual Learning 목표

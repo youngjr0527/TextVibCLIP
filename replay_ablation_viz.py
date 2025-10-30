@@ -164,7 +164,7 @@ def parse_arguments():
     parser.add_argument('--experiment_dir', type=str, default=None,
                        help='특정 실험 디렉토리 (예: results/20251014_233348)')
     parser.add_argument('--scenario', type=str, nargs='+', default=None,
-                       help='생성할 시나리오 (예: UOS CWRU)')
+                       help='생성할 시나리오 (예: UOS)')
     parser.add_argument('--latest', action='store_true',
                        help='가장 최근 실험 결과 사용')
     

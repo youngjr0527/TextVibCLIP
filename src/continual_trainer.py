@@ -611,7 +611,8 @@ class ContinualTrainer:
             retrieval_acc = (retrieval_pred == labels).float().mean().item()
             display_acc = retrieval_acc
             if self.dataset_type == 'uos':
-                display_acc = 0.5 * retrieval_acc + 0.5 * vib_acc
+                # display_acc = 0.5 * retrieval_acc + 0.5 * vib_acc
+                display_acc = 0.35 * retrieval_acc + 0.65 * vib_acc
             try:
                 shuffled = labels[torch.randperm(labels.numel(), device=labels.device)]
                 sanity_acc1 = (retrieval_pred == shuffled).float().mean().item()

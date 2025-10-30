@@ -5,8 +5,6 @@ Triplet ranking loss 기반 아키텍처로 소규모 데이터에 최적화
 
 Usage:
     python run_scenarios.py --quick_test --epochs 10
-    python run_scenarios.py --skip_uos  # CWRU만
-    python run_scenarios.py --skip_cwru # UOS만
 """
 
 import argparse

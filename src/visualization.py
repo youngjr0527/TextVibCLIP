@@ -95,8 +95,8 @@ class PaperVisualizer:
             'NJ204': 's',     # 사각형
             '6204': '^',      # 삼각형
             '30204': 'D',     # 다이아몬드
-            'deep_groove_ball': 'o',  # CWRU - 원형 (기본)
-            'SKF': 'o'        # CWRU 대체 - 원형
+            'deep_groove_ball': 'o',  
+            'SKF': 'o'        
         }
         
         logger.info(f"PaperVisualizer 초기화 완료: {output_dir}")
@@ -139,7 +139,7 @@ class PaperVisualizer:
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle(f'Encoder Alignment Analysis - {domain_name}', fontsize=16, fontweight='bold')
         
-        # 스타일 선택 헬퍼 (UOS 7클래스 vs CWRU 4클래스)
+        # 스타일 선택 헬퍼 (UOS 7클래스)
         def _style_for(cond: str):
             if cond in self.uos_colors:
                 return self.uos_colors[cond], self.uos_markers[cond]
