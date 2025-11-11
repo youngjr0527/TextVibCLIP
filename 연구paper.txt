@@ -4,36 +4,38 @@
 
 본 연구는 진동 신호와 텍스트를 결합한 멀티모달 학습 프레임워크 TextVibCLIP을 제안한다. 이미지-텍스트 대조 학습 방법론인 CLIP을 베어링 결함 진단 영역에 적용하여, 진동 인코더와 텍스트 인코더를 공통 임베딩 공간에 정렬한다. 초기 운전 조건에서는 텍스트 인코더를 학습시키며, 이후 운전 조건이 변화할 때는 텍스트 인코더를 고정하고 진동 인코더만 학습해 새로운 도메인 조건에 적응시킨다. 이는 결함을 설명하는 텍스트의 의미는 운전 조건이 바뀌어도 동일하게 유지되지만, 진동 신호의 파형 특성은 운전 조건에 따라 다르게 나타난다는 관찰에 기반한다.
 
-성능 검증을 위해 UOS 데이터셋을 활용하여 회전 속도가 지속적으로 변화하는 시나리오에서 모델의 도메인 적응 능력을 평가하였다. 실험 결과, 제안 방법은 기존 단일 모달 방법론 대비 높은 성능을 달성하였으며, 치명적 망각을 효과적으로 방지하여 이전 도메인에 대한 지식을 보존하였다. 이를 통해 다양한 회전 속도 조건에서 강건한 베어링 결함 진단이 가능함을 입증하였다.
-
-\noindent
-\indent
-Deep learning models for industrial bearing fault diagnosis experience severe performance degradation when encountering operating conditions that differ from training data, a phenomenon known as domain shift. Most existing methods train on vibration signals from a single dataset, failing to generalize across the diverse operating conditions found in real industrial environments. Furthermore, when these models learn new conditions, they suffer from catastrophic forgetting—the loss of previously acquired knowledge.
-
-We propose TextVibCLIP, a multimodal continual learning framework that jointly learns from vibration signals and textual fault descriptions. Our approach adapts CLIP's contrastive learning paradigm to bearing fault diagnosis, aligning vibration and text encoders into a shared embedding space. We introduce an asymmetric adaptation strategy: the text encoder is trained on the first operating condition, then frozen for subsequent conditions while the vibration encoder continues adapting. This design reflects a key insight—fault semantics remain invariant across operating conditions, whereas vibration waveforms exhibit condition-dependent variations.
-
-We evaluate our method on the UOS bearing dataset under varying rotational speeds. Experimental results show that TextVibCLIP outperforms existing single-modal baselines in cross-domain accuracy while effectively mitigating catastrophic forgetting. Our work demonstrates that multimodal continual learning enables robust bearing fault diagnosis across diverse rotational conditions.
+성능 검증을 위해 UOS 데이터셋을 활용하여 회전 속도가 지속적으로 변화하는 시나리오에서 모델의 도메인 적응 능력을 평가하였다. 실험 결과, 제안 방법은 기존 단일 모달 방법론 대비 높은 성능을 달성하였으며, 치명적 망각을 효과적으로 방지하여 이전 도메인에 대한 지식을 보존하였다. 그 결과, 다양한 회전 속도 조건에서 강건한 베어링 결함 진단이 가능함을 입증하였다.
 
 \noindent
 
-딥러닝 기술은 진동 신호를 직접 입력으로 사용하여 베어링 결함을 자동으로 진단하는 분야에서 높은 성능을 달성하였다  \cite{Wen2018,Shao2018}. 그러나 딥러닝 모델은 특정 운전 조건에서 수집된 데이터로 학습되며, 학습 데이터와 테스트 데이터가 동일한 분포를 가진다고 가정한다 \cite{Neupane2020}. 실제 산업 현장에서는 회전 속도, 부하, 베어링 유형이 지속적으로 변화하며, 이러한 변화는 진동 신호의 특성을 크게 변화시킨다. 예를 들어, 동일한 결함이라도 회전 속도가 달라지면 서로 다른 진동 패턴을 나타낸다. 이러한 도메인 변화(domain shift)는 기존 결함 진단 모델의 성능을 저하시킨다 \cite{Zhang2017,Xing2021}.
 
-단일 도메인으로 학습된 딥러닝 모델은 도메인 간 일반화 성능이 부족하며, 치명적 망각(catastrophic forgetting) 문제에 직면한다 \cite{Qian2022}. 특정 운전 조건에서 학습된 모델은 다른 조건에서 배치될 때 성능이 저하되며, 새로운 조건에 대해 파인튜닝(fine-tuning)을 수행하면 이전에 학습한 지식(knowledge)이 소실된다 \cite{Kirkpatrick2017}. 새로운 데이터가 나타날 때마다 처음부터 모델을 재학습할 수도 있으나, 이는 시간과 계산 자원 측면에서 산업 현장에 적합하지 않다. 이러한 문제를 해결하기 위해 연속 학습(continual learning)과 전이 학습(transfer learning) 전략이 연구되고 있다.
+최근 딥러닝은 진동 신호를 직접 입력으로 활용해 회전기계의 이상을 탐지하는 분야에서 뛰어난 성능을 보여왔다 \cite{Wen2018,Shao2018}. 그러나 대부분의 모델은 특정 운전 조건에서 수집된 데이터로 학습되며, 학습 분포와 실제 운전 환경의 분포가 동일하다고 가정한다 \cite{Neupane2020}. 실제 산업 환경에서는 회전 속도가 지속적으로 변하고, 이러한 변화만으로도 진동 신호의 형태가 크게 달라질 수 있다. 예를 들어, 같은 결함이라도 속도가 높아지면 진폭과 주파수 패턴이 변하여 모델이 혼동을 일으킬 수 있다. 이러한 도메인 변화(domain shift)는 기존 모델의 신뢰성을 저하시키는 주요 요인이다 \cite{Zhang2017,Xing2021}.
 
-결함 진단을 위한 연속 학습 기법은 과거 지식을 유지하면서 새로운 결함이나 도메인을 점진적으로 학습하는 것을 목표로 한다. 예를 들어, 네트워크 구조를 변경하거나 이전 데이터의 일부를 저장하여 재학습하는 리플레이(replay) 기법이 있다 \cite{Zheng2022,He2024_AEI}. 동시에 전이 학습 접근법은 도메인 적응(domain adaptation)을 통해 소스 도메인과 타겟 도메인 간의 특징 분포를 정렬하여 새로운 조건에 대한 일반화 성능을 개선한다 \cite{Guo2019,Yang2023}. 그러나 이러한 방법들은 진동 신호만을 사용하는 단일 모달(unimodal) 접근법이며, 결함 유형에 대한 의미론적 정보를 활용하지 못한다는 한계를 가진다.
+단일 도메인에서 학습된 모델은 도메인 간 일반화(generalization) 성능이 부족하며, 치명적 망각(catastrophic forgetting) 문제에 직면한다 \cite{Qian2022}. 특정 운전 조건에서 학습된 모델은 다른 조건에 배치될 때 성능이 저하되며, 새로운 조건에 대해 파인튜닝(fine-tuning)을 수행하면 이전에 학습한 지식(knowledge)이 소실된다 \cite{Kirkpatrick2017}. 새로운 데이터가 나타날 때마다 처음부터 모델을 재학습할 수도 있으나, 이는 시간과 컴퓨팅 자원 측면에서 산업 현장에 적합하지 않다. 이러한 문제를 해결하기 위해 연속 학습(continual learning)과 전이 학습(transfer learning) 전략이 연구되고 있다.
 
-진동 신호와 텍스트를 결합하는 멀티모달(multimodal) 접근법은 이러한 한계를 해결할 수 있다. 진동 신호를 결함 유형을 설명하는 텍스트와 결합함으로써 모델은 신호 패턴뿐 아니라 결함의 의미론적 맥락을 함께 학습할 수 있다. 이러한 멀티모달 접근법은 대조 학습(contrastive learning)과 결합될 때 효과적이며, 대조 학습은 매칭된 쌍 간의 유사성을 최대화하고 매칭되지 않은 쌍을 구별함으로써 강건한 표현을 학습한다 \cite{Zhang2021,Liu2023}. 최근 CLIP(Contrastive Language-Image Pre-training)은 이미지와 텍스트를 동일한 임베딩 공간에 매핑하는 대조 학습을 통해 높은 전이 성능을 달성하였다 \cite{Radford2021}. CLIP은 새로운 이미지가 입력되면 여러 후보 텍스트 설명과의 코사인 유사도(cosine similarity)를 비교하여 가장 적합한 설명을 선택하는 방식으로 작동한다.
+연속 학습은 과거 지식을 유지하면서 새로운 도메인을 점진적으로 습득하는 것을 목표로 한다. 예를 들어, 이전 데이터의 일부를 저장해 재활용하는 리플레이(replay) 방식이 대표적이다 \cite{Zheng2022,He2024_AEI}. 전이 학습은 도메인 적응(domain adaptation) 을 통해 소스–타깃 간 특징 분포를 맞추어 일반화 성능을 높인다 \cite{Guo2019,Yang2023}.
+그러나 이러한 방법들은 대부분 단일 모달(unimodal) 진동 신호에만 의존하여 각 클래스에 대한 의미론적 정보(semantics information)를 활용하지 못한다는 한계가 있다 \cite{WenzhongGuo2019}.
 
-그러나 현재까지 결함 진단 분야에서는 진동 신호와 텍스트를 결합한 멀티모달 대조 학습 연구가 부족하며 \cite{Fernandes2022}, 특히 운전 조건이 변화하는 동적 환경에서 멀티모달 연속 학습을 적용한 연구는 전무한 상황이다. 
-이에 본 논문에서는 이러한 한계를 극복하기 위해 진동 신호와 텍스트를 결합하는 멀티모달 프레임워크인 \textbf{TextVibCLIP}을 제안한다.
+이러한 한계는 진동 신호와 텍스트를 결합한 멀티모달 학습으로 보완할 수 있다. 
+단일 모달 접근에서 모델은 신호 패턴만 학습하지만, 텍스트를 함께 활용하면 각 결함 유형이 무엇을 의미하는지 명시적으로 학습할 수 있다. 예를 들어, 특정 주파수 패턴이 단순히 "class 2"가 아니라 "Ball element defect"임을 텍스트로 표현하면, 모델은 신호와 의미 간의 연결을 학습한다. 이러한 의미론적 정보는 도메인 불변 기준점 역할을 하여, 운전 조건이 변하더라도 "Ball fault"의 본질적 개념은 유지된다. 이는 도메인 변화에 대한 강건성을 향상시킬 수 있다.
 
-TextVibCLIP의 핵심 아이디어는 CLIP에서 영감을 받은 대조 학습 방법론으로, 진동 인코더와 텍스트 인코더를 공통 임베딩 공간으로 매핑하는 것이다. Triplet loss를 사용하여 동일한 결함 유형을 표현하는 진동-텍스트 쌍은 임베딩 공간상에서 가깝게, 다른 결함 유형을 표현하는 쌍은 멀어지도록 학습한다. 이와 같은 방식으로 CLIP과 유사하게 작동하는 진단 시스템을 구현할 수 있다. 즉, 새로운 진동 신호가 입력되면, 모델은 모든 상태 설명 텍스트와의 코사인 유사도를 계산하고, 그중 가장 높은 유사도를 갖는 텍스트를 진단 결과로 결정한다.
+멀티모달 학습은 대조 학습(contrastive learning)과 결합될 때 효과적이다~\cite{Zhang2021,Liu2023}. 
+대조 학습은 의미적으로 대응하는 쌍은 임베딩 공간에서 가깝게, 대응하지 않는 쌍은 멀게 배치하도록 학습한다. CLIP(Contrastive Language-Image Pre-training)~\cite{Radford2021}은 새로운 이미지가 입력되면 사전에 정의된 여러 텍스트 설명과의 코사인 유사도(cosine similarity)를 계산하여 가장 적합한 설명을 선택하는 방식으로 작동한다.
 
-앞서 제안한 TextVibCLIP 프레임워크는 연속 학습 과정에서 비대칭적 적응 전략(asymmetric adaptation strategy)을 사용한다. 첫 번째 운전 조건에서는 텍스트 인코더를 LoRA(Low-Rank Adaptation) \cite{Hu2022LoRA} 기법을 통해 학습시킨다. 이후 운전 조건이 변화할 때는 텍스트 인코더를 고정하고 진동 인코더만 새로운 조건에 적응시킨다. 또한, 이전 도메인에서 추출한 진동 임베딩(feature embedding)을 메모리 버퍼에 저장하고 새로운 도메인 학습 시 함께 활용하는 리플레이 기법을 통해 치명적 망각을 완화한다.
+그러나 결함 진단 분야에서는 진동-텍스트 멀티모달 학습 연구가 부족하며~\cite{Fernandes2022}, 특히 운전 조건이 변화하는 환경에서의 멀티모달 연속 학습 연구는 전무하다. 
+본 논문에서는 이러한 한계를 극복하기 위해 \textbf{TextVibCLIP}을 제안한다.
 
-본 논문의 주요 기여는 다음과 같다. 첫째, 베어링 결함 진단 분야에서 진동 신호와 텍스트를 결합한 멀티모달 대조 학습 프레임워크를 제안한다. 둘째, CLIP과 유사한 코사인 유사도 기반 진단 방식을 적용하여, 다양한 운전 조건 변화에 대해 추가 학습을 통해 유연하게 확장할 수 있으며, 텍스트를 이용한 결과 표현으로 해석 가능성이 높은 결함 진단 시스템을 구현한다.
+TextVibCLIP은 진동 신호와 텍스트를 공통 임베딩 공간으로 매핑하는 멀티모달 프레임워크이다. 
+CLIP과 유사하게 triplet loss~\cite{schroff2015facenet}를 통해 같은 결함 유형의 진동-텍스트 쌍은 가깝게, 다른 유형은 멀게 학습한다. 
+추론 시에는 새로운 진동 신호와 모든 결함 유형 텍스트 간 유사도를 계산하여 가장 높은 유사도를 가진 텍스트를 진단 결과로 선택한다. 
+연속 학습에서는 비대칭 적응 전략을 사용하는데, 첫 번째 도메인에서 텍스트 인코더를 LoRA~\cite{Hu2022LoRA}로 학습한 후 고정하고, 이후 도메인에서는 진동 인코더만 적응시킨다. 고정된 텍스트 인코더는 결함 유형의 의미를 도메인 불변 기준점으로 유지하며, 메모리 기반 replay를 통해 치명적 망각을 완화한다.
+
+본 논문의 주요 기여는 다음과 같다. 
+첫째, 베어링 결함 진단 분야에서 진동 신호와 텍스트를 결합한 멀티모달 대조 학습 프레임워크를 제안한다. 
+둘째, 유사도 기반 진단 방식을 통해 다양한 운전 조건 변화에 유연하게 적응할 수 있으며, 진단 결과를 텍스트로 제시하여 해석 가능성을 향상시킨다.
 
 본 논문의 이후 구성은 다음과 같다. 2장에서는 베어링 결함 진단을 위한 딥러닝, 연속 학습, 그리고 멀티모달 대조 학습에 관련한 연구를 소개한다. 3장에서는 본 연구에서 제안하는 TextVibCLIP의 구조와 학습 방법을 상세히 설명한다. 4장에서는 UOS 데이터셋을 활용한 연속 학습 실험을 통해 제안 방법의 효과를 검증하고 실험 결과를 분석한다. 마지막으로 5장에서 결론을 제시한다.
+
 
 \section{도메인 적응을 통한 운전 조건 변화 대응}
 
@@ -41,43 +43,503 @@ TextVibCLIP의 핵심 아이디어는 CLIP에서 영감을 받은 대조 학습 
 
 초기 접근법은 통계적 분포 정렬(statistical distribution alignment)에 기반하였다. Guo 등 \cite{Guo2019}은 최대 평균 불일치(Maximum Mean Discrepancy, MMD)를 사용하여 소스 도메인과 타겟 도메인의 특징 분포를 명시적으로 정렬하는 방법을 제안하였다. 이 방법은 두 도메인의 특징 분포 간 거리를 최소화함으로써 타겟 도메인에서의 성능 저하를 완화하였다. 그러나 MMD 기반 방법은 전체 분포 간의 통계적 정렬에 초점을 맞추기 때문에, 클래스 간의 구분 정보를 충분히 반영하지 못하는 한계가 있다.
 
-이러한 한계를 보완하기 위해, 이후에는 적대적 학습(adversarial learning) 기반의 도메인 적응 기법이 제안되었다. Ganin 등 \cite{Ganin2016}이 제안한 도메인 적대 신경망(Domain Adversarial Neural Networks, DANN)은 특징 추출기와 도메인 판별기 간의 적대적 학습을 통해 도메인 불변 특징(domain-invariant feature)을 학습한다. 이 방법은 명시적인 분포 정렬 절차 없이도 효과적인 도메인 적응을 달성할 수 있음을 보였으나, 베어링 결함 진단에서는 결함 유형 간의 유사성 구조를 고려하지 못한다는 한계가 있었다. Mao 등 \cite{Mao2021}은 이를 개선하기 위해 결함 유형 간 관련성 행렬(correlation matrix)을 도입한 구조화된 DANN 변형을 제안하였으며, 유사한 결함은 가까운 특징 공간에, 상이한 결함은 먼 공간에 매핑되도록 하였다.
+이러한 한계를 보완하기 위해 적대적 학습(adversarial learning) 기반의 도메인 적응 기법이 제안되었다. Ganin 등 \cite{Ganin2016}이 제안한 도메인 적대 신경망(Domain Adversarial Neural Networks, DANN)은 특징 추출기와 도메인 판별기 간의 적대적 학습을 통해 도메인 불변 특징(domain-invariant feature)을 학습한다. 이 방법은 명시적인 분포 정렬 절차 없이도 효과적인 도메인 적응을 달성할 수 있음을 보였으나, 베어링 결함 진단에서는 결함 유형 간의 유사성 구조를 고려하지 못한다는 한계가 있었다. Mao 등 \cite{Mao2021}은 결함 유형 간 상관행렬(correlation matrix)을 도입한 구조화된 DANN을 제안하였으며, 유사한 결함은 가까운 특징 공간에, 상이한 결함은 먼 공간에 매핑되도록 하였다.
 
 최근에는 보다 세밀한 적응을 위해 하위 도메인 단위(sub-domain level)의 정렬 기법이 연구되었다. Chen 등 \cite{Chen2022}의 잔차 심층 하위 도메인 적응 네트워크는 클래스별로 분포를 정렬하여 클래스 간 경계를 보존하면서 도메인 적응을 수행하였다. 또한 산업 환경에서 여러 소스 도메인이 존재할 수 있음을 고려하여, Tian 등 \cite{Tian2024}은 다중 소스 도메인 적응(multi-source domain adaptation) 기법을 제안하였다.
 
-그러나 이러한 도메인 적응 기법들은 두 가지 근본적인 한계를 가진다. 첫째, 고정된 소스–타겟 쌍을 가정하므로 운전 조건이 지속적으로 변화하는 동적 환경에 적합하지 않다. 둘째, 진동 신호만을 사용하는 단일 모달(unimodal) 접근법으로, 결함 유형에 대한 의미론적 정보를 활용하지 못한다. 이로 인해 모델은 신호 패턴의 통계적 유사성에만 의존하게 되며, 결함의 본질적 의미를 이해하지 못하는 한계로 이어진다.
+그러나 이러한 도메인 적응 기법들은 본질적인 한계를 가진다. 대부분의 방법은 고정된 소스–타겟 쌍을 가정하므로, 운전 조건이 지속적으로 변화하는 동적 환경에는 적합하지 않다. 새로운 운전 조건이 등장할 때마다 별도의 적응 과정이 필요하며, 이는 실제 산업 환경에서 비효율적이다. 이러한 한계를 극복하기 위해서는 여러 도메인을 순차적으로 학습하면서도 과거 지식을 유지하는 연속 학습 접근이 필요하다.
 
 \section{순차적 지식 축적을 위한 연속 학습}
 
-도메인 적응이 고정된 두 도메인 간의 전이를 다룬다면, 실제 산업 환경은 보다 동적인 환경을 고려해야 한다. 기계 설비는 수명 주기 동안 다양한 운전 조건을 경험하며, 새로운 조건이 순차적으로 도입된다. 이러한 환경에서는 모델이 새로운 도메인을 학습하면서도 이전 도메인에 대한 진단 능력을 유지해야 한다. 그러나 신경망은 새로운 작업을 학습할 때 이전 작업에 대한 성능이 저하되는 치명적 망각(catastrophic forgetting) 현상을 겪는다 \cite{Kirkpatrick2017}.
+도메인 적응이 고정된 두 도메인 간의 전이를 다룬다면, 실제 산업 환경은 보다 동적인 환경을 고려해야 한다. 기계 설비는 수명 주기 동안 다양한 운전 조건을 순차적으로 경험한다. 이러한 환경에서는 모델이 새로운 도메인을 학습하면서도 이전 도메인에 대한 진단 능력을 유지해야 한다. 그러나 신경망은 새로운 작업을 학습할 때 이전 작업에 대한 성능이 저하되는 치명적 망각(catastrophic forgetting) 현상을 겪는다 \cite{Kirkpatrick2017}.
 
-결함 진단 분야에서 치명적 망각은 실제 산업 환경에서 모델의 안정적 운용을 어렵게 만드는 핵심 문제이다. 새로운 운전 조건의 데이터로 모델을 파인튜닝하면, 이전 조건에서 학습한 결함 패턴을 잊게 되는 문제가 발생한다. 이를 해결하기 위해 연속 학습(continual learning) 기법이 연구되었으며, 대표적으로 정규화 기반(regularization-based), 리플레이 기반(replay-based) 방법으로 구분된다.
+결함 진단 분야에서 치명적 망각은 실제 산업 환경에서 모델의 안정적 운용을 어렵게 만드는 핵심 문제이다. 새로운 운전 조건의 데이터로 모델을 파인튜닝하면, 이전 조건에서 학습한 결함 패턴을 잊게 되는 문제가 발생한다. 이러한 문제를 해결하기 위해 연속 학습(continual learning) 기법이 연구되었으며, 대표적으로 정규화 기반(regularization-based), 리플레이 기반(replay-based) 방법으로 구분된다.
 
-정규화 기반 접근법은 중요한 파라미터의 변화를 제한하여 과거 지식을 보존한다. Zhang 등 \cite{Zhang2024}은 적응적 특징 통합 잔차 네트워크를 제안하였으며, 각 파라미터의 중요도를 계산하고, 중요한 파라미터의 변화를 억제함으로써 이전 지식을 유지하였다.이 방법은 명시적인 데이터 저장 없이도 망각을 완화할 수 있다는 장점이 있으나, 파라미터 중요도 추정의 정확도에 의존하며 도메인 수가 증가할수록 학습 유연성이 감소한다는 한계가 있다.
+정규화 기반 접근법은 중요한 파라미터의 변화를 제한하여 과거 지식을 보존한다. Zhang 등 \cite{Zhang2024}은 적응적 특징 통합 잔차 네트워크를 제안하였으며, 파라미터의 중요도를 계산하여 중요한 파라미터의 변화를 억제함으로써 이전 지식을 유지하였다.이 방법은 명시적인 데이터 저장 없이도 망각을 완화할 수 있다는 장점이 있으나, 파라미터 중요도 추정의 정확도에 의존하며 도메인 수가 증가할수록 학습 유연성이 감소한다는 한계가 있다.
 
-리플레이 기반 접근법은 이전 도메인의 대표 샘플 또는 대표 특징 임베딩(feature embedding)을 메모리 버퍼에 저장하고, 이를 새로운 도메인 학습 시 함께 활용함으로써 망각을 완화한다. Zheng 등 \cite{Zheng2022}은 핵심 샘플을 선택적으로 저장하고 이를 반복적으로 재학습(replay)함으로써 안정적인 성능을 유지하였다. 이 방법은 정규화 기반 접근법보다 효과적이지만, 저장 공간이 제한적일 때 어떤 샘플을 선택할지 결정하는 것이 중요한 문제로 남는다.
+리플레이 기반 접근법은 이전 도메인의 대표 샘플 또는 특징 임베딩(feature embedding)을 메모리 버퍼에 저장한 뒤, 새로운 도메인 학습 시 함께 활용하여 망각을 완화한다. Zheng 등 \cite{Zheng2022}은 핵심 샘플을 선택적으로 저장하여 재학습(replay)에 활용함으로써 안정적인 성능을 유지하였다. 이러한 방식은 정규화 기반 접근법보다 효과적이며, 메모리 구성 방식이나 샘플 선택 전략에 따라 성능이 달라질 수 있다.
 
-한편, 최근에는 작업 간 지식 전이(knowledge transfer)를 촉진하는 접근도 연구되었다. 예를 들어, Wang 등 \cite{Wang2023}은 Attention 메커니즘을 통해 이전 작업과 새로운 작업 간의 공통 특징을 추출하고, 이를 활용하여 망각을 완화하면서 전이 성능을 향상시켰다. 또한, He 등 \cite{He2024_MSSP}은 레이블이 없는 새로운 결함 유형이 지속적으로 등장하는 환경을 고려해, memory buffer와 반복 리플레이를 결합한 방식으로 지식 이전을 가능하게 했다.”
+최근에는 작업 간 지식 전이(knowledge transfer)를 촉진하기 위한 접근도 연구되고 있다. 
+Wang 등 \cite{Wang2023}은 Attention 메커니즘을 활용해 이전 작업과 새로운 작업 간의 공통 특징을 추출하고, 그 특징을 기반으로 망각을 완화하면서 전이 성능을 향상시켰다. 
+He 등 \cite{He2024_MSSP}은 레이블이 없는 새로운 결함 유형이 지속적으로 등장하는 환경을 고려하여, 메모리 버퍼와 리플레이를 결합한 방식을 통해 지식 전이를 강화하였다.
 
-그러나 기존 연속 학습 방법들은 진동 신호만을 사용하는 단일 모달 접근법이라는 공통된 한계를 가진다. 이들은 신호 패턴의 통계적 특성만으로 지식을 표현하며, 결함 유형의 의미론적 개념을 활용하지 못한다. 결함 유형의 의미(예: '볼 결함', '내륜 결함')는 운전 조건과 무관하게 일정하게 유지되는 도메인 불변 정보임에도 불구하고, 이를 명시적으로 모델링하는 연구는 부족하였다.
+그러나 기존 연속 학습 방법들은 진동 신호만을 사용하는 단일 모달 접근법이라는 공통된 한계를 가진다. 이러한 방법들은 신호 패턴의 통계적 특성에만 의존하여 지식을 표현하기 때문에, 결함 유형의 의미론적 정보는 반영하지 못한다. 운전 조건과 무관하게 유지되는 결함의 의미(예: ‘볼 결함’)와 같은 도메인 불변 정보를 직접적으로 활용한 연구는 부족하였다.
 
 \section{대조 학습과 멀티모달 표현 학습}
 
-최근 대조 학습(contrastive learning)은 레이블 없는 데이터로부터 강건한 표현을 학습하는 효과적인 방법론으로 주목받고 있다. 대조 학습의 핵심 아이디어는 의미적으로 유사한 샘플 쌍(양성 쌍)은 특징 공간에서 가깝게, 상이한 샘플 쌍(음성 쌍)은 멀게 위치하도록 학습하는 것이다. 이러한 접근은 의미 있는 특징 표현을 학습할 수 있다는 장점을 가진다.
+대조 학습(contrastive learning)은 의미적으로 유사한 샘플 쌍은 특징 공간에서 가깝게, 상이한 샘플 쌍은 멀게 위치하도록 학습하는 기법이다. 이 과정에서 모델은 데이터 간의 상대적 관계를 학습하며, 더 구별력 있는 표현(representation)을 형성한다.
 
-결함 진단 분야에서도 대조 학습이 적용되기 시작했다. Zhang 등 \cite{Zhang2021}은 진동 신호를 이미지로 변환한 뒤 대조 학습을 적용하여 도메인 불변 특징을 학습하였다. 또한 Eldele 등 \cite{Eldele2021}의 TS-TCC는 시간적 대조(temporal contrast)와 맥락적 대조(contextual contrast)를 결합하여 시계열 표현을 효과적으로 학습하였다. 이러한 접근들은 시간적 일관성과 구조적 패턴을 동시에 포착할 수 있어 진동 신호 분석에 적합하다.
+결함 진단 분야에서도 대조 학습이 적용되었다. Zhang 등 \cite{Zhang2021}은 진동 신호를 이미지로 변환한 뒤 대조 학습을 통해 도메인 불변 특징을 학습하였으며, Eldele 등 \cite{Eldele2021}의 TS-TCC는 대조 학습을 활용해 시계열 데이터에서 샘플 간의 유사성을 학습하였다. 그러나 이러한 접근들은 단일 모달 진동 신호에만 의존한다는 한계가 있다.
 
-대조 학습의 진정한 잠재력은 멀티모달(multimodal) 학습과 결합될 때 발현된다. 컴퓨터 비전 분야에서 CLIP(Contrastive Language-Image Pre-training) \cite{Radford2021}과 ALIGN \cite{Jia2021}은 대규모 이미지–텍스트 쌍 데이터를 통해 시각적 표현과 언어적 표현을 공통 임베딩 공간으로 정렬하였다. 이러한 모델들은 이미지와 텍스트 간의 의미적 대응 관계를 효과적으로 학습함으로써, 새로운 데이터에 대해서도 유연한 추론이 가능함을 보였다. CLIP의 성공 요인은 두 가지로 요약된다. 첫째, 시각 정보와 언어 정보를 결합함으로써 더 풍부한 의미 표현을 학습하였다. 둘째, 대조 학습을 통해 이미지와 텍스트를 동일한 임베딩 공간에 매핑함으로써, 새로운 이미지 입력 시 여러 텍스트 후보와의 유사도를 비교하여 가장 적합한 설명을 선택하는 유연한 추론 방식을 가능하게 하였다.
+대조 학습은 멀티모달 학습과 결합될 때 더욱 효과적이다. 컴퓨터 비전 분야에서 CLIP(Contrastive Language-Image Pre-training) \cite{Radford2021}과 ALIGN \cite{Jia2021}은 대규모 이미지–텍스트 쌍 데이터를 통해 시각적 표현과 언어적 표현을 공통 임베딩 공간으로 정렬하였다. 이러한 모델들은 이미지와 텍스트 간의 의미적 대응 관계를 효과적으로 학습함으로써, 새로운 데이터에 대해서도 유연한 추론이 가능함을 보였다.
 
-한편, 산업 분야의 멀티모달 접근은 주로 물리적 센서 융합(sensor fusion)에 집중되어 왔다. Safizadeh 등 \cite{Safizadeh2014}과 Wan 등 \cite{Wan2023}은 진동–음향, 또는 진동–온도 센서를 결합하여 결함 진단 성능을 향상시켰다. 이러한 접근은 상호 보완적인 정보를 얻을 수 있다는 장점이 있으나, 센서 동기화 문제나 추가 설치 비용 등의 한계가 존재한다.
+한편, 산업 분야의 멀티모달 접근은 주로 물리적 센서 융합에 집중되어 왔다. Safizadeh 등 \cite{Safizadeh2014}과 Wan 등 \cite{Wan2023}은 진동–음향 또는 진동–온도 센서를 결합하여 결함 진단 성능을 향상시켰다. 그러나 이러한 접근은 추가 센서 설치 비용과 동기화 문제 등의 한계가 있으며, 무엇보다 물리적 신호 융합에 국한되어 결함 유형의 의미론적 정보는 활용하지 못한다.
 
-그러나 기존 멀티모달 연구는 물리적 신호 융합에 국한되어 있으며, 진동 신호와 텍스트와 같은 의미론적 정보의 결합은 시도되지 않았다. 진동–텍스트 결합은 추가 센서 없이 결함 유형에 대한 의미론적 지식을 명시적으로 활용할 수 있다는 점에서 새로운 가능성을 제시한다. 또한 기존 멀티모달 학습은 일반적으로 모든 모달리티를 동일하게 학습하는 대칭적 접근(symmetric adaptation)을 취하지만, 연속 학습 맥락에서는 모달리티 간 특성이 상이하다. 텍스트로 표현되는 결함 유형의 의미(예: “볼 결함”)는 운전 조건이 변해도 불변인 반면, 진동 신호의 파형은 조건 변화에 따라 크게 달라진다. 따라서 연속 학습 환경에서는 모달리티 간 비대칭성을 고려한 적응 전략이 필요하다.
+진동 신호와 텍스트를 결합한 연구는 거의 이루어지지 않았다. 또한 기존 멀티모달 학습은 모든 모달리티를 동일하게 학습하는 대칭적 접근을 취하지만, 연속 학습 맥락에서는 모달리티 간 특성이 상이하다. 텍스트로 표현되는 결함 유형의 의미는 운전 조건과 무관하게 불변인 반면, 진동 신호는 조건 변화에 따라 크게 달라진다. 따라서 연속 학습 환경에서는 모달리티 간 비대칭성을 고려한 적응 전략이 필요하다.
 
-요약하면, 기존 연구들은 세 가지 공통된 한계를 가진다.  
-도메인 적응 기법은 고정된 소스–타겟 설정을 가정하기 때문에 순차적으로 변화하는 도메인 환경에 대응하지 못하고 \cite{Guo2019,Ganin2016,Mao2021,Chen2022,Tian2024}, 
-연속 학습 기법은 단일 모달 진동 신호에 의존하여 결함 유형의 의미론적 정보를 활용하지 못한다 \cite{Zheng2022,Wang2023,He2024_MSSP,Zhang2024}. 
-또한 멀티모달 접근은 물리적 센서 융합에 국한되어 있으며, 진동 신호와 의미론적 텍스트를 결합한 연구는 거의 이루어지지 않았다.
-이러한 기존 연구의 한계는 운전 조건이 동적으로 변화하는 산업 환경에서 의미론적 지식을 통합한 결함 진단 시스템의 필요성을 보여준다.
+기존 연구들을 종합하면, 도메인 적응 기법은 고정된 환경을 가정하고 \cite{Guo2019,Ganin2016,Mao2021,Chen2022,Tian2024}, 연속 학습 기법은 단일 모달에 의존하며 \cite{Zheng2022,Wang2023,He2024_MSSP,Zhang2024}, 멀티모달 접근은 물리적 센서 융합에 국한되어 있다. 운전 조건이 동적으로 변화하는 산업 환경에서 결함 유형의 의미론적 지식을 통합한 연속 학습 시스템에 대한 연구는 여전히 부족한 상황이다.
+
+본 장에서는 제안하는 TextVibCLIP의 구조와 학습 절차를 상세히 설명한다.
+먼저 프레임워크의 개요를 제시하고, 이후 진동 인코더와 텍스트 인코더의 구조를 설명한 뒤,
+멀티모달 대조학습과 연속 학습 전략을 기술한다.
+
+\section{프레임워크 개요}
+\label{sec:framework_overview}
+
+TextVibCLIP은 진동 신호와 텍스트를 결합한 멀티모달 연속 학습 프레임워크이다.
+산업 현장에서 기계는 수명 주기 동안 다양한 운전 조건을 경험하며, 
+모델은 이러한 조건 변화에 지속적으로 적응해야 한다~\cite{vandeven2019three,delange2021continual}.
+
+본 연구는 $D$개의 도메인이 순차적으로 도착하는 연속 학습 환경을 다루며, 각 도메인 $\mathcal{D}_t$ ($t = 1, \ldots, D$)는 서로 다른 회전 속도에서 수집된 데이터로 구성된다. 클래스 집합 $\mathcal{C} = \{c_1, \ldots, c_K\}$는 모든 도메인에서 동일하게 유지되며, 본 연구에서는 $K=7$개의 결함 유형(Healthy, Ball fault, Inner race fault, Outer race fault, Looseness, Unbalance, Misalignment)을 다룬다.
+
+각 도메인은 다음과 같이 정의된다.
+\begin{equation}
+\mathcal{D}_t = \{(\mathbf{x}_i^{(t)}, y_i^{(t)})\}_{i=1}^{N_t}
+\end{equation}
+여기서 $\mathbf{x}_i^{(t)} \in \mathbb{R}^{L}$은 길이 $L$의 진동 신호, $y_i^{(t)} \in \mathcal{C}$는 결함 유형 레이블, $N_t$는 도메인 $t$의 샘플 수이다.
+
+TextVibCLIP은 두 개의 인코더로 구성된다. 진동 인코더 $f_v: \mathbb{R}^L \rightarrow \mathbb{R}^d$와 텍스트 인코더 $f_t: \mathcal{T} \rightarrow \mathbb{R}^d$는 각각의 입력을 공통 임베딩 공간 $\mathbb{R}^d$로 매핑하며, 본 연구에서는 $d=256$을 사용한다. 
+첫 번째 도메인에서 triplet loss ~\cite{schroff2015facenet}를 통해 두 인코더를 동시에 학습하여 공통 임베딩 공간을 구축한 후, 이후 도메인에서는 텍스트 인코더를 고정하고 진동 인코더만 적응시킨다. 텍스트 임베딩을 도메인 불변 기준점(anchor)으로 유지하면서, 진동 인코더가 새로운 운전 조건에 유연하게 적응하도록 설계하였다.
+
+각 클래스 $c_k$에 대해 결함 유형을 설명하는 여러 개의 텍스트 프롬프트 집합 $\mathcal{T}_k = {t_k^{(1)}, t_k^{(2)}, \ldots}$를 구성한다.
+예를 들어 Ball fault 클래스의 프롬프트는 ``Ball element defect detected'', ``Vibration pattern indicates ball damage'', ``Abnormal impulses caused by ball defect''과 같이 구성된다.
+
+추론 단계에서는 각 클래스별 프롬프트 임베딩의 평균을 텍스트 프로토타입으로 사용하고,
+진동 임베딩과의 코사인 유사도를 계산하여 가장 유사한 클래스를 최종 진단 결과로 결정한다.
+
+\section{모델 구조} 
+
+그림 \ref{fig:TextVibCLIP_architecture}는 TextVibCLIP의 전체 구조를 보여준다. 진동 신호와 텍스트는 각각의 인코더를 거쳐 공통 임베딩 공간으로 매핑되며, triplet loss를 통해 같은 클래스의 진동–텍스트 쌍은 가깝게, 다른 클래스 쌍은 멀게 학습된다.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{figures/TextVibCLIP_architecture.png}
+    \caption{TextVibCLIP 전체 구조도}
+    \label{fig:TextVibCLIP_architecture}
+\end{figure}
+
+
+\subsection{진동 인코더}
+
+진동 인코더(vibration encoder) $f_v$는 회전기계 진단 분야에서 널리 사용되는 1D Convolutional Neural Network(1D-CNN)로 구성된다 ~\cite{zhang2020improved1dcnn,chen2021deepvibration}. 원시 진동 신호 $\mathbf{x} \in \mathbb{R}^L$을 입력으로 받아 고차원 특징 벡터를 추출한 후, projection layer를 통해 $d$차원 임베딩으로 매핑한다. 표~\ref{tab:vibration_encoder}는 진동 인코더의 상세 구조를 보여준다.
+
+\begin{table}[htbp]
+\centering
+\caption{진동 인코더의 네트워크 구조}
+\label{tab:vibration_encoder}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Layer} & \textbf{Operation} & \textbf{Channels} & \textbf{Kernel} & \textbf{Stride} \\
+\midrule
+Input & - & 1 & - & - \\
+\midrule
+Conv Block 1 & Conv-BN-ReLU & 64 & 16 & 2 \\
+Conv Block 2 & Conv-BN-ReLU & 128 & 32 & 2 \\
+Conv Block 3 & Conv-BN-ReLU & 256 & 64 & 2 \\
+Conv Block 4 & Conv-BN-ReLU & 512 & 32 & 2 \\
+\midrule
+GAP & Global Avg Pooling & 512 & - & - \\
+\midrule
+Projection & MLP (512→256) & 256 & - & - \\
+Output & L2 Norm & 256 & - & - \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+출력 임베딩 $\mathbf{z}_v \in \mathbb{R}^d$는 L2 정규화되어 $\|\mathbf{z}_v\|_2 = 1$을 만족한다. 본 연구에서는 입력 신호 길이 $L=2048$, 임베딩 차원 $d=256$을 사용한다. 진동 인코더는 약 7M개의 파라미터를 가지며, 연속 학습 과정에서 모든 도메인에 대해 전체 파라미터가 학습된다.
+
+\subsection{텍스트 인코더}
+
+텍스트 인코더(text encoder) $f_t$는 사전학습된 DistilBERT ~\cite{sanh2019distilbert}를 기반으로 한다. DistilBERT는 BERT의 경량화 버전으로, 파라미터 수를 약 40\% 감소시키면서도 언어 이해 능력을 유지한다. 표 \ref{tab:text_encoder}는 텍스트 인코더의 상세 구조를 보여준다.
+
+\begin{table}[htbp]
+\centering
+\caption{텍스트 인코더의 네트워크 구조}
+\label{tab:text_encoder}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Component} & \textbf{Parameters} & \textbf{First Domain} & \textbf{Later Domains} \\
+\midrule
+DistilBERT & 66M & Frozen & Frozen \\
+\quad (6 layers, 768 hidden) & & & \\
+\midrule
+LoRA Adapters & 0.3M & Trainable & Frozen \\
+\quad Rank ($r$) & & 8 & \\
+\midrule
+Projection Layer & 0.6M & Trainable & Trainable \\
+\quad 768 $\rightarrow$ 512 $\rightarrow$ 256 & & & \\
+\midrule
+L2 Normalization & - & - & - \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+출력 임베딩 $\mathbf{z}_t \in \mathbb{R}^d$는 L2 정규화되어 $\|\mathbf{z}_t\|_2 = 1$을 만족한다. DistilBERT는 모든 도메인에서 고정되며, 첫 번째 도메인에서만 Low-Rank Adaptation(LoRA)~\cite{Hu2022LoRA}를 통해 베어링 진단 도메인에 적응한다.
+
+LoRA는 사전학습된 가중치 행렬 $\mathbf{W}_0 \in \mathbb{R}^{d \times k}$를 고정한 채, low-rank 행렬 $\mathbf{A} \in \mathbb{R}^{r \times k}$와 $\mathbf{B} \in \mathbb{R}^{d \times r}$를 추가하여 효율적인 적응을 수행한다.
+\begin{equation}
+\mathbf{W} = \mathbf{W}_0 + \mathbf{B}\mathbf{A}, \quad \mathbf{A} \in \mathbb{R}^{r \times k}, \; \mathbf{B} \in \mathbb{R}^{d \times r}
+\label{eq:lora}
+\end{equation}
+
+
+여기서 $r \ll \min(d,k)$는 low-rank dimension이며, $\mathbf{A}$와 $\mathbf{B}$만 학습된다. 본 연구에서는 $r=8$을 사용하며, DistilBERT의 Query와 Value projection에만 LoRA를 적용하여 약 0.3M의 파라미터를 추가한다.
 
 
 
+\subsection{공통 임베딩 공간}
+\label{subsec:shared_embedding}
+
+진동 인코더와 텍스트 인코더는 서로 다른 형태의 입력을 동일한 차원 $d=256$의 공통 임베딩 공간(shared embedding space)으로 매핑한다. 이 공간에서는 두 모달리티의 임베딩이 정렬(alignment)되도록 학습된다. 정렬이란 의미적으로 대응되는 진동 신호와 텍스트가 임베딩 공간에서 가까운 위치에 배치되는 것을 의미한다~\cite{Radford2021,Jia2021ALIGN}. 예를 들어, Ball fault를 나타내는 진동 신호의 임베딩 $\mathbf{z}_v$와 ``Ball element defect detected''라는 텍스트의 임베딩 $\mathbf{z}_t$는 높은 코사인 유사도를 가지도록 학습된다.
+
+학습 목표는 같은 결함 유형에 속하는 진동-텍스트 쌍의 유사도를 높이고, 서로 다른 결함 유형의 쌍은 멀리 배치하는 것이다. 이는 \ref{subsec:triplet}절의 triplet loss를 통해 달성된다. 학습이 완료되면 이 공통 공간은 두 모달리티를 통합하는 의미론적 표현 공간으로 기능하며, 진동 신호만으로도 해당 신호에 대응하는 텍스트 설명을 검색할 수 있다.
+
+그림 \ref{fig:shared_embedding}은 공통 임베딩 공간의 개념을 보여준다. 서로 다른 모달리티가 동일한 공간으로 매핑되며, 같은 결함 유형은 클러스터를 형성하고 다른 결함 유형과는 분리되어 배치된다.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.97\textwidth]{figures/shared_embedding_space.png}
+    \caption{공통 임베딩 공간 개념도}
+    \label{fig:shared_embedding}
+\end{figure}
+
+%------------------------------------------------------------
+\section{멀티모달 대조 학습}
+\label{sec:multimodal_contrastive}
+
+\subsection{Triplet Loss}
+\label{subsec:triplet}
+
+진동 임베딩과 텍스트 임베딩을 공통 임베딩 공간에서 정렬하기 위해 triplet loss를 사용한다. 
+Triplet은 anchor, positive, negative 세 가지 요소로 구성되며, anchor는 진동 임베딩 $\mathbf{z}_v^i$, positive는 같은 클래스의 텍스트 임베딩 $\mathbf{z}_t^+$, negative는 다른 클래스의 텍스트 임베딩 $\mathbf{z}_t^-$이다.
+
+그림 \ref{fig:contrastive_learning}은 triplet loss의 개념을 보여준다. 진동 임베딩 (anchor)은 같은 클래스의 텍스트 임베딩(positive)과는 가깝게, 다른 클래스의 텍스트 임베딩(negative)과는 멀게 위치하도록 학습된다.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/triplet_loss_concept.png}
+    \caption{Triplet Loss 개념도.}
+    \label{fig:triplet_loss_concept}
+\end{figure}
+
+임베딩 간 유사도는 코사인 유사도(cosine similarity)로 정의된다.
+\begin{equation}
+\text{sim}(\mathbf{z}_v, \mathbf{z}_t)
+= \frac{\mathbf{z}_v \cdot \mathbf{z}_t}{\|\mathbf{z}_v\|_2 \, \|\mathbf{z}_t\|_2}.
+\label{eq:cos_sim}
+\end{equation}
+
+모든 임베딩이 L2 정규화되어 있으므로 ($\|\mathbf{z}_v\|_2 = \|\mathbf{z}_t\|_2 = 1$), 유사도는 내적 $\mathbf{z}_v \cdot \mathbf{z}_t$로 직접 계산된다. 유사도가 높을수록 두 임베딩이 가깝고, 낮을수록 멀리 위치함을 의미한다.
+
+Triplet loss는 anchor–positive 쌍의 유사도가 anchor–negative 쌍의 유사도보다 최소 margin $m$만큼 크도록 제약한다.
+
+\begin{equation}
+\text{sim}(\mathbf{z}_v^i, \mathbf{z}_t^+) - \text{sim}(\mathbf{z}_v^i, \mathbf{z}_t^-) \geq m.
+\label{eq:triplet_constraint}
+\end{equation}
+
+배치 단위로 triplet loss는 다음과 같이 계산된다.
+\begin{equation}
+\mathcal{L}_{\text{triplet}}
+= \frac{1}{N} \sum_{i=1}^{N}
+\max\!\big(0,\,
+m - \text{sim}(\mathbf{z}_v^i, \mathbf{z}_t^+)
++ \text{sim}(\mathbf{z}_v^i, \mathbf{z}_t^-)
+\big).
+\label{eq:triplet_loss}
+\end{equation}
+
+즉, 같은 클래스의 진동-텍스트 쌍은 다른 클래스 쌍보다 최소 $m$만큼 더 높은 유사도를 가져야 한다. 본 연구에서는 $m=0.3$을 사용한다. 
+또한, 효율적인 학습을 위해 배치 내에서 triplet을 구성한다. 배치 $\mathcal{B} = \{(\mathbf{x}_i, y_i, t_i)\}_{i=1}^{N}$가 주어졌을 때, 각 샘플 $i$에 대해 같은 클래스 $y_i$의 텍스트 프롬프트 $t_i$를 positive로, 다른 클래스 샘플 $j$ ($y_j \neq y_i$)의 텍스트 임베딩을 negative로 사용한다.
+
+\subsection{유사도 기반 추론}
+\label{subsec:inference}
+
+학습이 완료된 후, 새로운 진동 신호에 대한 결함 진단은 다음과 같이 수행된다. 
+먼저 추론 전에 각 클래스에 대한 텍스트 프로토타입을 사전에 계산한다. 클래스 $c_k$에 대해 준비된 $M$개의 텍스트 프롬프트(예: ``Ball element defect detected'', ``Bearing with ball fault'', ``Ball damage on bearing'')를 텍스트 인코더에 입력하여 각각의 임베딩을 얻은 후, 이들의 평균을 계산하여 클래스 프로토타입 $\bar{\mathbf{z}}_t^{(k)}$을 생성한다.
+\begin{equation}
+\bar{\mathbf{z}}_t^{(k)} = \frac{1}{M} \sum_{j=1}^{M} f_t(t_k^{(j)}).
+\label{eq:text_proto}
+\end{equation}
+
+이러한 프로토타입은 각 클래스의 의미론적 표현을 임베딩 공간에서 하나의 대표 벡터로 요약한 것이며, 모든 클래스에 대해 계산하여 미리 저장해둔다. 추론 단계에서는 새로운 진동 신호 $\mathbf{x}_{\text{new}}$가 입력되면 진동 인코더를 통해 임베딩 $\mathbf{z}_v^{\text{new}} = f_v(\mathbf{x}_{\text{new}})$를 계산한다. 모든 임베딩은 L2 정규화되어 있으므로, 이 진동 임베딩과 각 클래스 프로토타입 간의 코사인 유사도는 내적으로 계산된다.
+\begin{equation}
+s_k = \mathbf{z}_v^{\text{new}} \cdot \bar{\mathbf{z}}_t^{(k)}, \quad k = 1, \ldots, K.
+\label{eq:score}
+\end{equation}
+
+최종적으로 가장 높은 유사도를 가진 클래스를 예측 결과로 선택한다.
+\begin{equation}
+\hat{y} = \argmax_{k \in \{1, \ldots, K\}} s_k.
+\label{eq:argmax}
+\end{equation}
+
+그림 \ref{fig:inference}는 이러한 추론 과정을 보여준다. 새로운 진동 신호는 진동 인코더를 통해 임베딩 공간으로 매핑되고, 사전에 계산된 텍스트 프로토타입과의 유사도를 비교하여 가장 높은 유사도를 가진 클래스로 분류된다.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{figures/inference.png}
+    \caption{유사도 기반 추론 과정}
+    \label{fig:inference}
+\end{figure}
+
+\section{연속 학습 전략}
+\subsection{모달리티별 학습 전략}
+\label{subsec:asymmetry}
+
+연속 학습에서 텍스트와 진동 모달리티는 도메인 변화에 대해 서로 다른 특성을 가진다. 텍스트로 표현되는 결함 유형의 의미(예: "Ball fault")는 운전 조건과 무관하게 불변인 반면, 진동 신호의 파형은 회전 속도에 따라 크게 변한다. 
+이러한 비대칭성을 고려하여, 본 연구는 텍스트 인코더를 도메인 불변 기준점으로 고정하고 진동 인코더만 새로운 조건에 적응시키는 전략을 제안한다.
+
+\begin{table}[htbp]
+\centering
+\caption{모달리티별 도메인 변화 특성}
+\label{tab:modality_comparison}
+\begin{tabular}{lcc}
+\toprule
+\textbf{특성} & \textbf{텍스트} & \textbf{진동} \\
+\midrule
+도메인 의존성 & Domain-invariant & Domain-specific \\
+학습 파라미터 & Frozen & Adaptive \\
+임베딩 역할 & Anchor & Learner \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{첫 번째 도메인 학습}
+\label{subsec:first_domain}
+
+첫 번째 도메인 $\mathcal{D}_1$의 목표는 두 모달리티를 공통 임베딩 공간에서 정렬하는 것이다. 진동 인코더는 랜덤 초기화하며, 텍스트 인코더는 사전학습된 DistilBERT를 기반으로 한다. DistilBERT의 가중치는 고정한 채 LoRA 모듈만 추가하여, LoRA 파라미터를 베어링 진단 도메인에 대해 fine-tuning한다. 각 배치에서 두 인코더의 임베딩을 계산한 뒤, triplet loss \eqref{eq:triplet_loss}를 최소화하도록 진동 인코더의 모든 파라미터와 텍스트 인코더의 LoRA 파라미터를 함께 학습한다.
+
+\begin{algorithm}[H]
+    \caption{Training on the First Domain}
+    \label{alg:first_domain}
+    \begin{algorithmic}
+    \Require Dataset $\mathcal{D}_1$, text prompts $\{\mathcal{T}_k\}_{k=1}^K$
+    \Ensure Trained encoders $f_v^{(1)}$, $f_t^{(1)}$
+    \State Initialize vibration encoder $f_v$ randomly
+    \State Initialize text encoder $f_t$ with pretrained DistilBERT + LoRA
+    \For{$\text{epoch}=1$ \textbf{to} $E_{\text{first}}$}
+      \For{batch $\mathcal{B}$ \textbf{in} $\mathcal{D}_1$}
+        \State $\{\mathbf{z}_v^i\} \leftarrow \{f_v(\mathbf{x}_i)\}$, $\{\mathbf{z}_t^i\} \leftarrow \{f_t(t_i)\}$
+        \State Construct triplets within batch
+        \State Compute $\mathcal{L}_{\text{triplet}}$ using \eqref{eq:triplet_loss}
+        \State Update all parameters of $f_v$ and LoRA parameters of $f_t$
+      \EndFor
+    \EndFor
+    \State \Return $f_v^{(1)}$, $f_t^{(1)}$
+    \end{algorithmic}
+\end{algorithm}
+
+\subsection{이후 도메인 학습}
+\label{subsec:later_domains}
+
+두 번째 도메인부터는 텍스트 인코더를 고정하고 진동 인코더만 학습한다. 각 배치는 현재 도메인의 데이터와 메모리 버퍼 $\mathcal{M}$의 샘플로 구성되며, triplet loss \eqref{eq:triplet_loss}를 통해 진동 인코더를 학습한다.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1.0\textwidth]{figures/asymmetric_adaptation.png}
+    \caption{비대칭 적응 전략 개념도}
+    \label{fig:asymmetric_adaptation}
+\end{figure}
+
+고정된 텍스트 임베딩은 각 클래스의 목표 위치를 정의하는 기준점 역할을 한다. 
+새로운 운전 조건의 진동 신호가 입력되더라도 triplet loss가 해당 임베딩을 고정된 텍스트 위치로 정렬하도록 유도한다. 그 결과 도메인이 변화하더라도 같은 클래스의 진동 임베딩은 해당 클래스의 텍스트 임베딩 주변에 모이며, 클래스 간 경계가 유지된다. 메모리 버퍼의 이전 도메인 임베딩은 이러한 정렬을 강화하여 임베딩 공간의 일관성을 유지한다.
+
+\subsection{메모리 기반 Replay}
+\label{subsec:replay}
+
+치명적 망각을 방지하기 위해 이전 도메인의 대표 샘플을 메모리 버퍼 $\mathcal{M}$에 저장하고, 새로운 도메인 학습 시 현재 데이터와 함께 사용한다. 
+
+본 연구에서는 원시 진동 신호 대신 진동 임베딩을 메모리에 저장한다. 이는 두 가지 장점을 제공한다. 
+첫째, 저장 공간 측면에서 원시 신호($L=2048$ 차원)보다 임베딩 ($d=256$ 차원)이 약 8배 작다. 
+둘째, 계산 효율성 측면에서 replay 시 저장된 임베딩을 직접 사용할 수 있어 진동 인코더를 다시 실행할 필요가 없다. 새로운 도메인에서 배치를 구성할 때, 현재 도메인의 진동 신호는 진동 인코더를 통해 임베딩으로 변환되지만, 메모리에서 가져온 이전 도메인의 임베딩은 이미 계산된 상태이므로 추가 인코딩 없이 바로 triplet loss 계산에 사용된다.
+
+메모리 버퍼는 다음과 같이 정의된다.
+\begin{equation}
+\mathcal{M} = \{(\mathbf{z}_v^j, t_j, y_j)\}_{j=1}^{N_{\mathcal{M}}},
+\label{eq:memory}
+\end{equation}
+
+여기서 $\mathbf{z}_v^j$는 저장된 진동 임베딩, $t_j$는 대응하는 텍스트 프롬프트, $y_j$는 레이블이다. 본 연구에서는 $N_{\mathcal{M}} = 800$을 사용한다.
+
+각 도메인 학습 완료 후 해당 도메인에서 클래스별로 균등하게 임베딩을 선택하여 메모리에 추가한다. 도메인 $t$ 학습 시 메모리 버퍼는 이전 모든 도메인 $\mathcal{D}_1, \ldots, \mathcal{D}_{t-1}$의 임베딩을 누적하여 포함한다. 메모리 용량 $N_{\mathcal{M}}$을 유지하기 위해 도메인이 추가될 때마다 각 도메인에서 저장할 임베딩 수를 조정하여 모든 이전 도메인의 데이터가 고르게 유지되도록 한다.
+
+\subsection{전체 학습 알고리즘}
+\label{subsec:overall_algo}
+
+앞서 설명한 구성 요소들을 통합하여 TextVibCLIP의 전체 연속 학습 절차를 정리한다. 알고리즘 \ref{alg:textvibclip}은 $D$개의 도메인이 순차적으로 도착할 때 모델이 어떻게 학습되는지 보여준다. 첫 번째 도메인에서는 진동 인코더와 텍스트 인코더를 동시에 학습하여 공통 임베딩 공간을 구축한다. 이후 도메인에서는 텍스트 인코더를 고정하고 진동 인코더만 적응시키며, 메모리 버퍼의 이전 도메인 임베딩을 함께 활용하여 치명적 망각을 방지한다.
+
+\begin{algorithm}[H]
+\caption{TextVibCLIP Continual Learning}
+\label{alg:textvibclip}
+\begin{algorithmic}
+\Require Domain sequence $\{\mathcal{D}_t\}_{t=1}^D$, text prompts $\{\mathcal{T}_k\}_{k=1}^K$
+\Ensure Trained model for all domains
+\State Initialize memory buffer $\mathcal{M} \leftarrow \emptyset$
+\State Initialize vibration encoder $f_v$ and text encoder $f_t$
+\For{$t=1$ \textbf{to} $D$}
+  \If{$t=1$}
+    \State Train $f_v$ and $f_t$ with triplet loss
+  \Else
+    \State Freeze text encoder: $f_t \leftarrow f_t^{(1)}$
+    \For{epoch $= 1$ \textbf{to} $E_{\text{cont}}$}
+      \For{batch $\mathcal{B}_{\text{new}}$ \textbf{in} $\mathcal{D}_t$}
+        \State $\mathcal{B}_{\text{replay}} \sim \mathcal{M}$
+        \State $\mathcal{B} \leftarrow \mathcal{B}_{\text{new}} \cup \mathcal{B}_{\text{replay}}$
+        \State Compute $\mathcal{L}_{\text{triplet}}$
+        \State Update $f_v$ only
+      \EndFor
+    \EndFor
+  \EndIf
+  \State Add representative embeddings from domain $t$ to $\mathcal{M}$ (maintain $N_{\mathcal{M}}$)
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+
+알고리즘의 핵심은 비대칭 학습 전략이다. 첫 번째 도메인($t=1$)에서 두 인코더를 함께 학습하여 결함 유형의 의미론적 표현을 텍스트 임베딩에 고정시킨 후, 이후 도메인($t \geq 2$)에서는 이를 기준점으로 유지하면서 진동 인코더만 새로운 운전 조건에 적응시킨다. 각 도메인 학습 후 메모리 버퍼를 업데이트하여 이전 도메인의 지식을 보존하며, 이는 새로운 도메인 학습 시 현재 데이터와 함께 사용되어 임베딩 공간의 일관성을 유지한다.
+
+
+\section{실험 설정}
+\label{sec:experimental_setup}
+
+본 절에서는 제안한 TextVibCLIP의 실험 환경과 평가 방법을 기술한다.
+\subsection{실험 환경}
+\label{subsec:experimental_env}
+
+모든 실험은 표 \ref{tab:experimental_setup}의 환경에서 수행되었다. 
+
+\begin{table}[htbp]
+\centering
+\caption{실험 환경}
+\label{tab:experimental_setup}
+\begin{tabular}{ll}
+\toprule
+\textbf{항목} & \textbf{사양} \\
+\midrule
+\textit{하드웨어} & \\
+\quad CPU & Intel Xeon Silver 4210R @ 2.40GHz \\
+\quad GPU & NVIDIA Quadro RTX 5000 (16GB GDDR6) \\
+\quad RAM & 252GB \\
+\midrule
+\textit{소프트웨어} & \\
+\quad OS & Ubuntu 22.04 LTS \\
+\quad Python & 3.8.10 \\
+\quad PyTorch & 2.0.1 \\
+\quad CUDA & 11.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{데이터셋}
+\label{subsec:dataset}
+
+본 연구에서는 University of Seoul(UOS)의 베어링 데이터셋 ~\cite{Lee2024}을 사용하였다. UOS 데이터셋은 다양한 베어링 타입과 회전 속도, 샘플링 조건에서 수집된 대규모 진동 데이터를 포함하지만, 본 연구에서는 도메인 간 분포 이동만을 분석하기 위해 Deep Groove Ball 베어링(6204형)과 16\,kHz 샘플링 데이터만을 사용하였다. 단일 결함(single fault)만 포함하고 복합 결함(compound fault)은 제외하였으며, Unbalance와 Misalignment는 가장 심한 수준(Level 3)의 결함만을 사용하였다. 이러한 제한을 통해 동일한 베어링 구조와 센서 조건을 유지하면서도 회전 속도 변화(600--1600\,RPM)에 따른 도메인 차이만을 반영하도록 구성하였다.
+
+실험에 사용된 결함 유형은 Healthy, Ball fault, Inner race fault, Outer race fault, Looseness, Unbalance, Misalignment의 7개이다. 도메인은 회전 속도에 따라 6개로 구성되며, 각 도메인은 동일한 클래스 집합을 포함한다. 표~\ref{tab:uos_dataset}은 각 도메인의 샘플 수를 보여준다. 진동 신호는 길이 $L=2048$의 윈도우로 분할하였으며, 윈도우 간 overlap은 25\%로 설정하였다.
+
+\begin{table}[htbp]
+\centering
+\caption{UOS 데이터셋 구성}
+\label{tab:uos_dataset}
+\begin{tabular}{cccc}
+\toprule
+\textbf{도메인} & \textbf{RPM}  & \textbf{학습} & \textbf{테스트} \\
+\midrule
+$\mathcal{D}_1$ & 600  & 4{,}080 & 880 \\
+$\mathcal{D}_2$ & 800  & 4{,}080 & 880 \\
+$\mathcal{D}_3$ & 1000 & 4{,}080 & 880 \\
+$\mathcal{D}_4$ & 1200 & 4{,}080 & 880 \\
+$\mathcal{D}_5$ & 1400 & 4{,}080 & 880 \\
+$\mathcal{D}_6$ & 1600 & 4{,}080 & 880 \\
+\midrule
+\textbf{합계} & -  & \textbf{24{,}480} & \textbf{5{,}280} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\subsection{배치 구성}
+\label{subsec:batch_strategy}
+
+첫 번째 도메인에서는 배치 크기 16으로 학습한다. 이후 도메인($t \ge 2$)에서는 현재 도메인의 데이터와 메모리 버퍼의 이전 도메인 임베딩을 함께 사용한다.
+
+\begin{equation}
+\mathcal{B} = \mathcal{B}_{\text{new}} \cup \mathcal{B}_{\text{replay}}
+\label{eq:batch_comp}
+\end{equation}
+
+메모리 버퍼의 샘플은 모든 이전 도메인에서 균등하게 샘플링되며, 새로운 운전 조건에 적응하면서도 이전 도메인의 지식을 유지할 수 있도록 한다.
+
+\subsection{하이퍼파라미터}
+\label{subsec:hyperparams}
+
+표~\ref{tab:hyperparameters}는 TextVibCLIP의 주요 하이퍼파라미터를 보여준다. 첫 번째 도메인에서는 두 인코더를 동시에 학습하며, 이후 도메인에서는 낮은 학습률로 진동 인코더만 학습한다. 메모리 버퍼는 800개의 임베딩($\mathbb{R}^{256}$)을 저장하여 원시 신호($\mathbb{R}^{2048}$) 저장 대비 약 8배의 저장 공간을 절약한다.
+
+
+
+\begin{table}[htbp]
+\centering
+\caption{TextVibCLIP의 주요 하이퍼파라미터}
+\label{tab:hyperparameters}
+\begin{tabular}{lcc}
+\toprule
+\textbf{항목} & \textbf{첫 도메인} & \textbf{이후 도메인} \\
+\midrule
+Epochs & 20 & 10 \\
+Learning rate & $1\times10^{-4}$ & $5\times10^{-5}$ \\
+Optimizer & \multicolumn{2}{c}{Adam} \\
+Embedding dimension ($d$) & \multicolumn{2}{c}{256} \\
+Memory buffer size ($N_{\mathcal{M}}$) & \multicolumn{2}{c}{800} \\
+Triplet margin ($m$) & \multicolumn{2}{c}{0.3} \\
+LoRA rank ($r$) & \multicolumn{2}{c}{8} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{평가 지표}
+\label{subsec:evaluation_protocol}
+
+각 도메인 학습 완료 후, 모델은 현재까지 학습한 모든 도메인 $\{\mathcal{D}_1, \ldots, \mathcal{D}_t\}$에 대해 평가된다. 평가는 \ref{subsec:inference}에서 설명한 유사도 기반 추론 방식을 사용한다.
+
+각 도메인 $j$의 정확도는 다음과 같이 계산된다.
+\begin{equation}
+\text{Acc}_j^{(t)} = 
+\frac{1}{N_j^{\text{test}}} 
+\sum_{i=1}^{N_j^{\text{test}}}
+\mathds{1}(\hat{y}_i = y_i)
+\label{eq:acc}
+\end{equation}
+여기서 $\mathds{1}(\cdot)$은 지시함수(indicator function)로, 조건이 참일 때 1, 거짓일 때 0을 반환한다. $\hat{y}_i$는 모델의 예측 레이블, $y_i$는 실제 레이블이다.
+
+%------------
+평균 정확도는 현재까지 학습한 모든 도메인에 대한 정확도의 평균이다.
+\begin{equation}
+\text{Avg-Acc}^{(t)} = 
+\frac{1}{t} \sum_{j=1}^{t} \text{Acc}_j^{(t)}
+\label{eq:avg_acc}
+\end{equation}
+이 지표는 모델의 전체적인 성능을 나타낸다.
+
+망각도는 각 도메인에서 달성했던 최고 성능 대비 현재 성능의 감소량이다.
+\begin{equation}
+\text{Forgetting}_j^{(t)} = 
+\max_{t' \in \{j, \ldots, t-1\}} \text{Acc}_j^{(t')} - \text{Acc}_j^{(t)}
+\end{equation}
+
+평균 망각도는 모든 이전 도메인에 대한 망각도의 평균으로 계산된다.
+\begin{equation}
+\text{Avg-Forget}^{(t)} = 
+\frac{1}{t-1} \sum_{j=1}^{t-1} \text{Forgetting}_j^{(t)}
+\label{eq:forget}
+\end{equation}
+이 지표는 연속 학습 과정에서 이전 지식의 보존 정도를 측정한다.
+
+%------------------
+\section{실험 결과 분석}
+%\subsection{평균 정확도 및 망각도 결과}
+(작성 예정)
+%\subsection{도메인별 성능 비교}
+%(작성 예정)
+%\subsection{Ablation Study}
+%(작성 예정)
