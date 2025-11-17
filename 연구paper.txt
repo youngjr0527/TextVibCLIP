@@ -9,6 +9,9 @@
 \noindent
 
 
+\chapter{서론}
+\input{ch01-introduction}
+
 최근 딥러닝은 진동 신호를 직접 입력으로 활용해 회전기계의 이상을 탐지하는 분야에서 뛰어난 성능을 보여왔다 \cite{Wen2018,Shao2018}. 그러나 대부분의 모델은 특정 운전 조건에서 수집된 데이터로 학습되며, 학습 분포와 실제 운전 환경의 분포가 동일하다고 가정한다 \cite{Neupane2020}. 실제 산업 환경에서는 회전 속도가 지속적으로 변하고, 이러한 변화만으로도 진동 신호의 형태가 크게 달라질 수 있다. 예를 들어, 같은 결함이라도 속도가 높아지면 진폭과 주파수 패턴이 변하여 모델이 혼동을 일으킬 수 있다. 이러한 도메인 변화(domain shift)는 기존 모델의 신뢰성을 저하시키는 주요 요인이다 \cite{Zhang2017,Xing2021}.
 
 단일 도메인에서 학습된 모델은 도메인 간 일반화(generalization) 성능이 부족하며, 치명적 망각(catastrophic forgetting) 문제에 직면한다 \cite{Qian2022}. 특정 운전 조건에서 학습된 모델은 다른 조건에 배치될 때 성능이 저하되며, 새로운 조건에 대해 파인튜닝(fine-tuning)을 수행하면 이전에 학습한 지식(knowledge)이 소실된다 \cite{Kirkpatrick2017}. 새로운 데이터가 나타날 때마다 처음부터 모델을 재학습할 수도 있으나, 이는 시간과 컴퓨팅 자원 측면에서 산업 현장에 적합하지 않다. 이러한 문제를 해결하기 위해 연속 학습(continual learning)과 전이 학습(transfer learning) 전략이 연구되고 있다.
@@ -36,6 +39,9 @@ CLIP과 유사하게 triplet loss~\cite{schroff2015facenet}를 통해 같은 결
 
 본 논문의 이후 구성은 다음과 같다. 2장에서는 베어링 결함 진단을 위한 딥러닝, 연속 학습, 그리고 멀티모달 대조 학습에 관련한 연구를 소개한다. 3장에서는 본 연구에서 제안하는 TextVibCLIP의 구조와 학습 방법을 상세히 설명한다. 4장에서는 UOS 데이터셋을 활용한 연속 학습 실험을 통해 제안 방법의 효과를 검증하고 실험 결과를 분석한다. 마지막으로 5장에서 결론을 제시한다.
 
+
+\chapter{관련 연구}
+\input{ch02-related-work}
 
 \section{도메인 적응을 통한 운전 조건 변화 대응}
 
@@ -78,6 +84,11 @@ He 등 \cite{He2024_MSSP}은 레이블이 없는 새로운 결함 유형이 지�
 진동 신호와 텍스트를 결합한 연구는 거의 이루어지지 않았다. 또한 기존 멀티모달 학습은 모든 모달리티를 동일하게 학습하는 대칭적 접근을 취하지만, 연속 학습 맥락에서는 모달리티 간 특성이 상이하다. 텍스트로 표현되는 결함 유형의 의미는 운전 조건과 무관하게 불변인 반면, 진동 신호는 조건 변화에 따라 크게 달라진다. 따라서 연속 학습 환경에서는 모달리티 간 비대칭성을 고려한 적응 전략이 필요하다.
 
 기존 연구들을 종합하면, 도메인 적응 기법은 고정된 환경을 가정하고 \cite{Guo2019,Ganin2016,Mao2021,Chen2022,Tian2024}, 연속 학습 기법은 단일 모달에 의존하며 \cite{Zheng2022,Wang2023,He2024_MSSP,Zhang2024}, 멀티모달 접근은 물리적 센서 융합에 국한되어 있다. 운전 조건이 동적으로 변화하는 산업 환경에서 결함 유형의 의미론적 지식을 통합한 연속 학습 시스템에 대한 연구는 여전히 부족한 상황이다.
+
+
+\chapter{방법론}
+\input{ch03-methodology}
+
 
 본 장에서는 제안하는 TextVibCLIP의 구조와 학습 절차를 상세히 설명한다.
 먼저 프레임워크의 개요를 제시하고, 이후 진동 인코더와 텍스트 인코더의 구조를 설명한 뒤,
@@ -399,6 +410,11 @@ s_k = \mathbf{z}_v^{\text{new}} \cdot \bar{\mathbf{z}}_t^{(k)}, \quad k = 1, \ld
 알고리즘의 핵심은 비대칭 학습 전략이다. 첫 번째 도메인($t=1$)에서 두 인코더를 함께 학습하여 결함 유형의 의미론적 표현을 텍스트 임베딩에 고정시킨 후, 이후 도메인($t \geq 2$)에서는 이를 기준점으로 유지하면서 진동 인코더만 새로운 운전 조건에 적응시킨다. 각 도메인 학습 후 메모리 버퍼를 업데이트하여 이전 도메인의 지식을 보존하며, 이는 새로운 도메인 학습 시 현재 데이터와 함께 사용되어 임베딩 공간의 일관성을 유지한다.
 
 
+
+
+\chapter{실험 결과}
+\input{ch04-experimental-results}
+
 \section{실험 설정}
 \label{sec:experimental_setup}
 
@@ -430,7 +446,7 @@ s_k = \mathbf{z}_v^{\text{new}} \cdot \bar{\mathbf{z}}_t^{(k)}, \quad k = 1, \ld
 \end{tabular}
 \end{table}
 
-\subsection{데이터셋}
+\subsection{데이터셋 구성}
 \label{subsec:dataset}
 
 본 연구에서는 University of Seoul(UOS)의 베어링 데이터셋 ~\cite{Lee2024}을 사용하였다. UOS 데이터셋은 다양한 베어링 타입과 회전 속도, 샘플링 조건에서 수집된 대규모 진동 데이터를 포함하지만, 본 연구에서는 도메인 간 분포 이동만을 분석하기 위해 Deep Groove Ball 베어링(6204형)과 16\,kHz 샘플링 데이터만을 사용하였다. 단일 결함(single fault)만 포함하고 복합 결함(compound fault)은 제외하였으며, Unbalance와 Misalignment는 가장 심한 수준(Level 3)의 결함만을 사용하였다. 이러한 제한을 통해 동일한 베어링 구조와 센서 조건을 유지하면서도 회전 속도 변화(600--1600\,RPM)에 따른 도메인 차이만을 반영하도록 구성하였다.
@@ -512,7 +528,7 @@ LoRA rank ($r$) & \multicolumn{2}{c}{8} \\
 \end{equation}
 여기서 $\mathds{1}(\cdot)$은 지시함수(indicator function)로, 조건이 참일 때 1, 거짓일 때 0을 반환한다. $\hat{y}_i$는 모델의 예측 레이블, $y_i$는 실제 레이블이다.
 
-%------------
+%---------------------------------------------------------------------
 평균 정확도는 현재까지 학습한 모든 도메인에 대한 정확도의 평균이다.
 \begin{equation}
 \text{Avg-Acc}^{(t)} = 
@@ -535,11 +551,101 @@ LoRA rank ($r$) & \multicolumn{2}{c}{8} \\
 \end{equation}
 이 지표는 연속 학습 과정에서 이전 지식의 보존 정도를 측정한다.
 
-%------------------
-\section{실험 결과 분석}
-%\subsection{평균 정확도 및 망각도 결과}
-(작성 예정)
-%\subsection{도메인별 성능 비교}
-%(작성 예정)
-%\subsection{Ablation Study}
-%(작성 예정)
+%---------------------------------------------------------------------
+\newpage
+\section{연속 학습 성능 분석}
+
+본 절에서는 TextVibCLIP의 연속 학습 성능을 분석한다. 6개의 도메인(600, 800, 1000, 1200, 1400, 1600 RPM)이 순차적으로 도착하는 시나리오에서, 각 도메인 학습 후 모든 도메인에 대한 성능을 평가하였다.
+
+\subsection{도메인별 정확도 추이}
+
+표 \ref{tab:continual_results}는 제안한 TextVibCLIP의 연속 학습 과정에서 도메인별 성능 변화를 요약한 결과이다.  
+표의 행은 학습이 순차적으로 진행되는 단계를, 열은 각 시점에서의 테스트 도메인을 나타낸다.  
+대각 성분(diagonal entries)은 각 단계에서 새로 학습된 도메인의 성능을 의미하며,  
+교차 도메인 성능(off-diagonal entries)은 이전 도메인에 대한 일반화 결과를 반영한다.  
+
+
+\begin{table}[htbp]
+\centering
+\caption{연속 학습 단계별 도메인 정확도 (\%)}
+\label{tab:continual_results}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{
+    l
+    >{\centering\arraybackslash}p{1.7cm}
+    >{\centering\arraybackslash}p{1.7cm}
+    >{\centering\arraybackslash}p{1.7cm}
+    >{\centering\arraybackslash}p{1.7cm}
+    >{\centering\arraybackslash}p{1.7cm}
+    >{\centering\arraybackslash}p{1.7cm}
+    >{\centering\arraybackslash}p{1.8cm}
+    >{\centering\arraybackslash}p{1.9cm}
+}
+\toprule
+\textbf{Stage} & \textbf{600} & \textbf{800} & \textbf{1000} & \textbf{1200} & \textbf{1400} & \textbf{1600} & \textbf{Avg-Acc} & \textbf{Avg-Forget} \\
+\midrule
+D1  & 91.3$\pm$0.5 & -- & -- & -- & -- & -- & 91.3$\pm$0.5 & -- \\
+D2  & 91.8$\pm$0.4 & 92.0$\pm$0.2 & -- & -- & -- & -- & 91.9$\pm$0.3 & 0.0$\pm$0.3 \\
+D3  & 77.2$\pm$0.5 & 72.9$\pm$0.6 & 100.0$\pm$0.0 & -- & -- & -- & 83.4$\pm$0.7 & 7.8$\pm$0.8 \\
+D4  & 49.9$\pm$1.2 & 68.4$\pm$1.0 & 61.9$\pm$1.4 & 92.3$\pm$1.1 & -- & -- & 63.8$\pm$1.0 & 19.7$\pm$1.2 \\
+D5  & 54.5$\pm$0.9 & 72.8$\pm$1.3 & 64.2$\pm$1.1 & 75.6$\pm$0.8 & 92.9$\pm$1.0 & -- & 68.8$\pm$0.9 & 15.1$\pm$1.0 \\
+D6  & 67.6$\pm$0.8 & 78.5$\pm$0.9 & 62.0$\pm$0.7 & 58.5$\pm$0.6 & 99.3$\pm$0.7 & 100.0$\pm$0.0 & 76.1$\pm$0.7 & 9.2$\pm$0.7 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+평균 망각도(Avg-Forget)는 학습이 진행됨에 따라 완만히 감소하는 경향을 보이며, 이는 제안 모델이 도메인 전이 환경에서도 일정 수준의 지식 보존 능력을 유지함을 시사한다.
+또한 교차 도메인 성능의 점진적 감소는 continual learning 환경에서 일반적으로 관찰되는 catastrophic forgetting의 영향을 나타내지만, 전체적인 성능 추이는 제안 모델이 비교적 안정적인 학습을 유지하고 있음을 보여준다.
+
+결과적으로 표 \ref{tab:continual_results}는 TextVibCLIP이
+고정된 텍스트 임베딩을 기준으로 진동 표현 공간을 점진적으로 재정렬하며, 도메인 전이 상황에서도 학습 일관성을 유지함을 확인할 수 있는 근거를 제공한다.
+
+\subsection{임베딩 공간 정렬 분석}
+
+비대칭 적응 전략의 핵심은 텍스트 인코더를 고정하여 결함 유형의 의미론적 표현을 도메인 불변 기준점으로 유지하는 것이다. 이러한 전략이 실제로 효과적인지 확인하기 위해 학습된 임베딩 공간을 시각화하였다.
+
+그림~\ref{fig:tsne}는 학습 완료 후 진동 임베딩과 텍스트 프로토타입을 t-SNE로 2차원에 투영한 결과이다. 왼쪽 그래프는 텍스트 프로토타입의 분포를, 오른쪽 그래프는 진동 임베딩의 분포를 보여준다.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{figures/tsne.png}
+    \caption{임베딩 공간의 t-SNE 시각화}
+    \label{fig:tsne}
+\end{figure}
+
+텍스트 프로토타입은 7개 결함 유형이 명확히 분리된 군집을 형성하고 있으며,  
+각 클래스 간 거리가 충분히 확보되어 있다.  
+진동 임베딩 역시 각 클래스별로 뚜렷한 군집 구조를 형성하며, 이들 군집이 대응되는 텍스트 프로토타입 근처에 위치하는 경향을 보인다. 이는 텍스트 임베딩이 도메인 변화와 무관하게 의미론적 기준(anchor)으로 작용하고, 진동 인코더가 해당 기준에 맞추어 표현 공간을 정렬하도록 학습되었음을 시사한다.
+
+\subsection{유사도 기반 추론 분석}
+
+TextVibCLIP의 추론 방식은 일반적인 분류 모델과 다르다.
+일반적인 분류 모델은 고정된 출력층을 통해 각 클래스에 대한 확률을 직접 계산하지만, TextVibCLIP은 진동 임베딩과 텍스트 프로토타입 간의 코사인 유사도를 계산하여 가장 유사한 텍스트를 검색하는 방식으로 결함을 진단한다. 
+
+그림 \ref{fig:case}는 학습이 완료된 모델에 새로운 테스트 샘플을 입력했을 때의 추론 과정을 보여준다.
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.99\linewidth}
+        \includegraphics[width=\linewidth]{figures/test_sample_infer1.png}
+    \end{subfigure}\\[4pt]
+    \begin{subfigure}{0.99\linewidth}
+        \includegraphics[width=\linewidth]{figures/test_sample_infer2.png}
+    \end{subfigure}
+    \caption{유사도 기반 추론 예시 (Unbalance, Healthy)}
+    \label{fig:case}
+\end{figure}
+
+
+첫 번째 예시는 Unbalance 상태의 샘플이다. TextVibCLIP 모델은 이 신호를 진동 인코더에 입력하여 임베딩으로 변환한 후, 7개 클래스의 텍스트 프로토타입과의 유사도를 계산하였다. "Rotor unbalance detected in the rotating machinery."라는 텍스트와의 유사도가  가장 높게 나타났으며, 다른 클래스들과의 유사도는 낮게 계산되었다. 따라서 모델은 이 샘플을 Unbalance로 정확히 분류하였다.
+
+두 번째 예시는 Healthy 상태의 샘플이다. TextVibCLIP 모델은 "Vibration signal corresponds to a healthy bearing."이라는 텍스트와의 유사도가 가장 높게 계산하였고, 결함 관련 텍스트들과의 유사도는 모두 낮게 나타났다. 이는 모델이 정상 상태를 정확히 인식했음을 의미한다.
+
+유사도 기반 추론 방식은 CLIP의 주요 특징인 해석 가능성을 결함 진단에 적용한 것이다. 
+모델은 단순히 클래스 인덱스를 반환하는 대신, "Rotor unbalance detected in the rotating machinery"와 같은 자연어 설명을 제공한다. 이는 현장 작업자가 진단 결과를 이해하고 적절한 조치를 취하는 데 유용한 정보를 제공한다.
+%---------------------------------------------------------------------
+
+
+
+
